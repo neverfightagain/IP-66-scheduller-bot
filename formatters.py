@@ -42,8 +42,13 @@ def format_lesson_alert(lesson: dict, minutes_left: int = 5) -> tuple[str, Inlin
     url = link_info.get("url", "").strip()
     comment = link_info.get("comment", "").strip()
 
+    if minutes_left >= 15:
+        title = f"⏳ **Нагадування: пара через {minutes_left} хвилин!**"
+    else:
+        title = f"🔔 **Увага! Пара починається через {minutes_left} хвилин!**"
+
     text_parts = [
-        "🔔 **Увага! Скоро починається пара!**\n",
+        f"{title}\n",
         f"⏰ **Поточний час:** `{current_time_str}`",
         f"⏳ **Початок:** `{lesson['time']}` (через {minutes_left} хв)\n",
         f"📖 **Предмет:** **{lesson['name']}**",

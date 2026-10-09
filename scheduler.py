@@ -78,6 +78,9 @@ async def check_upcoming_lessons(bot: Bot):
     if not chats or not _today_cached_lessons:
         return
 
+    # Интервалы уведомлений в минутах (за 20 минут и за 5 минут)
+    ALERT_INTERVALS = [20, 5]
+
     for lesson in _today_cached_lessons:
         try:
             lesson_time_parts = [int(p) for p in lesson["time"].split(":")]
@@ -92,22 +95,22 @@ async def check_upcoming_lessons(bot: Bot):
         diff_seconds = (lesson_dt - now).total_seconds()
         diff_minutes = diff_seconds / 60.0
 
-        # Уведомляем за ~5 минут (от 4.0 до 5.5 минут до звонка)
-        target_diff = float(NOTIFY_MINUTES_BEFORE)
-        if (target_diff - 1.0) <= diff_minutes <= (target_diff + 0.5):
-            alert_key = f"{today.isoformat()}_{lesson['time']}_{lesson['name']}"
-            if alert_key in sent_alerts:
-                continue
+        for target_minutes in ALERT_INTERVALS:
+            # Окно срабатывания: от (target - 1.0) до (target + 0.5) минут
+            if (target_minutes - 1.0) <= diff_minutes <= (target_minutes + 0.5):
+                alert_key = f"{today.isoformat()}_{lesson['time']}_{lesson['name']}_{target_minutes}"
+                if alert_key in sent_alerts:
+                    continue
 
-            text, kb = format_lesson_alert(lesson, minutes_left=NOTIFY_MINUTES_BEFORE)
-            for chat_id in chats:
-                try:
-                    await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
-                except Exception as e:
-                    logger.error(f"Не вдалося надіслати сповіщення у чат {chat_id}: {e}")
+                text, kb = format_lesson_alert(lesson, minutes_left=target_minutes)
+                for chat_id in chats:
+                    try:
+                        await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
+                    except Exception as e:
+                        logger.error(f"Не вдалося надіслати сповіщення ({target_minutes} хв) у чат {chat_id}: {e}")
 
-            sent_alerts.add(alert_key)
-            logger.info(f"Надіслано сповіщення про пару: {lesson['name']} ({lesson['time']})")
+                sent_alerts.add(alert_key)
+                logger.info(f"Надіслано сповіщення за {target_minutes} хв: {lesson['name']} ({lesson['time']})")
 
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
