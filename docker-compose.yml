@@ -1,0 +1,10 @@
+services:
+  kpi-bot:
+    build: .
+    container_name: kpi_schedule_bot
+    restart: unless-stopped
+    volumes:
+      - ./chats.json:/app/chats.json
+      - ./links.json:/app/links.json
+    env_file:
+      - .env
