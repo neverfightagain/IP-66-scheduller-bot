@@ -25,8 +25,10 @@ async def cmd_start(message: Message):
 
     is_new = add_subscribed_chat(chat_id)
 
-    chat_desc = "цього групового чату" if chat_type in (ChatType.GROUP, ChatType.SUPERGROUP) else "вас"
-    sub_status = f"✅ Сповіщення активовано для {chat_desc}!" if is_new else f"ℹ️ {chat_desc.capitalize()} вже підписано на сповіщення."
+    is_group = chat_type in (ChatType.GROUP, ChatType.SUPERGROUP)
+    chat_desc = "цього групового чату" if is_group else "вас"
+    id_info = f"\n🆔 **ID чату:** `{chat_id}`" if is_group else ""
+    sub_status = f"✅ Сповіщення активовано для {chat_desc}!{id_info}" if is_new else f"ℹ️ {chat_desc.capitalize()} вже підписано на сповіщення.{id_info}"
 
     text = (
         "👋 **Привіт! Я бот розкладу ІП-66.**\n\n"

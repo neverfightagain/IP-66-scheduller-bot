@@ -36,16 +36,28 @@ CHATS_FILE = BASE_DIR / "chats.json"
 LINKS_FILE = BASE_DIR / "links.json"
 
 
+ENV_CHAT_ID = os.getenv("CHAT_ID", "").strip()
+
+
 def get_subscribed_chats() -> list[int]:
     """Получить список chat_id, подписанных на уведомления."""
-    if not CHATS_FILE.exists():
-        return []
-    try:
-        with open(CHATS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("chats", [])
-    except Exception:
-        return []
+    chats = set()
+    if ENV_CHAT_ID:
+        try:
+            chats.add(int(ENV_CHAT_ID))
+        except ValueError:
+            pass
+
+    if CHATS_FILE.exists():
+        try:
+            with open(CHATS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for cid in data.get("chats", []):
+                    chats.add(int(cid))
+        except Exception:
+            pass
+
+    return list(chats)
 
 
 def add_subscribed_chat(chat_id: int) -> bool:
