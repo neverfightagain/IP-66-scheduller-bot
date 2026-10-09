@@ -72,6 +72,9 @@ async def main():
     # Запуск опционального health-check сервера (для облака)
     http_runner = await start_health_check_server()
 
+    masked = f"{BOT_TOKEN[:6]}...{BOT_TOKEN[-4:]}" if len(BOT_TOKEN) > 10 else "EMPTY/TOO_SHORT"
+    logger.info(f"Завантажено BOT_TOKEN: {masked} (довжина: {len(BOT_TOKEN)})")
+
     # Инициализация бота и диспетчера
     bot = Bot(
         token=BOT_TOKEN,

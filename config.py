@@ -1,13 +1,29 @@
 import json
 import os
+import re
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
+# Загружаем переменные из .env
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+raw_token = os.getenv("BOT_TOKEN", "").strip()
+
+# Санитизация токена (на случай если скопировали с кавычками или "BOT_TOKEN=")
+if (raw_token.startswith('"') and raw_token.endswith('"')) or (raw_token.startswith("'") and raw_token.endswith("'")):
+    raw_token = raw_token[1:-1].strip()
+if "BOT_TOKEN=" in raw_token:
+    raw_token = raw_token.split("BOT_TOKEN=", 1)[1].strip()
+
+# Извлекаем сам токен регуляркой: число:35_символов
+match = re.search(r"\d+:[\w-]{35}", raw_token)
+if match:
+    BOT_TOKEN = match.group(0)
+else:
+    BOT_TOKEN = raw_token
+
 KPI_GROUP_ID = int(os.getenv("KPI_GROUP_ID", "6084"))
 TIMEZONE_NAME = os.getenv("TIMEZONE", "Europe/Kyiv")
 KYIV_TZ = ZoneInfo(TIMEZONE_NAME)
