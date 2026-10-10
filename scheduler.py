@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, time, date, timedelta
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -16,6 +17,17 @@ from kpi_api import get_lessons_for_date
 from formatters import format_morning_digest, format_lesson_alert
 
 logger = logging.getLogger(__name__)
+
+
+async def delete_message_after_delay(bot: Bot, chat_id: int, message_id: int, delay_seconds: int = 1200):
+    """Автоматично видаляє старе повідомлення через delay_seconds (за замовчуванням 20 хвилин)."""
+    await asyncio.sleep(delay_seconds)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info(f"Автоматично очищено сповіщення {message_id} у чаті {chat_id}")
+    except Exception as e:
+        logger.debug(f"Не вдалося видалити повідомлення {message_id}: {e}")
+
 
 # Множество отправленных уведомлений, чтобы не отправлять дважды
 # Формат ключа: "YYYY-MM-DD_HH:MM_SubjectName"
@@ -105,7 +117,9 @@ async def check_upcoming_lessons(bot: Bot):
                 text, kb = format_lesson_alert(lesson, minutes_left=target_minutes)
                 for chat_id in chats:
                     try:
-                        await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
+                        sent_msg = await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
+                        # Автоматически удаляем сообщение через 20 минут, чтобы не засорять чат
+                        asyncio.create_task(delete_message_after_delay(bot, chat_id, sent_msg.message_id, delay_seconds=20 * 60))
                     except Exception as e:
                         logger.error(f"Не вдалося надіслати сповіщення ({target_minutes} хв) у чат {chat_id}: {e}")
 

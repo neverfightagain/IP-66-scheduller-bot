@@ -56,9 +56,6 @@ def format_lesson_alert(lesson: dict, minutes_left: int = 5) -> tuple[str, Inlin
         f"👤 **Викладач:** {lesson['lecturer']}",
     ]
 
-    if lesson.get("location") and lesson["location"] != "Онлайн":
-        text_parts.append(f"📍 **Аудиторія:** {lesson['location']}")
-
     keyboard = None
     if url:
         text_parts.append(f"\n🔗 **Посилання:** [Перейти до заняття]({url})")
