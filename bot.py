@@ -87,6 +87,10 @@ async def main():
     me = await bot.get_me()
     logger.info(f"Успішна авторизація: бот @{me.username} ({me.first_name})")
 
+    # Ініціалізація бази даних SQLite (v2.0)
+    from database import init_db
+    await init_db()
+
     # Первичная загрузка расписания на сегодня
     await refresh_today_cache()
 

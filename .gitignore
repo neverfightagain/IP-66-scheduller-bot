@@ -1,5 +1,11 @@
 .env
 chats.json
+kpi_bot.db*
+*.db
+*.sqlite
+*.sqlite3
+credentials.json
+token.json
 __pycache__/
 *.pyc
 venv/

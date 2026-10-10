@@ -70,3 +70,52 @@ def format_lesson_alert(lesson: dict, minutes_left: int = 5) -> tuple[str, Inlin
         text_parts.append(f"\nℹ️ **Посилання:** _{comment}_")
 
     return "\n".join(text_parts), keyboard
+
+
+def format_lecture_summary(summary: dict, video_title: str, video_url: str) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Форматирование карточки конспекта лекции для Telegram."""
+    subject = summary.get("subject_detected") or "Пара"
+    topic = summary.get("topic") or video_title
+
+    lines = [
+        "🎬 **Новий конспект лекції з YouTube!**\n",
+        f"📚 **Предмет:** **{subject}**",
+        f"🎯 **Тема:** {topic}\n",
+    ]
+
+    points = summary.get("summary_points", [])
+    if points:
+        lines.append("📌 **Головні тези з заняття:**")
+        for pt in points:
+            lines.append(f"• {pt}")
+        lines.append("")
+
+    announcements = summary.get("teacher_announcements", [])
+    if announcements:
+        lines.append("📢 **Оголошення викладача:**")
+        for ann in announcements:
+            lines.append(f"• {ann}")
+        lines.append("")
+
+    deadlines = summary.get("deadlines_mentioned", [])
+    if deadlines:
+        lines.append("⏳ **Згадані дедлайни та терміни:**")
+        for dl in deadlines:
+            title = dl.get("task_title", "Завдання")
+            date_str = dl.get("date", "")
+            quote = dl.get("exact_quote", "")
+            d_line = f"• **{title}**: {date_str}" if date_str else f"• **{title}**"
+            if quote:
+                d_line += f" _(«{quote}»)_"
+            lines.append(d_line)
+        lines.append("")
+
+    lines.append(f"🔗 [Переглянути запис на YouTube]({video_url})")
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="▶️ Дивитися запис на YouTube", url=video_url)]
+        ]
+    )
+
+    return "\n".join(lines), keyboard
