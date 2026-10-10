@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import KYIV_TZ
 from links_manager import get_lesson_link_info
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -119,3 +119,120 @@ def format_lecture_summary(summary: dict, video_title: str, video_url: str) -> t
     )
 
     return "\n".join(lines), keyboard
+
+
+def format_deadlines_radar(assignments: list[dict]) -> str:
+    """Форматирование радара дедлайнов на текущую и следующую неделю."""
+    if not assignments:
+        return "🎉 **На найближчий час дедлайнів немає! Все чисто, відпочивайте!**"
+
+    now = datetime.now(KYIV_TZ)
+    today = now.date()
+    # Воскресенье текущей недели
+    days_to_sunday = 6 - today.weekday()
+    this_week_end = today + timedelta(days=days_to_sunday)
+    next_week_end = this_week_end + timedelta(days=7)
+
+    this_week = []
+    next_week = []
+    later = []
+
+    for a in assignments:
+        due_str = a.get("due_date", "")
+        try:
+            if len(due_str) == 10:
+                due_dt = datetime.strptime(due_str, "%Y-%m-%d").replace(hour=23, minute=59, tzinfo=KYIV_TZ)
+            else:
+                due_dt = datetime.strptime(due_str[:16], "%Y-%m-%d %H:%M").replace(tzinfo=KYIV_TZ)
+        except Exception:
+            later.append((a, due_str, "📅", "🟢"))
+            continue
+
+        due_date = due_dt.date()
+        diff = due_dt - now
+        total_hours = int(diff.total_seconds() // 3600)
+        days_left = diff.days
+
+        if total_hours < 0:
+            time_left_str = "⚠️ прострочено!"
+            emoji = "🔴"
+        elif total_hours < 24:
+            time_left_str = f"залишилось {total_hours} год"
+            emoji = "🔴"
+        elif days_left < 3:
+            time_left_str = f"залишилось {days_left} дн"
+            emoji = "🟡"
+        else:
+            time_left_str = f"залишилось {days_left} дн"
+            emoji = "🟢"
+
+        item = (a, due_dt.strftime("%d.%m о %H:%M"), time_left_str, emoji)
+
+        if due_date <= this_week_end:
+            this_week.append(item)
+        elif due_date <= next_week_end:
+            next_week.append(item)
+        else:
+            later.append(item)
+
+    lines = ["📋 **РАДАР ДЕДЛАЙНІВ (ІП-66):**\n"]
+
+    if this_week:
+        lines.append("🔥 **ГОРИТЬ НА ЦЬОМУ ТИЖНІ:**")
+        for a, due_f, rem, emoji in this_week:
+            desc = f"\n   📝 _{a['description']}_" if a.get("description") else ""
+            lines.append(f"{emoji} **{a['course_id']}** — {a['title']}\n   ⏳ **Дедлайн:** {due_f} *({rem})*{desc}")
+        lines.append("")
+
+    if next_week:
+        lines.append("🟡 **НА НАСТУПНИЙ ТИЖДЕНЬ:**")
+        for a, due_f, rem, emoji in next_week:
+            desc = f"\n   📝 _{a['description']}_" if a.get("description") else ""
+            lines.append(f"• **{a['course_id']}** — {a['title']}\n   ⏳ До {due_f} *({rem})*{desc}")
+        lines.append("")
+
+    if later:
+        lines.append("🟢 **ПІЗНІШЕ:**")
+        for a, due_f, rem, emoji in later:
+            lines.append(f"• **{a['course_id']}** — {a['title']} (до {due_f})")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def format_evening_digest(assignments: list[dict]) -> str:
+    """Форматирование вечерней сводки в 21:00."""
+    now = datetime.now(KYIV_TZ)
+    today = now.date()
+    tomorrow = today + timedelta(days=1)
+    days_to_sunday = 6 - today.weekday()
+    this_week_end = today + timedelta(days=days_to_sunday)
+
+    tomorrow_count = 0
+    this_week_count = 0
+
+    for a in assignments:
+        due_str = a.get("due_date", "")
+        try:
+            due_date = datetime.strptime(due_str[:10], "%Y-%m-%d").date()
+            if due_date == tomorrow:
+                tomorrow_count += 1
+            if due_date <= this_week_end:
+                this_week_count += 1
+        except Exception:
+            pass
+
+    lines = [
+        "🌙 **Вечірній статус дедлайнів (21:00):**\n",
+    ]
+
+    if tomorrow_count > 0:
+        lines.append(f"🔴 **Увага! На завтра горить дедлайнів: {tomorrow_count}**")
+    else:
+        lines.append("✅ На завтра дедлайнів немає, можна спокійно виспатися!")
+
+    if this_week_count > 0:
+        lines.append(f"⏳ До кінця цього тижня залишилося здати робіт: **{this_week_count}**.")
+
+    lines.append("\n👉 Повний список і таймери: команда `/deadlines`")
+    return "\n".join(lines)

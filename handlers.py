@@ -133,16 +133,88 @@ async def cmd_links(message: Message):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        "🤖 **Команди бота:**\n\n"
+        "🤖 **Команди бота (ІП-66):**\n\n"
+        "📅 **Розклад пар:**\n"
         "/today — Розклад на сьогодні\n"
         "/tomorrow — Розклад на завтра\n"
         "/week — Поточний тиждень та київський час\n"
-        "/links — Список посилань на Zoom/Meet\n"
-        "/summary <посилання> — Зробити конспект та вижимку лекції з YouTube\n"
+        "/links — Список посилань на Zoom/Meet\n\n"
+        "🔥 **Дедлайни та завдання:**\n"
+        "/deadlines — Радар дедлайнів (що горить на цьому тижні)\n"
+        "/evening — Тестовий виклик вечірньої сводки (21:00)\n"
+        "/adddeadline — Додати новий дедлайн\n"
+        "/deldeadline <id> — Видалити дедлайн\n\n"
+        "🎬 **AI Конспекти:**\n"
+        "/summary <посилання> — Вижимка та анонси лекції з YouTube\n\n"
+        "⚙️ **Налаштування:**\n"
         "/subscribe — Увімкнути сповіщення в цьому чаті\n"
         "/unsubscribe — Вимкнути сповіщення\n"
         "/help — Ця довідка"
     )
+    await message.answer(text, parse_mode="Markdown")
+
+
+@router.message(Command("deadlines"))
+async def cmd_deadlines(message: Message):
+    from database import get_active_assignments_db
+    from formatters import format_deadlines_radar
+
+    assignments = await get_active_assignments_db()
+    text = format_deadlines_radar(assignments)
+    await message.answer(text, parse_mode="Markdown")
+
+
+@router.message(Command("adddeadline"))
+async def cmd_add_deadline(message: Message):
+    from database import add_assignment_db
+    import uuid
+
+    raw_text = message.text.replace("/adddeadline", "", 1).strip()
+    parts = [p.strip() for p in raw_text.split("|")]
+    if len(parts) < 3:
+        await message.answer(
+            "ℹ️ **Формат додавання дедлайну:**\n"
+            "`/adddeadline Предмет | Назва завдання | РРРР-ММ-ДД HH:MM | Опис (необов'язково)`\n\n"
+            "Приклад:\n"
+            "`/adddeadline Основи програмування | Лабораторна №1 | 2026-10-15 23:59 | Здати в репозиторій`",
+            parse_mode="Markdown"
+        )
+        return
+
+    course_name = parts[0]
+    title = parts[1]
+    due_date = parts[2]
+    desc = parts[3] if len(parts) > 3 else ""
+    aid = f"manual_{uuid.uuid4().hex[:6]}"
+
+    await add_assignment_db(aid, course_name, title, due_date, desc)
+    await message.answer(
+        f"✅ Дедлайн успішно додано!\n🆔 ID: `{aid}`\n📚 **{course_name}** — {title}\n⏳ **Дедлайн:** {due_date}",
+        parse_mode="Markdown"
+    )
+
+
+@router.message(Command("deldeadline"))
+async def cmd_del_deadline(message: Message):
+    from database import delete_assignment_db
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("ℹ️ Вкажіть ID дедлайну для видалення:\n`/deldeadline <id>`", parse_mode="Markdown")
+        return
+
+    aid = parts[1].strip()
+    await delete_assignment_db(aid)
+    await message.answer(f"🗑 Дедлайн `{aid}` видалено або позначено як виконаний!", parse_mode="Markdown")
+
+
+@router.message(Command("evening"))
+async def cmd_evening(message: Message):
+    from database import get_active_assignments_db
+    from formatters import format_evening_digest
+
+    assignments = await get_active_assignments_db()
+    text = format_evening_digest(assignments)
     await message.answer(text, parse_mode="Markdown")
 
 

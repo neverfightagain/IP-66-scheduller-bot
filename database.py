@@ -55,8 +55,7 @@ async def init_db():
                 due_date TIMESTAMP,
                 status TEXT DEFAULT 'active',
                 raw_json TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (course_id) REFERENCES courses(id)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
@@ -68,8 +67,7 @@ async def init_db():
                 title TEXT NOT NULL,
                 published_at TIMESTAMP,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                summary_json TEXT,
-                FOREIGN KEY (course_id) REFERENCES courses(id)
+                summary_json TEXT
             );
         """)
 
@@ -78,12 +76,11 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS announcements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 course_id TEXT,
-                source TEXT NOT NULL, -- 'youtube' или 'classroom'
+                source TEXT NOT NULL,
                 text TEXT NOT NULL,
                 detected_date TIMESTAMP,
                 conflict_flag INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (course_id) REFERENCES courses(id)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
@@ -92,6 +89,7 @@ async def init_db():
 
         # Автоматическая миграция из старых JSON-файлов
         await _migrate_legacy_data(db)
+        await seed_demo_assignments_if_empty()
 
 
 async def _migrate_legacy_data(db: aiosqlite.Connection):
@@ -182,3 +180,70 @@ async def save_video_summary(video_id: str, title: str, course_id: str | None, p
             VALUES (?, ?, ?, ?, ?)
         """, (video_id, course_id, title, published_at, json.dumps(summary, ensure_ascii=False)))
         await db.commit()
+
+
+# --- API для работы с заданиями (Дедлайнами) ---
+
+async def add_assignment_db(assignment_id: str, course_name: str, title: str, due_date: str, description: str = "") -> bool:
+    """Добавить или обновить дедлайн задания."""
+    async with get_db() as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO assignments (id, course_id, title, due_date, description, status)
+            VALUES (?, ?, ?, ?, ?, 'active')
+        """, (assignment_id, course_name, title, due_date, description))
+        await db.commit()
+        return True
+
+
+async def get_active_assignments_db() -> list[dict]:
+    """Получить все активные задания, отсортированные по дедлайну."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, course_id, title, description, due_date, status
+            FROM assignments
+            WHERE status = 'active'
+            ORDER BY due_date ASC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def delete_assignment_db(assignment_id: str) -> bool:
+    """Удалить задание по id."""
+    async with get_db() as db:
+        await db.execute("DELETE FROM assignments WHERE id = ?", (assignment_id,))
+        await db.commit()
+        return True
+
+
+async def seed_demo_assignments_if_empty():
+    """Добавить демонстрационные дедлайны для проверки, если база пустая."""
+    from datetime import datetime, timedelta
+    from config import KYIV_TZ
+    now = datetime.now(KYIV_TZ)
+
+    async with get_db() as db:
+        async with db.execute("SELECT COUNT(*) as cnt FROM assignments") as cursor:
+            row = await cursor.fetchone()
+            if row and row["cnt"] > 0:
+                return
+
+        # Добавляем 3 тестовых дедлайна
+        d1 = (now + timedelta(days=2)).strftime("%Y-%m-%d 23:59")
+        d2 = (now + timedelta(days=4)).strftime("%Y-%m-%d 23:59")
+        d3 = (now + timedelta(days=9)).strftime("%Y-%m-%d 23:59")
+
+        demo_data = [
+            ("op_lab1", "Основи програмування", "Лабораторна робота №1 (Базові конструкції)", d1, "Здавати через репозиторій GitHub"),
+            ("asd_lab1", "Алгоритми та структури даних", "Лабораторна робота №1 (Основи алгоритмізації)", d2, "Звіт у форматі PDF + код"),
+            ("kdm_calc1", "Комп'ютерна дискретна математика", "Розрахункова робота №1 (Множини та відношення)", d3, "Варіанти згідно зі списком у журналі")
+        ]
+
+        for aid, cname, title, due, desc in demo_data:
+            await db.execute("""
+                INSERT OR IGNORE INTO assignments (id, course_id, title, due_date, description, status)
+                VALUES (?, ?, ?, ?, ?, 'active')
+            """, (aid, cname, title, due, desc))
+
+        await db.commit()
+        logger.info("Додано тестові дедлайни для перевірки команди /deadlines.")

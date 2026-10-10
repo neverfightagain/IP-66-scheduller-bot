@@ -127,6 +127,25 @@ async def check_upcoming_lessons(bot: Bot):
                 logger.info(f"Надіслано сповіщення за {target_minutes} хв: {lesson['name']} ({lesson['time']})")
 
 
+async def send_evening_digest(bot: Bot):
+    """Отправить вечернюю сводку статуса дедлайнов в 21:00."""
+    from database import get_active_assignments_db, get_subscribed_chats_db
+    from formatters import format_evening_digest
+
+    chats = await get_subscribed_chats_db()
+    if not chats:
+        return
+
+    assignments = await get_active_assignments_db()
+    text = format_evening_digest(assignments)
+
+    for chat_id in chats:
+        try:
+            await bot.send_message(chat_id, text, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Не вдалося надіслати вечірній дайджест у чат {chat_id}: {e}")
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Настроить и запустить планировщик задач."""
     scheduler = AsyncIOScheduler(timezone=KYIV_TZ)
@@ -155,6 +174,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         refresh_today_cache,
         trigger=CronTrigger(hour=6, minute=0, timezone=KYIV_TZ),
         name="daily_cache_refresh",
+    )
+
+    # 4. Вечерний дайджест дедлайнов в 21:00 с понедельника по субботу
+    scheduler.add_job(
+        send_evening_digest,
+        trigger=CronTrigger(day_of_week="mon-sat", hour=21, minute=0, timezone=KYIV_TZ),
+        args=[bot],
+        name="evening_digest",
     )
 
     return scheduler
