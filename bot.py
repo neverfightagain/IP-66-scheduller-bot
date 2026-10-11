@@ -94,6 +94,13 @@ async def main():
     # Первичная загрузка расписания на сегодня
     await refresh_today_cache()
 
+    # Первинна синхронізація Google Classroom (якщо токен є)
+    try:
+        from classroom_sync import sync_classroom_tasks
+        await sync_classroom_tasks(bot)
+    except Exception as e:
+        logger.warning(f"Classroom sync on startup: {e}")
+
     # Запуск планировщика задач (дайджест + пуши за 5 минут)
     scheduler = setup_scheduler(bot)
     scheduler.start()
