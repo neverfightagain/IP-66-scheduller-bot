@@ -1,0 +1,16 @@
+{
+  "Лінійна алгебра та аналітична геометрія (Лек)": {
+    "subject": "Лінійна алгебра та аналітична геометрія",
+    "type": "Лек",
+    "lecturer": "Викладач",
+    "url": "https://us02web.zoom.us/j/0000000000?pwd=EXAMPLE_PASSWORD",
+    "comment": "Zoom"
+  },
+  "Математичний аналіз (Прак)": {
+    "subject": "Математичний аналіз",
+    "type": "Прак",
+    "lecturer": "Викладач",
+    "url": "https://meet.google.com/abc-defg-hij",
+    "comment": "Google Meet"
+  }
+}

@@ -13,3 +13,4 @@ venv/
 bot.log
 auth_*.py
 auth_url.txt
+links.json

@@ -135,7 +135,9 @@ async def cmd_start(message: Message):
         "/today — Розклад пар на сьогодні з лінками на Zoom/Meet\n"
         "/tomorrow — Розклад пар на завтра\n"
         "/week — Номер поточного тижня (чисельник/знаменник) та київський час\n"
-        "/links — Збережені посилання на конференції та лекції\n\n"
+        "/links — Збережені посилання на конференції та лекції\n"
+        "/setlink — Додати/оновити посилання на пару (`/setlink Предмет | URL | Коментар`)\n"
+        "/dellink — Видалити посилання на предмет (`/dellink Предмет`)\n\n"
         "📊 **Дедлайни та Classroom:**\n"
         "/deadlines — Радар усіх дедлайнів (палаючі, на тиждень, без дедлайну)\n"
         "/summary — Підсумок дня, що задали та палаючі дедлайни\n"
@@ -256,15 +258,65 @@ async def cmd_links(message: Message):
     await safe_answer(message, "\n\n".join(lines), disable_web_page_preview=True)
 
 
+@router.message(Command("setlink"))
+async def cmd_set_link(message: Message):
+    from links_manager import set_course_link
+    raw_text = message.text.replace("/setlink", "", 1).strip()
+    parts = [p.strip() for p in raw_text.split("|")]
+    if len(parts) < 2:
+        await safe_answer(
+            message,
+            "ℹ️ **Формат додавання/оновлення посилання на пару:**\n"
+            "`/setlink Предмет (Тип) | URL | Коментар (необов'язково)`\n\n"
+            "Приклад:\n"
+            "`/setlink Філософія (Лек) | https://us02web.zoom.us/j/... | Zoom`"
+        )
+        return
+
+    raw_key = parts[0][:100].strip()
+    url = parts[1].strip()
+    comment = parts[2][:100].strip() if len(parts) > 2 else ""
+
+    if not (url.startswith("http://") or url.startswith("https://")):
+        await safe_answer(message, "❌ Посилання має починатися з `https://` або `http://`!")
+        return
+
+    set_course_link(raw_key, url, comment)
+    c_key = clean_markdown(raw_key)
+    comment_str = f" _({clean_markdown(comment)})_" if comment else ""
+    await safe_answer(
+        message,
+        f"✅ Посилання для **{c_key}** успішно збережено!\n"
+        f"🔗 [Перейти до заняття]({url}){comment_str}"
+    )
+
+
+@router.message(Command("dellink"))
+async def cmd_del_link(message: Message):
+    from links_manager import delete_course_link
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await safe_answer(message, "ℹ️ Вкажіть назву предмета для видалення:\n`/dellink Назва`")
+        return
+
+    key = parts[1].strip()
+    if delete_course_link(key):
+        await safe_answer(message, f"🗑 Посилання для **{clean_markdown(key)}** видалено!")
+    else:
+        await safe_answer(message, f"⚠️ Посилання для «{clean_markdown(key)}» не знайдено.")
+
+
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
         "📖 **Повна довідка по боту ІП-66:**\n\n"
-        "📅 **Розклад пар:**\n"
+        "📅 **Розклад пар та посилання:**\n"
         "• /today — Пари на сьогодні з посиланнями на Zoom/Teams/Meet\n"
         "• /tomorrow — Пари на завтра\n"
         "• /week — Номер навчального тижня (1 чи 2) та точний київський час\n"
-        "• /links — База збережених посилань на дистанційні заняття\n\n"
+        "• /links — База збережених посилань на дистанційні заняття\n"
+        "• /setlink — Додати або оновити посилання на пару (`/setlink Предмет | URL | Коментар`)\n"
+        "• /dellink — Видалити посилання на предмет (`/dellink Предмет`)\n\n"
         "📊 **Завдання, Classroom та AI:**\n"
         "• /deadlines — Радар активних завдань з Google Classroom із розрахунком часу, що залишився\n"
         "• /summary (або /evening) — Розумний підсумок дня (пари, що задали, анонси та палаючі дедлайни)\n"
@@ -279,8 +331,8 @@ async def cmd_help(message: Message):
         "• 🎬 **Кожні 30 хв** — Моніторинг нових лекцій на YouTube `@ip-66_studio` та Gemini AI конспект\n"
         "• 🌙 **21:00** — Вечірній підсумок дня (о 10:00 у вихідні дні)\n\n"
         "⚙️ **Керування чатом:**\n"
-        "• /subscribe — Увімкнути автоматичні сповіщення для цього чату\n"
-        "• /unsubscribe — Призупинити сповіщення для цього чату"
+        "• /subscribe — Увімкнути автоматичні сповіщення для цього чату / топіку\n"
+        "• /unsubscribe — Призупинити сповіщення для цього чату / топіку"
     )
     await safe_answer(message, text)
 
