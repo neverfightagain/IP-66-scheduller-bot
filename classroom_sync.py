@@ -28,6 +28,14 @@ TOKEN_FILE = BASE_DIR / "token.json"
 def get_classroom_credentials() -> Credentials | None:
     """Получить или обновить валидные учетные данные OAuth 2.0."""
     creds = None
+    # Поддержка переменной окружения GOOGLE_TOKEN_JSON (для Render / Cloud хостингов)
+    if not TOKEN_FILE.exists() and os.getenv("GOOGLE_TOKEN_JSON"):
+        try:
+            with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+                f.write(os.getenv("GOOGLE_TOKEN_JSON").strip())
+        except Exception as e:
+            logger.warning(f"Не вдалося записати token.json з env: {e}")
+
     if TOKEN_FILE.exists():
         try:
             creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)

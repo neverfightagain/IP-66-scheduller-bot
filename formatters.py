@@ -136,16 +136,21 @@ def format_deadlines_radar(assignments: list[dict]) -> str:
     this_week = []
     next_week = []
     later = []
+    no_deadline_count = 0
 
     for a in assignments:
         due_str = a.get("due_date", "")
+        if not due_str or due_str == "Без дедлайну":
+            no_deadline_count += 1
+            continue
+
         try:
             if len(due_str) == 10:
                 due_dt = datetime.strptime(due_str, "%Y-%m-%d").replace(hour=23, minute=59, tzinfo=KYIV_TZ)
             else:
                 due_dt = datetime.strptime(due_str[:16], "%Y-%m-%d %H:%M").replace(tzinfo=KYIV_TZ)
         except Exception:
-            later.append((a, due_str, "📅", "🟢"))
+            no_deadline_count += 1
             continue
 
         due_date = due_dt.date()
@@ -153,8 +158,12 @@ def format_deadlines_radar(assignments: list[dict]) -> str:
         total_hours = int(diff.total_seconds() // 3600)
         days_left = diff.days
 
+        # Пропускаємо старі архівні дедлайни (більше ніж 7 днів тому)
+        if days_left < -7:
+            continue
+
         if total_hours < 0:
-            time_left_str = "⚠️ прострочено!"
+            time_left_str = "⚠️ прострочено"
             emoji = "🔴"
         elif total_hours < 24:
             time_left_str = f"залишилось {total_hours} год"
@@ -196,6 +205,9 @@ def format_deadlines_radar(assignments: list[dict]) -> str:
         for a, due_f, rem, emoji in later:
             lines.append(f"• **{a['course_id']}** — {a['title']} (до {due_f})")
         lines.append("")
+
+    if no_deadline_count > 0:
+        lines.append(f"📌 _Завдань та практикумів без фіксованого дедлайну:_ **{no_deadline_count}**\n")
 
     return "\n".join(lines).strip()
 

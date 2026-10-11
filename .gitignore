@@ -11,3 +11,5 @@ __pycache__/
 venv/
 .venv/
 bot.log
+auth_*.py
+auth_url.txt
