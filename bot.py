@@ -87,6 +87,24 @@ async def main():
     me = await bot.get_me()
     logger.info(f"Успішна авторизація: бот @{me.username} ({me.first_name})")
 
+    # Встановлення списку команд у меню Telegram
+    from aiogram.types import BotCommand
+    try:
+        await bot.set_my_commands([
+            BotCommand(command="today", description="Розклад пар на сьогодні"),
+            BotCommand(command="tomorrow", description="Розклад пар на завтра"),
+            BotCommand(command="week", description="Поточний навчальний тиждень"),
+            BotCommand(command="deadlines", description="Радар дедлайнів (Classroom)"),
+            BotCommand(command="summary", description="Підсумок дня та дедлайни"),
+            BotCommand(command="sync", description="Синхронізація з Classroom"),
+            BotCommand(command="links", description="Посилання на Zoom/Meet"),
+            BotCommand(command="subscribe", description="Увімкнути сповіщення"),
+            BotCommand(command="unsubscribe", description="Вимкнути сповіщення"),
+            BotCommand(command="help", description="Повна довідка по боту"),
+        ])
+    except Exception as e:
+        logger.warning(f"Не вдалося оновити меню команд: {e}")
+
     # Ініціалізація бази даних SQLite (v2.0)
     from database import init_db
     await init_db()
