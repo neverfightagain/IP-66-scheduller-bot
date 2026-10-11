@@ -41,14 +41,25 @@ LINKS_FILE = BASE_DIR / "links.json"
 
 
 ENV_CHAT_ID = os.getenv("CHAT_ID", "").strip()
+ENV_THREAD_ID = os.getenv("THREAD_ID", "").strip()
 
 
-def get_subscribed_chats() -> list[int]:
-    """Получить список chat_id, подписанных на уведомления."""
-    chats = set()
+def get_subscribed_chats() -> list[dict]:
+    """
+    Отримати список цільових чатів та топіків:
+    [{'chat_id': int, 'thread_id': int | None}]
+    """
+    targets = []
+    seen = set()
+
     if ENV_CHAT_ID:
         try:
-            chats.add(int(ENV_CHAT_ID))
+            cid = int(ENV_CHAT_ID)
+            tid = int(ENV_THREAD_ID) if ENV_THREAD_ID else None
+            key = (cid, tid)
+            if key not in seen:
+                seen.add(key)
+                targets.append({"chat_id": cid, "thread_id": tid})
         except ValueError:
             pass
 
@@ -56,31 +67,58 @@ def get_subscribed_chats() -> list[int]:
         try:
             with open(CHATS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                for cid in data.get("chats", []):
-                    chats.add(int(cid))
+                for item in data.get("chats", []):
+                    if isinstance(item, int):
+                        cid, tid = item, None
+                    elif isinstance(item, dict):
+                        cid = int(item["chat_id"])
+                        tid = int(item["thread_id"]) if item.get("thread_id") is not None else None
+                    else:
+                        continue
+                    key = (cid, tid)
+                    if key not in seen:
+                        seen.add(key)
+                        targets.append({"chat_id": cid, "thread_id": tid})
         except Exception:
             pass
 
-    return list(chats)
+    return targets
 
 
-def add_subscribed_chat(chat_id: int) -> bool:
-    """Добавить чат в список рассылки."""
-    chats = set(get_subscribed_chats())
-    if chat_id not in chats:
-        chats.add(chat_id)
-        with open(CHATS_FILE, "w", encoding="utf-8") as f:
-            json.dump({"chats": list(chats)}, f, indent=2)
-        return True
+def add_subscribed_chat(chat_id: int, thread_id: int | None = None) -> bool:
+    """Додати або перемкнути чат/топік у списку розсилки chats.json."""
+    targets = get_subscribed_chats()
+
+    # Якщо це група, вимикаємо старі топіки цієї групи, щоб не спамити в різні гілки
+    if chat_id < 0:
+        targets = [t for t in targets if t["chat_id"] != chat_id]
+
+    key = (chat_id, thread_id)
+    seen = {(t["chat_id"], t.get("thread_id")) for t in targets}
+    if key not in seen:
+        targets.append({"chat_id": chat_id, "thread_id": thread_id})
+        try:
+            with open(CHATS_FILE, "w", encoding="utf-8") as f:
+                json.dump({"chats": targets}, f, indent=2)
+            return True
+        except Exception:
+            pass
     return False
 
 
-def remove_subscribed_chat(chat_id: int) -> bool:
-    """Удалить чат из списка рассылки."""
-    chats = set(get_subscribed_chats())
-    if chat_id in chats:
-        chats.remove(chat_id)
-        with open(CHATS_FILE, "w", encoding="utf-8") as f:
-            json.dump({"chats": list(chats)}, f, indent=2)
-        return True
+def remove_subscribed_chat(chat_id: int, thread_id: int | None = None) -> bool:
+    """Видалити чат або конкретний топік зі списку розсилки chats.json."""
+    targets = get_subscribed_chats()
+    if thread_id is not None:
+        new_targets = [t for t in targets if not (t["chat_id"] == chat_id and t.get("thread_id") == thread_id)]
+    else:
+        new_targets = [t for t in targets if t["chat_id"] != chat_id]
+
+    if len(new_targets) != len(targets):
+        try:
+            with open(CHATS_FILE, "w", encoding="utf-8") as f:
+                json.dump({"chats": new_targets}, f, indent=2)
+            return True
+        except Exception:
+            pass
     return False

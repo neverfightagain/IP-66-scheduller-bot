@@ -102,13 +102,24 @@ def normalize_due_date(due_str: str) -> str | None:
 async def cmd_start(message: Message):
     chat_id = message.chat.id
     chat_type = message.chat.type
+    thread_id = message.message_thread_id if getattr(message, "is_topic_message", False) else None
 
-    is_new = add_subscribed_chat(chat_id)
+    from database import add_subscription_db
+    is_new = await add_subscription_db(chat_id, thread_id)
+    add_subscribed_chat(chat_id, thread_id)
 
     is_group = chat_type in (ChatType.GROUP, ChatType.SUPERGROUP)
-    chat_desc = "цього групового чату" if is_group else "вас"
+    topic_desc = f" (топік ID: `{thread_id}`)" if thread_id else ""
+    chat_desc = f"цього групового чату{topic_desc}" if is_group else "вас"
     id_info = f"\n🆔 **ID чату:** `{chat_id}`" if is_group else ""
-    sub_status = f"✅ Сповіщення активовано для {chat_desc}!{id_info}" if is_new else f"ℹ️ {chat_desc.capitalize()} вже підписано на сповіщення.{id_info}"
+    if thread_id:
+        id_info += f"\n📌 **ID топіку:** `{thread_id}`"
+
+    sub_status = (
+        f"✅ Сповіщення активовано для {chat_desc}!{id_info}"
+        if is_new
+        else f"ℹ️ {chat_desc.capitalize()} вже підписано на сповіщення.{id_info}"
+    )
 
     text = (
         "👋 **Привіт! Я розумний розклад-асистент ІП-66.**\n\n"
@@ -132,7 +143,7 @@ async def cmd_start(message: Message):
         "/adddeadline — Додати завдання вручну (`/adddeadline Предмет | Назва | Дедлайн | Опис`)\n"
         "/deldeadline — Видалити завдання за ID (`/deldeadline <id>`)\n\n"
         "⚙️ **Керування сповіщеннями:**\n"
-        "/subscribe — Увімкнути сповіщення в цьому чаті\n"
+        "/subscribe — Увімкнути сповіщення в цьому чаті / топіку\n"
         "/unsubscribe — Вимкнути сповіщення\n"
         "/help — Повна довідка з поясненням можливостей"
     )
@@ -142,19 +153,42 @@ async def cmd_start(message: Message):
 @router.message(Command("subscribe"))
 async def cmd_subscribe(message: Message):
     chat_id = message.chat.id
-    if add_subscribed_chat(chat_id):
-        await safe_answer(message, "✅ Чат успішно підписано на автоматичні сповіщення!")
+    thread_id = message.message_thread_id if getattr(message, "is_topic_message", False) else None
+
+    from database import add_subscription_db
+    await add_subscription_db(chat_id, thread_id)
+    add_subscribed_chat(chat_id, thread_id)
+
+    if thread_id:
+        await safe_answer(
+            message,
+            f"✅ **Сповіщення успішно налаштовано для цього топіку!**\n\n"
+            f"🆔 **ID чату:** `{chat_id}`\n"
+            f"📌 **ID топіку:** `{thread_id}`\n\n"
+            f"🎯 Усі ранкові розклади, нагадування перед парами, дедлайни з Classroom та конспекти лекцій "
+            f"надсилатимуться **виключно в цю гілку**."
+        )
     else:
-        await safe_answer(message, "ℹ️ Цей чат вже підписаний на сповіщення.")
+        await safe_answer(
+            message,
+            f"✅ **Сповіщення успішно активовано для цього чату!**\n"
+            f"🆔 **ID чату:** `{chat_id}`"
+        )
 
 
 @router.message(Command("unsubscribe"))
 async def cmd_unsubscribe(message: Message):
     chat_id = message.chat.id
-    if remove_subscribed_chat(chat_id):
-        await safe_answer(message, "🛑 Сповіщення для цього чату вимкнено.")
+    thread_id = message.message_thread_id if getattr(message, "is_topic_message", False) else None
+
+    from database import remove_subscription_db
+    await remove_subscription_db(chat_id, thread_id)
+    remove_subscribed_chat(chat_id, thread_id)
+
+    if thread_id:
+        await safe_answer(message, f"🛑 Сповіщення для топіку `{thread_id}` вимкнено.")
     else:
-        await safe_answer(message, "ℹ️ Цей чат не був підписаний на сповіщення.")
+        await safe_answer(message, "🛑 Сповіщення для цього чату вимкнено.")
 
 
 @router.message(Command("today"))

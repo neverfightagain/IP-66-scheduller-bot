@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 import aiosqlite
-from config import BASE_DIR, CHATS_FILE, LINKS_FILE, ENV_CHAT_ID
+from config import BASE_DIR, CHATS_FILE, LINKS_FILE, ENV_CHAT_ID, ENV_THREAD_ID
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +35,20 @@ async def init_db():
             );
         """)
 
-        # 2. Таблица настроек чатов (рассылки)
+        # 2. Таблица настроек чатов и топиков (Telegram Forum Topics)
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS chat_settings (
-                chat_id INTEGER PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS chat_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                thread_id INTEGER DEFAULT NULL,
                 notifications_enabled INTEGER DEFAULT 1,
                 summaries_enabled INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+        """)
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_thread
+            ON chat_subscriptions (chat_id, IFNULL(thread_id, 0));
         """)
 
         # 3. Таблица заданий и лабораторных (Google Classroom)
@@ -95,34 +101,58 @@ async def init_db():
 
 
 async def _migrate_legacy_data(db: aiosqlite.Connection):
-    """Миграция данных из chats.json и links.json в SQLite."""
-    # Миграция chats.json
+    """Миграция данных из старых таблиц, chats.json и links.json в SQLite."""
+    # 1. Миграция из старой таблицы chat_settings, если она существовала
+    try:
+        async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_settings'") as cursor:
+            if await cursor.fetchone():
+                await db.execute("""
+                    INSERT OR IGNORE INTO chat_subscriptions (chat_id, thread_id, notifications_enabled, summaries_enabled)
+                    SELECT chat_id, NULL, notifications_enabled, summaries_enabled
+                    FROM chat_settings
+                """)
+                await db.commit()
+    except Exception as e:
+        logger.warning(f"Помилка міграції chat_settings: {e}")
+
+    # 2. Миграция chats.json
     if CHATS_FILE.exists():
         try:
             with open(CHATS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 chats = data.get("chats", [])
-                for cid in chats:
-                    await db.execute(
-                        "INSERT OR IGNORE INTO chat_settings (chat_id) VALUES (?)",
-                        (int(cid),)
-                    )
+                for item in chats:
+                    if isinstance(item, int):
+                        cid, tid = item, None
+                    elif isinstance(item, dict):
+                        cid = int(item["chat_id"])
+                        tid = int(item["thread_id"]) if item.get("thread_id") is not None else None
+                    else:
+                        continue
+                    await db.execute("""
+                        INSERT INTO chat_subscriptions (chat_id, thread_id, notifications_enabled)
+                        VALUES (?, ?, 1)
+                        ON CONFLICT(chat_id, IFNULL(thread_id, 0)) DO UPDATE SET notifications_enabled = 1
+                    """, (cid, tid))
                 await db.commit()
         except Exception as e:
             logger.warning(f"Помилка міграції chats.json: {e}")
 
-    # Добавляем чат из переменной окружения CHAT_ID, если задан
+    # 3. Добавляем чат из переменной окружения CHAT_ID / THREAD_ID, если задан
     if ENV_CHAT_ID:
         try:
-            await db.execute(
-                "INSERT OR IGNORE INTO chat_settings (chat_id) VALUES (?)",
-                (int(ENV_CHAT_ID),)
-            )
+            cid = int(ENV_CHAT_ID)
+            tid = int(ENV_THREAD_ID) if ENV_THREAD_ID else None
+            await db.execute("""
+                INSERT INTO chat_subscriptions (chat_id, thread_id, notifications_enabled)
+                VALUES (?, ?, 1)
+                ON CONFLICT(chat_id, IFNULL(thread_id, 0)) DO UPDATE SET notifications_enabled = 1
+            """, (cid, tid))
             await db.commit()
         except Exception as e:
             logger.warning(f"Помилка додавання ENV_CHAT_ID: {e}")
 
-    # Миграция links.json
+    # 4. Миграция links.json
     if LINKS_FILE.exists():
         try:
             with open(LINKS_FILE, "r", encoding="utf-8") as f:
@@ -143,36 +173,64 @@ async def _migrate_legacy_data(db: aiosqlite.Connection):
             logger.warning(f"Помилка міграції links.json: {e}")
 
 
-# --- API для работы с чатами ---
+# --- API для работы с чатами и топиками ---
 
-async def get_subscribed_chats_db() -> list[int]:
-    """Получить список всех chat_id с включенными уведомлениями."""
+async def get_subscribed_chats_db() -> list[dict]:
+    """Получить список всех активных чатов и топиков: [{'chat_id': int, 'thread_id': int | None}]."""
     async with get_db() as db:
-        async with db.execute("SELECT chat_id FROM chat_settings WHERE notifications_enabled = 1") as cursor:
+        async with db.execute("""
+            SELECT chat_id, thread_id
+            FROM chat_subscriptions
+            WHERE notifications_enabled = 1
+        """) as cursor:
             rows = await cursor.fetchall()
-            return [row["chat_id"] for row in rows]
+            return [{"chat_id": row["chat_id"], "thread_id": row["thread_id"]} for row in rows]
 
 
-async def add_subscribed_chat_db(chat_id: int) -> bool:
-    """Добавить или активировать чат в базе данных."""
+async def add_subscription_db(chat_id: int, thread_id: int | None = None) -> bool:
+    """
+    Добавить или активировать подписку для чата/топика.
+    Для групп (chat_id < 0) переключает активный топик на новый, отключая старые.
+    """
     async with get_db() as db:
+        if chat_id < 0:
+            await db.execute("""
+                UPDATE chat_subscriptions
+                SET notifications_enabled = 0
+                WHERE chat_id = ? AND IFNULL(thread_id, 0) != IFNULL(?, 0)
+            """, (chat_id, thread_id))
+
         await db.execute("""
-            INSERT INTO chat_settings (chat_id, notifications_enabled)
-            VALUES (?, 1)
-            ON CONFLICT(chat_id) DO UPDATE SET notifications_enabled = 1
-        """, (chat_id,))
+            INSERT INTO chat_subscriptions (chat_id, thread_id, notifications_enabled)
+            VALUES (?, ?, 1)
+            ON CONFLICT(chat_id, IFNULL(thread_id, 0)) DO UPDATE SET notifications_enabled = 1
+        """, (chat_id, thread_id))
         await db.commit()
         return True
 
 
-async def remove_subscribed_chat_db(chat_id: int) -> bool:
-    """Отключить уведомления для чата."""
+async def remove_subscription_db(chat_id: int, thread_id: int | None = None) -> bool:
+    """Отключить уведомления для чата или конкретного топика."""
     async with get_db() as db:
-        await db.execute("""
-            UPDATE chat_settings SET notifications_enabled = 0 WHERE chat_id = ?
-        """, (chat_id,))
+        if thread_id is not None:
+            await db.execute("""
+                UPDATE chat_subscriptions
+                SET notifications_enabled = 0
+                WHERE chat_id = ? AND IFNULL(thread_id, 0) = ?
+            """, (chat_id, thread_id))
+        else:
+            await db.execute("""
+                UPDATE chat_subscriptions
+                SET notifications_enabled = 0
+                WHERE chat_id = ?
+            """, (chat_id,))
         await db.commit()
         return True
+
+
+# Алиасы для обратной совместимости
+add_subscribed_chat_db = add_subscription_db
+remove_subscribed_chat_db = remove_subscription_db
 
 
 # --- API для работы с видео и конспектами ---

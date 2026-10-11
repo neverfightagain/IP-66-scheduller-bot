@@ -225,16 +225,18 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                             if alt_link:
                                 text += f"\n🔗 [Відкрити в Google Classroom]({alt_link})"
 
-                            for chat_id in chats:
+                            for target in chats:
+                                cid = target["chat_id"]
+                                tid = target.get("thread_id")
                                 try:
-                                    await bot.send_message(chat_id, text, parse_mode="Markdown")
+                                    await bot.send_message(cid, text, parse_mode="Markdown", message_thread_id=tid)
                                 except Exception as e:
-                                    logger.warning(f"Markdown send failed to {chat_id}: {e}. Retrying plain text.")
+                                    logger.warning(f"Markdown send failed to {cid} (thread {tid}): {e}. Retrying plain text.")
                                     try:
                                         plain_text = text.replace("**", "").replace("*", "").replace("`", "").replace("_", "")
-                                        await bot.send_message(chat_id, plain_text)
+                                        await bot.send_message(cid, plain_text, message_thread_id=tid)
                                     except Exception as e2:
-                                        logger.error(f"Не вдалося надіслати сповіщення Classroom у чат {chat_id}: {e2}")
+                                        logger.error(f"Не вдалося надіслати сповіщення Classroom у чат {cid}: {e2}")
 
         # Якщо успішно завантажили курси та реальні завдання — очищаємо демо-заглушки та архівуємо старі
         if delete_demo_on_success and len(courses) > 0:

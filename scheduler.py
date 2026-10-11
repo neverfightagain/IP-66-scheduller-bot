@@ -24,16 +24,27 @@ def strip_markdown(text: str) -> str:
     return text.replace("**", "").replace("*", "").replace("`", "").replace("_", "")
 
 
-async def safe_send_message(bot: Bot, chat_id: int, text: str, reply_markup=None):
-    """Безпечна відправка повідомлення з відкатом на звичайний текст при помилці парсингу Markdown."""
+async def safe_send_message(bot: Bot, chat_id: int, text: str, reply_markup=None, message_thread_id: int | None = None):
+    """Безпечна відправка повідомлення з підтримкою топіків та відкатом на звичайний текст при помилці Markdown."""
     try:
-        return await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=reply_markup)
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+            message_thread_id=message_thread_id,
+        )
     except Exception as e:
-        logger.warning(f"Помилка відправки Markdown у {chat_id}: {e}. Відправляю простим текстом.")
+        logger.warning(f"Помилка відправки Markdown у {chat_id} (топік {message_thread_id}): {e}. Відправляю простим текстом.")
         try:
-            return await bot.send_message(chat_id, strip_markdown(text), reply_markup=reply_markup)
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=strip_markdown(text),
+                reply_markup=reply_markup,
+                message_thread_id=message_thread_id,
+            )
         except Exception as e2:
-            logger.error(f"Не вдалося надіслати повідомлення у чат {chat_id}: {e2}")
+            logger.error(f"Не вдалося надіслати повідомлення у чат {chat_id} (топік {message_thread_id}): {e2}")
             return None
 
 
@@ -74,17 +85,20 @@ async def refresh_today_cache():
 
 
 async def send_morning_digest(bot: Bot):
-    """Отправить утренний дайджест во все подписанные чаты."""
-    chats = get_subscribed_chats()
-    if not chats:
+    """Отправить утренний дайджест во все подписанные чаты и топики."""
+    from database import get_subscribed_chats_db
+    targets = await get_subscribed_chats_db()
+    if not targets:
         logger.info("Немає підписаних чатів для ранкового дайджесту.")
         return
 
     await refresh_today_cache()
     text, kb = format_morning_digest(_today_cached_week, _today_cached_day_name, _today_cached_lessons)
 
-    for chat_id in chats:
-        await safe_send_message(bot, chat_id, text, reply_markup=kb)
+    for target in targets:
+        cid = target["chat_id"]
+        tid = target.get("thread_id")
+        await safe_send_message(bot, cid, text, reply_markup=kb, message_thread_id=tid)
 
 
 async def check_upcoming_lessons(bot: Bot):
@@ -101,8 +115,9 @@ async def check_upcoming_lessons(bot: Bot):
         sent_alerts.clear()
         await refresh_today_cache()
 
-    chats = get_subscribed_chats()
-    if not chats or not _today_cached_lessons:
+    from database import get_subscribed_chats_db
+    targets = await get_subscribed_chats_db()
+    if not targets or not _today_cached_lessons:
         return
 
     # Интервалы уведомлений в минутах (за 20 минут и за 5 минут)
@@ -130,11 +145,13 @@ async def check_upcoming_lessons(bot: Bot):
                     continue
 
                 text, kb = format_lesson_alert(lesson, minutes_left=target_minutes)
-                for chat_id in chats:
-                    sent_msg = await safe_send_message(bot, chat_id, text, reply_markup=kb)
+                for target in targets:
+                    cid = target["chat_id"]
+                    tid = target.get("thread_id")
+                    sent_msg = await safe_send_message(bot, cid, text, reply_markup=kb, message_thread_id=tid)
                     if sent_msg:
                         # Автоматически удаляем сообщение через 20 минут, чтобы не засорять чат
-                        asyncio.create_task(delete_message_after_delay(bot, chat_id, sent_msg.message_id, delay_seconds=20 * 60))
+                        asyncio.create_task(delete_message_after_delay(bot, cid, sent_msg.message_id, delay_seconds=20 * 60))
 
                 sent_alerts.add(alert_key)
                 logger.info(f"Надіслано сповіщення за {target_minutes} хв: {lesson['name']} ({lesson['time']})")
@@ -146,8 +163,8 @@ async def send_evening_digest(bot: Bot):
     from formatters import format_daily_summary
     from kpi_api import get_schedule_for_date
 
-    chats = await get_subscribed_chats_db()
-    if not chats:
+    targets = await get_subscribed_chats_db()
+    if not targets:
         return
 
     today_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
@@ -156,8 +173,10 @@ async def send_evening_digest(bot: Bot):
     announcements = await get_today_announcements_db()
     text = format_daily_summary(lessons, assignments, announcements)
 
-    for chat_id in chats:
-        await safe_send_message(bot, chat_id, text)
+    for target in targets:
+        cid = target["chat_id"]
+        tid = target.get("thread_id")
+        await safe_send_message(bot, cid, text, message_thread_id=tid)
 
 
 async def check_new_youtube_videos(bot: Bot):
