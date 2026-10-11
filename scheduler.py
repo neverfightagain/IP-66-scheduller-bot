@@ -152,9 +152,10 @@ async def send_evening_digest(bot: Bot):
 
 async def check_new_youtube_videos(bot: Bot):
     """Фонова перевірка нових відео на YouTube-каналі групи (кожні 30 хв)."""
-    channel_id = os.getenv("YOUTUBE_CHANNEL_ID", "").strip()
-    if not channel_id:
+    from config import YOUTUBE_CHANNEL_ID
+    if not YOUTUBE_CHANNEL_ID:
         return
+    channel_id = YOUTUBE_CHANNEL_ID
 
     from youtube_processor import fetch_latest_channel_videos, process_video_and_notify
     try:

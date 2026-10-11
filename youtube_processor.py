@@ -34,19 +34,28 @@ def get_video_transcript(video_id: str, languages: list[str] = None) -> tuple[st
         languages = ["uk", "ru", "en"]
 
     try:
-        transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+        if hasattr(YouTubeTranscriptApi, "get_transcript"):
+            transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+        else:
+            api = YouTubeTranscriptApi()
+            transcript_data = api.fetch(video_id, languages=languages)
+
         formatted_lines = []
+        raw_segments = []
         for segment in transcript_data:
-            start_sec = int(segment.get("start", 0))
+            start_sec = int(segment.start if hasattr(segment, "start") else segment.get("start", 0))
+            text = (segment.text if hasattr(segment, "text") else segment.get("text", "")).strip()
+            duration = segment.duration if hasattr(segment, "duration") else segment.get("duration", 0)
+
             minutes = start_sec // 60
             seconds = start_sec % 60
             timestamp = f"[{minutes:02d}:{seconds:02d}]"
-            text = segment.get("text", "").strip()
             if text:
                 formatted_lines.append(f"{timestamp} {text}")
+                raw_segments.append({"start": start_sec, "duration": duration, "text": text})
 
         full_text = "\n".join(formatted_lines)
-        return full_text, transcript_data
+        return full_text, raw_segments
     except Exception as e:
         logger.warning(f"Не вдалося отримати субтитри для відео {video_id}: {e}")
         return None

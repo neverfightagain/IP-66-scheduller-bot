@@ -31,6 +31,10 @@ KYIV_TZ = ZoneInfo(TIMEZONE_NAME)
 MORNING_DIGEST_TIME = os.getenv("MORNING_DIGEST_TIME", "08:00")
 NOTIFY_MINUTES_BEFORE = int(os.getenv("NOTIFY_MINUTES_BEFORE", "5"))
 
+# YouTube & AI Config
+YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID", "UC8pccc2zKBP6vrOlA1hWFBw").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
 # Файлы данных
 CHATS_FILE = BASE_DIR / "chats.json"
 LINKS_FILE = BASE_DIR / "links.json"
