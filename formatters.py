@@ -5,27 +5,36 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def clean_markdown(text: str | None) -> str:
-    """Очистити небезпечні спецсимволи для стабільності форматування Telegram Markdown."""
-    if not text:
+    """Очистити небезпечні спецсимволи для стабільності форматування Telegram Markdown (v1)."""
+    if text is None:
         return ""
     text = str(text)
-    # Прибираємо непарні зірочки та зворотні лапки, які ламають розмітку
-    text = text.replace("*", "").replace("`", "'")
-    # Екрануємо підкреслення та квадратні дужки
-    text = text.replace("_", "\\_").replace("[", "\\[").replace("]", "\\]")
-    return text.strip()
+    # В Telegram Markdown v1 непарні *, _, `, [, ] ламають парсер і викликають 400 Bad Request.
+    # Заміна на безпечні аналоги гарантує 100% захист.
+    return (
+        text.replace("*", "")
+        .replace("`", "'")
+        .replace("_", " ")
+        .replace("[", "(")
+        .replace("]", ")")
+        .strip()
+    )
 
 
-def format_morning_digest(week: int, day_name: str, lessons: list[dict] | None) -> tuple[str, InlineKeyboardMarkup | None]:
+def format_morning_digest(week: int | str | None, day_name: str | None, lessons: list[dict] | None) -> tuple[str, InlineKeyboardMarkup | None]:
     lessons = lessons or []
+    w_str = clean_markdown(str(week) if week is not None else "1")
+    d_str = clean_markdown(str(day_name) if day_name is not None else "")
     if not lessons:
-        return f"🏖 **Розклад на сьогодні ({clean_markdown(day_name)}, {week}-й тиждень):**\n\nСьогодні пар немає!", None
+        return f"🏖 **Розклад на сьогодні ({d_str}, {w_str}-й тиждень):**\n\nСьогодні пар немає!", None
 
     lines = [
-        f"📅 **Розклад на сьогодні ({clean_markdown(day_name)}, {week}-й тиждень):**\n"
+        f"📅 **Розклад на сьогодні ({d_str}, {w_str}-й тиждень):**\n"
     ]
 
     for idx, l in enumerate(lessons, 1):
+        if not isinstance(l, dict):
+            continue
         lname = clean_markdown(l.get("name", "Пара"))
         ltype = clean_markdown(l.get("type", ""))
         llect = clean_markdown(l.get("lecturer", "Не вказано"))
@@ -345,6 +354,8 @@ def format_daily_summary(lessons: list[dict] | None = None, assignments: list[di
         if lessons:
             lines.append("🎓 **Пари, що були сьогодні:**")
             for idx, l in enumerate(lessons, 1):
+                if not isinstance(l, dict):
+                    continue
                 lname = clean_markdown(l.get("name", "Пара"))
                 ltype = clean_markdown(l.get("type", ""))
                 ltime = clean_markdown(l.get("time", ""))
@@ -353,7 +364,7 @@ def format_daily_summary(lessons: list[dict] | None = None, assignments: list[di
                 lines.append(lesson_line)
                 if announcements:
                     for ann in announcements:
-                        if isinstance(ann, dict) and ann.get("course_id") and ann["course_id"].lower() in l.get("name", "").lower():
+                        if isinstance(ann, dict) and ann.get("course_id") and ann["course_id"].lower() in str(l.get("name", "")).lower():
                             lines.append(f"   📢 _{clean_markdown(ann.get('text'))}_")
             lines.append("")
         else:

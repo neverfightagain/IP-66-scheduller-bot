@@ -93,7 +93,11 @@ def get_lesson_link_info(name: str, lesson_type: str) -> dict:
     3. Нестрогий пошук за входженням назви з тим же типом
     4. Fallback: збіг лише за назвою
     """
+    if not name or not str(name).strip():
+        return {"url": "", "comment": ""}
+
     links = load_links()
+    lesson_type = lesson_type or ""
 
     # 1. Точний збіг ключа: "Назва (Тип)"
     key_with_type = f"{name} ({lesson_type})"

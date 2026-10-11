@@ -102,7 +102,7 @@ def normalize_due_date(due_str: str) -> str | None:
 async def cmd_start(message: Message):
     chat_id = message.chat.id
     chat_type = message.chat.type
-    thread_id = message.message_thread_id if getattr(message, "is_topic_message", False) else None
+    thread_id = getattr(message, "message_thread_id", None)
 
     from database import add_subscription_db
     is_new = await add_subscription_db(chat_id, thread_id)
@@ -155,7 +155,7 @@ async def cmd_start(message: Message):
 @router.message(Command("subscribe"))
 async def cmd_subscribe(message: Message):
     chat_id = message.chat.id
-    thread_id = message.message_thread_id if getattr(message, "is_topic_message", False) else None
+    thread_id = getattr(message, "message_thread_id", None)
 
     from database import add_subscription_db
     await add_subscription_db(chat_id, thread_id)
@@ -181,7 +181,7 @@ async def cmd_subscribe(message: Message):
 @router.message(Command("unsubscribe"))
 async def cmd_unsubscribe(message: Message):
     chat_id = message.chat.id
-    thread_id = message.message_thread_id if getattr(message, "is_topic_message", False) else None
+    thread_id = getattr(message, "message_thread_id", None)
 
     from database import remove_subscription_db
     await remove_subscription_db(chat_id, thread_id)
