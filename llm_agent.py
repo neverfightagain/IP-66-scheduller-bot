@@ -54,7 +54,7 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
         client = genai.Client(api_key=api_key)
         prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
 
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
         try:
             response = client.models.generate_content(
                 model=model_name,
@@ -66,9 +66,9 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
                 ),
             )
         except Exception as e_model:
-            logger.warning(f"Модель {model_name} повернула помилку ({e_model}), спробуємо gemini-2.0-flash...")
+            logger.warning(f"Модель {model_name} повернула помилку ({e_model}), спробуємо gemini-3.8-flash...")
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3.8-flash",
                 contents=prompt_content,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
