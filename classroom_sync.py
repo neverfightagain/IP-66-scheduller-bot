@@ -106,9 +106,15 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
         courses_resp = service.courses().list(courseStates=["ACTIVE"]).execute()
         courses = courses_resp.get("courses", [])
 
-        # Получаем уже сохраненные ID заданий из БД
+        now = datetime.datetime.now(KYIV_TZ)
+        start_of_current_week = (now - datetime.timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Отримуємо вже збережені завдання
         existing_assignments = await get_active_assignments_db()
         existing_ids = {a["id"] for a in existing_assignments}
+
+        # Якщо в базі ще не було завдань Classroom — це первинне завантаження, спамити в чат суворо заборонено!
+        is_initial_import = not any(a["id"].startswith("gc_") for a in existing_assignments)
 
         for course in courses:
             cid = course["id"]
@@ -128,9 +134,19 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                 desc = cw.get("description", "").strip()
                 alt_link = cw.get("alternateLink", "")
 
+                # Дата створення завдання в Classroom
+                creation_time_str = cw.get("creationTime")
+                creation_dt = None
+                if creation_time_str:
+                    try:
+                        creation_dt = datetime.datetime.fromisoformat(creation_time_str.replace("Z", "+00:00")).astimezone(KYIV_TZ)
+                    except Exception:
+                        pass
+
                 due_date_str = ""
                 due_date_obj = cw.get("dueDate")
                 due_time_obj = cw.get("dueTime")
+                due_dt_kyiv = None
 
                 if due_date_obj:
                     year = due_date_obj.get("year")
@@ -146,50 +162,70 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                 else:
                     due_date_str = "Без дедлайну"
 
-                # Если задания еще нет в базе — добавляем и пушим уведомление!
+                # Завдання, дедлайн яких минув до поточного тижня, архівуємо одразу
+                status = "active"
+                if due_dt_kyiv and due_dt_kyiv < start_of_current_week:
+                    status = "archived"
+
+                # Якщо завдання ще немає в базі — додаємо
                 if cw_id not in existing_ids:
                     await add_assignment_db(
                         assignment_id=cw_id,
                         course_name=cname,
                         title=title,
                         due_date=due_date_str,
-                        description=desc[:150]
+                        description=desc[:150],
+                        status=status
                     )
-                    new_items.append({
-                        "course": cname,
-                        "title": title,
-                        "due": due_date_str,
-                        "link": alt_link,
-                        "desc": desc
-                    })
-                    logger.info(f"Знайдено нове завдання в Classroom: {cname} — {title} (до {due_date_str})")
 
-                    # Миттєвий пуш у чати
-                    if bot:
-                        chats = await get_subscribed_chats_db()
-                        text = (
-                            f"📌 **Нове завдання в Google Classroom!**\n\n"
-                            f"📚 **Дисципліна:** {cname}\n"
-                            f"📝 **Завдання:** {title}\n"
-                            f"⏳ **Дедлайн:** `{due_date_str}`\n"
-                        )
-                        if desc:
-                            text += f"\n📖 _{desc[:200]}_\n"
-                        if alt_link:
-                            text += f"\n🔗 [Відкрити в Google Classroom]({alt_link})"
+                    # УМОВИ ДЛЯ СПОВІЩЕННЯ У ЧАТ:
+                    # 1. Ніколи не спамити під час первинного імпорту бази!
+                    # 2. Не надсилати старі завдання (створені ДО поточного тижня).
+                    # 3. Не надсилати завдання з минулими дедлайнами (до поточного тижня).
+                    should_push = False
+                    if not is_initial_import:
+                        is_created_this_week = creation_dt and (creation_dt >= start_of_current_week)
+                        deadline_valid = (due_dt_kyiv is None) or (due_dt_kyiv >= start_of_current_week)
+                        if is_created_this_week and deadline_valid:
+                            should_push = True
 
-                        for chat_id in chats:
-                            try:
-                                await bot.send_message(chat_id, text, parse_mode="Markdown")
-                            except Exception as e:
-                                logger.error(f"Не вдалося надіслати сповіщення Classroom у чат {chat_id}: {e}")
+                    if should_push:
+                        new_items.append({
+                            "course": cname,
+                            "title": title,
+                            "due": due_date_str,
+                            "link": alt_link,
+                            "desc": desc
+                        })
+                        logger.info(f"Знайдено нове актуальне завдання Classroom: {cname} — {title} (до {due_date_str})")
 
-        # Если успешно загрузили курсы и реальные задания — очищаем демо-заглушки
+                        # Миттєвий пуш у чати
+                        if bot:
+                            chats = await get_subscribed_chats_db()
+                            text = (
+                                f"📌 **Нове завдання в Google Classroom!**\n\n"
+                                f"📚 **Дисципліна:** {cname}\n"
+                                f"📝 **Завдання:** {title}\n"
+                                f"⏳ **Дедлайн:** `{due_date_str}`\n"
+                            )
+                            if desc:
+                                text += f"\n📖 _{desc[:200]}_\n"
+                            if alt_link:
+                                text += f"\n🔗 [Відкрити в Google Classroom]({alt_link})"
+
+                            for chat_id in chats:
+                                try:
+                                    await bot.send_message(chat_id, text, parse_mode="Markdown")
+                                except Exception as e:
+                                    logger.error(f"Не вдалося надіслати сповіщення Classroom у чат {chat_id}: {e}")
+
+        # Якщо успішно завантажили курси та реальні завдання — очищаємо демо-заглушки та архівуємо старі
         if delete_demo_on_success and len(courses) > 0:
-            from database import delete_assignment_db
+            from database import delete_assignment_db, cleanup_past_assignments_db
             await delete_assignment_db("op_lab1")
             await delete_assignment_db("asd_lab1")
             await delete_assignment_db("kdm_calc1")
+            await cleanup_past_assignments_db()
 
         return {"success": True, "courses_count": len(courses), "new_items": new_items, "error": None}
     except Exception as e:

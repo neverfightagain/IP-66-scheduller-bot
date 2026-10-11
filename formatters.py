@@ -158,8 +158,9 @@ def format_deadlines_radar(assignments: list[dict]) -> str:
         total_hours = int(diff.total_seconds() // 3600)
         days_left = diff.days
 
-        # Пропускаємо старі архівні дедлайни (більше ніж 7 днів тому)
-        if days_left < -7:
+        # Пропускаємо старі завдання, дедлайн яких був до поточного тижня
+        monday_this_week = today - timedelta(days=today.weekday())
+        if due_date < monday_this_week:
             continue
 
         if total_hours < 0:
@@ -248,6 +249,10 @@ def format_daily_summary(lessons: list[dict], assignments: list[dict], announcem
             continue
 
         due_date = due_dt.date()
+        monday_this_week = today - timedelta(days=today.weekday())
+        if due_date < monday_this_week:
+            continue
+
         diff = due_dt - now
         total_hours = int(diff.total_seconds() // 3600)
         days_left = diff.days

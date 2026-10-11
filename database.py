@@ -90,6 +90,7 @@ async def init_db():
         # Автоматическая миграция из старых JSON-файлов
         await _migrate_legacy_data(db)
         await seed_demo_assignments_if_empty()
+        await cleanup_past_assignments_db()
 
 
 async def _migrate_legacy_data(db: aiosqlite.Connection):
@@ -217,17 +218,31 @@ async def get_today_announcements_db() -> list[dict]:
             return [dict(row) for row in rows]
 
 
-# --- API для работы с заданиями (Дедлайнами) ---
-
-async def add_assignment_db(assignment_id: str, course_name: str, title: str, due_date: str, description: str = "") -> bool:
+async def add_assignment_db(assignment_id: str, course_name: str, title: str, due_date: str, description: str = "", status: str = "active") -> bool:
     """Добавить или обновить дедлайн задания."""
     async with get_db() as db:
         await db.execute("""
             INSERT OR REPLACE INTO assignments (id, course_id, title, due_date, description, status)
-            VALUES (?, ?, ?, ?, ?, 'active')
-        """, (assignment_id, course_name, title, due_date, description))
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (assignment_id, course_name, title, due_date, description, status))
         await db.commit()
         return True
+
+
+async def cleanup_past_assignments_db():
+    """Перевести старі завдання, дедлайн яких минув до поточного тижня, у статус 'archived'."""
+    from datetime import datetime, timedelta
+    from config import KYIV_TZ
+    now = datetime.now(KYIV_TZ)
+    monday_str = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d 00:00")
+
+    async with get_db() as db:
+        await db.execute("""
+            UPDATE assignments
+            SET status = 'archived'
+            WHERE due_date != 'Без дедлайну' AND due_date < ?
+        """, (monday_str,))
+        await db.commit()
 
 
 async def get_active_assignments_db() -> list[dict]:
