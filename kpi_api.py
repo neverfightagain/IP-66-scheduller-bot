@@ -95,3 +95,26 @@ async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple
 
     valid_lessons.sort(key=lambda x: x["time"])
     return target_week, day_name_full, valid_lessons
+
+
+async def get_schedule_for_date(target_date = None, group_id: int = None) -> list[dict]:
+    """Отримати список розкладу пар на конкретну дату для групи (за замовчуванням ІП-66)."""
+    from config import KPI_GROUP_ID
+    gid = group_id if group_id is not None else KPI_GROUP_ID
+
+    if isinstance(target_date, str):
+        try:
+            target_date = datetime.strptime(target_date[:10], "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(KYIV_TZ).date()
+    elif target_date is None:
+        target_date = datetime.now(KYIV_TZ).date()
+    elif isinstance(target_date, datetime):
+        target_date = target_date.date()
+
+    try:
+        _, _, lessons = await get_lessons_for_date(gid, target_date)
+        return lessons
+    except Exception:
+        return []
+
