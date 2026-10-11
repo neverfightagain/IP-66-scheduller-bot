@@ -182,6 +182,19 @@ async def save_video_summary(video_id: str, title: str, course_id: str | None, p
         await db.commit()
 
 
+async def get_today_announcements_db() -> list[dict]:
+    """Получить объявления и анонсы за сегодня."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT course_id, text, detected_date, source
+            FROM announcements
+            WHERE date(created_at) = date('now')
+            ORDER BY id ASC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
 # --- API для работы с заданиями (Дедлайнами) ---
 
 async def add_assignment_db(assignment_id: str, course_name: str, title: str, due_date: str, description: str = "") -> bool:

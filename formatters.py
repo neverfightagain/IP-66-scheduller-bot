@@ -200,39 +200,109 @@ def format_deadlines_radar(assignments: list[dict]) -> str:
     return "\n".join(lines).strip()
 
 
-def format_evening_digest(assignments: list[dict]) -> str:
-    """Форматирование вечерней сводки в 21:00."""
+def format_daily_summary(lessons: list[dict], assignments: list[dict], announcements: list[dict] = None) -> str:
+    """
+    Форматирование адаптивной сводки дня (в 21:00 или по команде /summary):
+    - В будние дни (когда есть пары):
+        1) Пары, которые были сегодня, темы / что задавали / анонсы преподавателя.
+        2) Статус дедлайнов: что горит на завтра (красный) и до конца недели.
+    - В выходные дни (или когда пар нет):
+        1) Отдых / подготовка к новой учебной неделе.
+        2) Ближайшие горящие дедлайны на следующую неделю.
+    """
     now = datetime.now(KYIV_TZ)
     today = now.date()
     tomorrow = today + timedelta(days=1)
     days_to_sunday = 6 - today.weekday()
     this_week_end = today + timedelta(days=days_to_sunday)
+    next_week_end = this_week_end + timedelta(days=7)
+    # Если сегодня были пары — показываем рабочий дайджест дня.
+    # Если пар не было — показываем сводку выходного/свободного дня с фокусом на дедлайны.
+    has_lessons = bool(lessons)
+    is_weekend_day = now.weekday() in (5, 6)
 
-    tomorrow_count = 0
-    this_week_count = 0
+    tomorrow_assignments = []
+    this_week_assignments = []
+    next_week_assignments = []
 
     for a in assignments:
         due_str = a.get("due_date", "")
         try:
-            due_date = datetime.strptime(due_str[:10], "%Y-%m-%d").date()
-            if due_date == tomorrow:
-                tomorrow_count += 1
-            if due_date <= this_week_end:
-                this_week_count += 1
+            if len(due_str) == 10:
+                due_dt = datetime.strptime(due_str, "%Y-%m-%d").replace(hour=23, minute=59, tzinfo=KYIV_TZ)
+            else:
+                due_dt = datetime.strptime(due_str[:16], "%Y-%m-%d %H:%M").replace(tzinfo=KYIV_TZ)
         except Exception:
-            pass
+            continue
 
-    lines = [
-        "🌙 **Вечірній статус дедлайнів (21:00):**\n",
-    ]
+        due_date = due_dt.date()
+        diff = due_dt - now
+        total_hours = int(diff.total_seconds() // 3600)
+        days_left = diff.days
 
-    if tomorrow_count > 0:
-        lines.append(f"🔴 **Увага! На завтра горить дедлайнів: {tomorrow_count}**")
+        time_str = f"залишилось {days_left} дн" if days_left > 0 else (f"залишилось {total_hours} год" if total_hours > 0 else "⚠️ прострочено")
+        formatted_due = due_dt.strftime("%d.%m о %H:%M")
+
+        item = (a, formatted_due, time_str)
+        if due_date == tomorrow:
+            tomorrow_assignments.append(item)
+        if due_date <= this_week_end:
+            this_week_assignments.append(item)
+        elif due_date <= next_week_end:
+            next_week_assignments.append(item)
+
+    lines = []
+    if not has_lessons:
+        if is_weekend_day:
+            lines.append("🌴 **ПІДСУМОК ТИЖНЯ ТА ДЕДЛАЙНИ (ІП-66):**\n")
+            lines.append("🏖 Сьогодні вихідний, пар не було! Час відпочити та набратися сил перед новим тижнем.\n")
+        else:
+            date_str = now.strftime("%d.%m.%Y")
+            lines.append(f"🌙 **ПІДСУМОК ДНЯ (ІП-66) — {date_str}:**\n")
+            lines.append("🏖 Сьогодні пар за розкладом не було.\n")
+
+        upcoming = this_week_assignments if this_week_assignments else next_week_assignments
+        if upcoming:
+            lines.append("🔥 **Ближчі дедлайни (на наступний тиждень):**")
+            for a, due_f, rem in upcoming:
+                desc = f" — _{a['description']}_" if a.get("description") else ""
+                lines.append(f"• 🟡 **{a['course_id']}** — {a['title']} (до {due_f}, *{rem}*){desc}")
+        else:
+            lines.append("✅ **Гарячих дедлайнів немає, можна спокійно відпочивати перед новим навчальним тижнем!**")
     else:
-        lines.append("✅ На завтра дедлайнів немає, можна спокійно виспатися!")
+        date_str = now.strftime("%d.%m.%Y")
+        lines.append(f"🌙 **ПІДСУМОК ДНЯ (ІП-66) — {date_str}:**\n")
 
-    if this_week_count > 0:
-        lines.append(f"⏳ До кінця цього тижня залишилося здати робіт: **{this_week_count}**.")
+        if lessons:
+            lines.append("🎓 **Пари, що були сьогодні:**")
+            for idx, l in enumerate(lessons, 1):
+                lesson_line = f"**{idx}.** `{l['time']}` — **{l['name']}** ({l['type']})"
+                lines.append(lesson_line)
+                if announcements:
+                    for ann in announcements:
+                        if ann.get("course_id") and ann["course_id"].lower() in l["name"].lower():
+                            lines.append(f"   📢 _{ann['text']}_")
+            lines.append("")
+        else:
+            lines.append("🏖 Сьогодні пар за розкладом не було.\n")
+
+        lines.append("🔥 **Статус дедлайнів:**")
+        if tomorrow_assignments:
+            lines.append(f"🔴 **Увага! На завтра горить ({len(tomorrow_assignments)}):**")
+            for a, due_f, rem in tomorrow_assignments:
+                desc = f" — _{a['description']}_" if a.get("description") else ""
+                lines.append(f"• **{a['course_id']}** — {a['title']} (до {due_f}){desc}")
+        else:
+            lines.append("✅ На завтра дедлайнів немає, можна спокійно виспатися!")
+
+        if this_week_assignments:
+            count = len(this_week_assignments)
+            lines.append(f"⏳ До кінця цього тижня залишилося здати робіт: **{count}**.")
 
     lines.append("\n👉 Повний список і таймери: команда `/deadlines`")
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
+
+
+def format_evening_digest(assignments: list[dict], lessons: list[dict] = None, announcements: list[dict] = None) -> str:
+    """Форматирование вечерней сводки в 21:00 (совместимость)."""
+    return format_daily_summary(lessons or [], assignments, announcements or [])

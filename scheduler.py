@@ -128,16 +128,20 @@ async def check_upcoming_lessons(bot: Bot):
 
 
 async def send_evening_digest(bot: Bot):
-    """Отправить вечернюю сводку статуса дедлайнов в 21:00."""
-    from database import get_active_assignments_db, get_subscribed_chats_db
-    from formatters import format_evening_digest
+    """Отправить вечернюю сводку статуса дедлайнов и пар в 21:00."""
+    from database import get_active_assignments_db, get_subscribed_chats_db, get_today_announcements_db
+    from formatters import format_daily_summary
+    from kpi_api import get_schedule_for_date
 
     chats = await get_subscribed_chats_db()
     if not chats:
         return
 
+    today_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+    lessons = await get_schedule_for_date(today_date)
     assignments = await get_active_assignments_db()
-    text = format_evening_digest(assignments)
+    announcements = await get_today_announcements_db()
+    text = format_daily_summary(lessons, assignments, announcements)
 
     for chat_id in chats:
         try:
@@ -176,10 +180,10 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         name="daily_cache_refresh",
     )
 
-    # 4. Вечерний дайджест дедлайнов в 21:00 с понедельника по субботу
+    # 4. Вечерний дайджест дедлайнов в 21:00 каждый день (включая выходные)
     scheduler.add_job(
         send_evening_digest,
-        trigger=CronTrigger(day_of_week="mon-sat", hour=21, minute=0, timezone=KYIV_TZ),
+        trigger=CronTrigger(day_of_week="mon-sun", hour=21, minute=0, timezone=KYIV_TZ),
         args=[bot],
         name="evening_digest",
     )
