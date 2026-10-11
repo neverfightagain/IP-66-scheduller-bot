@@ -4,18 +4,36 @@ from links_manager import get_lesson_link_info
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
-def format_morning_digest(week: int, day_name: str, lessons: list[dict]) -> tuple[str, InlineKeyboardMarkup | None]:
+def clean_markdown(text: str | None) -> str:
+    """Очистити небезпечні спецсимволи для стабільності форматування Telegram Markdown."""
+    if not text:
+        return ""
+    text = str(text)
+    # Прибираємо непарні зірочки та зворотні лапки, які ламають розмітку
+    text = text.replace("*", "").replace("`", "'")
+    # Екрануємо підкреслення та квадратні дужки
+    text = text.replace("_", "\\_").replace("[", "\\[").replace("]", "\\]")
+    return text.strip()
+
+
+def format_morning_digest(week: int, day_name: str, lessons: list[dict] | None) -> tuple[str, InlineKeyboardMarkup | None]:
+    lessons = lessons or []
     if not lessons:
-        return f"🏖 **Розклад на сьогодні ({day_name}, {week}-й тиждень):**\n\nСьогодні пар немає!", None
+        return f"🏖 **Розклад на сьогодні ({clean_markdown(day_name)}, {week}-й тиждень):**\n\nСьогодні пар немає!", None
 
     lines = [
-        f"📅 **Розклад на сьогодні ({day_name}, {week}-й тиждень):**\n"
+        f"📅 **Розклад на сьогодні ({clean_markdown(day_name)}, {week}-й тиждень):**\n"
     ]
 
     for idx, l in enumerate(lessons, 1):
-        link_info = get_lesson_link_info(l["name"], l["type"])
+        lname = clean_markdown(l.get("name", "Пара"))
+        ltype = clean_markdown(l.get("type", ""))
+        llect = clean_markdown(l.get("lecturer", "Не вказано"))
+        ltime = clean_markdown(l.get("time", ""))
+
+        link_info = get_lesson_link_info(l.get("name", ""), l.get("type", ""))
         url = link_info.get("url", "").strip()
-        comment = link_info.get("comment", "").strip()
+        comment = clean_markdown(link_info.get("comment", "").strip())
 
         link_str = ""
         if url:
@@ -25,22 +43,28 @@ def format_morning_digest(week: int, day_name: str, lessons: list[dict]) -> tupl
         elif comment:
             link_str = f"\n   ℹ️ _{comment}_"
 
+        type_str = f" ({ltype})" if ltype else ""
         lines.append(
-            f"**{idx}.** `{l['time']}` — **{l['name']}** ({l['type']})\n"
-            f"   👤 {l['lecturer']}{link_str}"
+            f"**{idx}.** `{ltime}` — **{lname}**{type_str}\n"
+            f"   👤 {llect}{link_str}"
         )
 
     return "\n\n".join(lines), None
 
 
-def format_lesson_alert(lesson: dict, minutes_left: int = 5) -> tuple[str, InlineKeyboardMarkup | None]:
-
+def format_lesson_alert(lesson: dict | None, minutes_left: int = 5) -> tuple[str, InlineKeyboardMarkup | None]:
+    lesson = lesson or {}
     now = datetime.now(KYIV_TZ)
     current_time_str = now.strftime("%H:%M")
 
-    link_info = get_lesson_link_info(lesson["name"], lesson["type"])
+    lname = clean_markdown(lesson.get("name", "Пара"))
+    ltype = clean_markdown(lesson.get("type", ""))
+    llect = clean_markdown(lesson.get("lecturer", "Не вказано"))
+    ltime = clean_markdown(lesson.get("time", ""))
+
+    link_info = get_lesson_link_info(lesson.get("name", ""), lesson.get("type", ""))
     url = link_info.get("url", "").strip()
-    comment = link_info.get("comment", "").strip()
+    comment = clean_markdown(link_info.get("comment", "").strip())
 
     if minutes_left >= 15:
         title = f"⏳ **Нагадування: пара через {minutes_left} хвилин!**"
@@ -50,10 +74,10 @@ def format_lesson_alert(lesson: dict, minutes_left: int = 5) -> tuple[str, Inlin
     text_parts = [
         f"{title}\n",
         f"⏰ **Поточний час:** `{current_time_str}`",
-        f"⏳ **Початок:** `{lesson['time']}` (через {minutes_left} хв)\n",
-        f"📖 **Предмет:** **{lesson['name']}**",
-        f"🏷 **Тип:** {lesson['type']}",
-        f"👤 **Викладач:** {lesson['lecturer']}",
+        f"⏳ **Початок:** `{ltime}` (через {minutes_left} хв)\n",
+        f"📖 **Предмет:** **{lname}**",
+        f"🏷 **Тип:** {ltype}",
+        f"👤 **Викладач:** {llect}",
     ]
 
     keyboard = None
@@ -72,10 +96,11 @@ def format_lesson_alert(lesson: dict, minutes_left: int = 5) -> tuple[str, Inlin
     return "\n".join(text_parts), keyboard
 
 
-def format_lecture_summary(summary: dict, video_title: str, video_url: str) -> tuple[str, InlineKeyboardMarkup | None]:
+def format_lecture_summary(summary: dict | None, video_title: str = "", video_url: str = "") -> tuple[str, InlineKeyboardMarkup | None]:
     """Форматирование карточки конспекта лекции для Telegram."""
-    subject = summary.get("subject_detected") or "Пара"
-    topic = summary.get("topic") or video_title
+    summary = summary or {}
+    subject = clean_markdown(summary.get("subject_detected") or "Пара")
+    topic = clean_markdown(summary.get("topic") or video_title or "Лекція")
 
     lines = [
         "🎬 **Новий конспект лекції з YouTube!**\n",
@@ -84,51 +109,60 @@ def format_lecture_summary(summary: dict, video_title: str, video_url: str) -> t
     ]
 
     points = summary.get("summary_points", [])
-    if points:
+    if isinstance(points, list) and points:
         lines.append("📌 **Головні тези з заняття:**")
         for pt in points:
-            lines.append(f"• {pt}")
+            if pt:
+                lines.append(f"• {clean_markdown(str(pt))}")
         lines.append("")
 
     announcements = summary.get("teacher_announcements", [])
-    if announcements:
+    if isinstance(announcements, list) and announcements:
         lines.append("📢 **Оголошення викладача:**")
         for ann in announcements:
-            lines.append(f"• {ann}")
+            if ann:
+                lines.append(f"• {clean_markdown(str(ann))}")
         lines.append("")
 
     deadlines = summary.get("deadlines_mentioned", [])
-    if deadlines:
+    if isinstance(deadlines, list) and deadlines:
         lines.append("⏳ **Згадані дедлайни та терміни:**")
         for dl in deadlines:
-            title = dl.get("task_title", "Завдання")
-            date_str = dl.get("date", "")
-            quote = dl.get("exact_quote", "")
-            d_line = f"• **{title}**: {date_str}" if date_str else f"• **{title}**"
-            if quote:
-                d_line += f" _(«{quote}»)_"
-            lines.append(d_line)
+            if isinstance(dl, dict):
+                t_title = clean_markdown(dl.get("task_title") or "Завдання")
+                d_date = clean_markdown(dl.get("date") or "")
+                quote = clean_markdown(dl.get("exact_quote") or "")
+                d_line = f"• **{t_title}**: {d_date}" if d_date else f"• **{t_title}**"
+                if quote:
+                    d_line += f" _(«{quote}»)_"
+                lines.append(d_line)
         lines.append("")
 
-    lines.append(f"🔗 [Переглянути запис на YouTube]({video_url})")
+    if video_url:
+        lines.append(f"🔗 [Переглянути запис на YouTube]({video_url})")
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="▶️ Дивитися запис на YouTube", url=video_url)]
-        ]
-    )
+    keyboard = None
+    if video_url:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="▶️ Дивитися запис на YouTube", url=video_url)]
+            ]
+        )
 
-    return "\n".join(lines), keyboard
+    res = "\n".join(lines).strip()
+    if len(res) > 3900:
+        res = res[:3800] + "\n\n⚠️ _...конспект скорочено через обмеження довжини._"
+    return res, keyboard
 
 
-def format_deadlines_radar(assignments: list[dict]) -> str:
+def format_deadlines_radar(assignments: list[dict] | None) -> str:
     """Форматирование радара дедлайнов на текущую и следующую неделю."""
+    assignments = assignments or []
     if not assignments:
         return "🎉 **На найближчий час дедлайнів немає! Все чисто, відпочивайте!**"
 
     now = datetime.now(KYIV_TZ)
     today = now.date()
-    # Воскресенье текущей недели
     days_to_sunday = 6 - today.weekday()
     this_week_end = today + timedelta(days=days_to_sunday)
     next_week_end = this_week_end + timedelta(days=7)
@@ -139,6 +173,8 @@ def format_deadlines_radar(assignments: list[dict]) -> str:
     no_deadline_count = 0
 
     for a in assignments:
+        if not isinstance(a, dict):
+            continue
         due_str = a.get("due_date", "")
         if not due_str or due_str == "Без дедлайну":
             no_deadline_count += 1
@@ -190,30 +226,39 @@ def format_deadlines_radar(assignments: list[dict]) -> str:
     if this_week:
         lines.append("🔥 **ГОРИТЬ НА ЦЬОМУ ТИЖНІ:**")
         for a, due_f, rem, emoji in this_week:
-            desc = f"\n   📝 _{a['description']}_" if a.get("description") else ""
-            lines.append(f"{emoji} **{a['course_id']}** — {a['title']}\n   ⏳ **Дедлайн:** {due_f} *({rem})*{desc}")
+            cname = clean_markdown(a.get("course_id") or "Предмет")
+            title = clean_markdown(a.get("title") or "Завдання")
+            desc = f"\n   📝 _{clean_markdown(a.get('description'))}_" if a.get("description") else ""
+            lines.append(f"{emoji} **{cname}** — {title}\n   ⏳ **Дедлайн:** {due_f} *({rem})*{desc}")
         lines.append("")
 
     if next_week:
         lines.append("🟡 **НА НАСТУПНИЙ ТИЖДЕНЬ:**")
         for a, due_f, rem, emoji in next_week:
-            desc = f"\n   📝 _{a['description']}_" if a.get("description") else ""
-            lines.append(f"• **{a['course_id']}** — {a['title']}\n   ⏳ До {due_f} *({rem})*{desc}")
+            cname = clean_markdown(a.get("course_id") or "Предмет")
+            title = clean_markdown(a.get("title") or "Завдання")
+            desc = f"\n   📝 _{clean_markdown(a.get('description'))}_" if a.get("description") else ""
+            lines.append(f"• **{cname}** — {title}\n   ⏳ До {due_f} *({rem})*{desc}")
         lines.append("")
 
     if later:
         lines.append("🟢 **ПІЗНІШЕ:**")
         for a, due_f, rem, emoji in later:
-            lines.append(f"• **{a['course_id']}** — {a['title']} (до {due_f})")
+            cname = clean_markdown(a.get("course_id") or "Предмет")
+            title = clean_markdown(a.get("title") or "Завдання")
+            lines.append(f"• **{cname}** — {title} (до {due_f})")
         lines.append("")
 
     if no_deadline_count > 0:
         lines.append(f"📌 _Завдань та практикумів без фіксованого дедлайну:_ **{no_deadline_count}**\n")
 
-    return "\n".join(lines).strip()
+    res = "\n".join(lines).strip()
+    if len(res) > 3900:
+        res = res[:3800] + "\n\n⚠️ _...список скорочено через обмеження довжини Telegram._"
+    return res
 
 
-def format_daily_summary(lessons: list[dict], assignments: list[dict], announcements: list[dict] = None) -> str:
+def format_daily_summary(lessons: list[dict] | None = None, assignments: list[dict] | None = None, announcements: list[dict] | None = None) -> str:
     """
     Форматирование адаптивной сводки дня (в 21:00 или по команде /summary):
     - В будние дни (когда есть пары):
@@ -223,14 +268,17 @@ def format_daily_summary(lessons: list[dict], assignments: list[dict], announcem
         1) Отдых / подготовка к новой учебной неделе.
         2) Ближайшие горящие дедлайны на следующую неделю.
     """
+    lessons = lessons or []
+    assignments = assignments or []
+    announcements = announcements or []
+
     now = datetime.now(KYIV_TZ)
     today = now.date()
     tomorrow = today + timedelta(days=1)
     days_to_sunday = 6 - today.weekday()
     this_week_end = today + timedelta(days=days_to_sunday)
     next_week_end = this_week_end + timedelta(days=7)
-    # Если сегодня были пары — показываем рабочий дайджест дня.
-    # Если пар не было — показываем сводку выходного/свободного дня с фокусом на дедлайны.
+
     has_lessons = bool(lessons)
     is_weekend_day = now.weekday() in (5, 6)
 
@@ -239,6 +287,8 @@ def format_daily_summary(lessons: list[dict], assignments: list[dict], announcem
     next_week_assignments = []
 
     for a in assignments:
+        if not isinstance(a, dict):
+            continue
         due_str = a.get("due_date", "")
         try:
             if len(due_str) == 10:
@@ -282,8 +332,10 @@ def format_daily_summary(lessons: list[dict], assignments: list[dict], announcem
         if upcoming:
             lines.append("🔥 **Ближчі дедлайни (на наступний тиждень):**")
             for a, due_f, rem in upcoming:
-                desc = f" — _{a['description']}_" if a.get("description") else ""
-                lines.append(f"• 🟡 **{a['course_id']}** — {a['title']} (до {due_f}, *{rem}*){desc}")
+                cname = clean_markdown(a.get("course_id") or "Предмет")
+                title = clean_markdown(a.get("title") or "Завдання")
+                desc = f" — _{clean_markdown(a.get('description'))}_" if a.get("description") else ""
+                lines.append(f"• 🟡 **{cname}** — {title} (до {due_f}, *{rem}*){desc}")
         else:
             lines.append("✅ **Гарячих дедлайнів немає, можна спокійно відпочивати перед новим навчальним тижнем!**")
     else:
@@ -293,12 +345,16 @@ def format_daily_summary(lessons: list[dict], assignments: list[dict], announcem
         if lessons:
             lines.append("🎓 **Пари, що були сьогодні:**")
             for idx, l in enumerate(lessons, 1):
-                lesson_line = f"**{idx}.** `{l['time']}` — **{l['name']}** ({l['type']})"
+                lname = clean_markdown(l.get("name", "Пара"))
+                ltype = clean_markdown(l.get("type", ""))
+                ltime = clean_markdown(l.get("time", ""))
+                type_str = f" ({ltype})" if ltype else ""
+                lesson_line = f"**{idx}.** `{ltime}` — **{lname}**{type_str}"
                 lines.append(lesson_line)
                 if announcements:
                     for ann in announcements:
-                        if ann.get("course_id") and ann["course_id"].lower() in l["name"].lower():
-                            lines.append(f"   📢 _{ann['text']}_")
+                        if isinstance(ann, dict) and ann.get("course_id") and ann["course_id"].lower() in l.get("name", "").lower():
+                            lines.append(f"   📢 _{clean_markdown(ann.get('text'))}_")
             lines.append("")
         else:
             lines.append("🏖 Сьогодні пар за розкладом не було.\n")
@@ -307,8 +363,10 @@ def format_daily_summary(lessons: list[dict], assignments: list[dict], announcem
         if tomorrow_assignments:
             lines.append(f"🔴 **Увага! На завтра горить ({len(tomorrow_assignments)}):**")
             for a, due_f, rem in tomorrow_assignments:
-                desc = f" — _{a['description']}_" if a.get("description") else ""
-                lines.append(f"• **{a['course_id']}** — {a['title']} (до {due_f}){desc}")
+                cname = clean_markdown(a.get("course_id") or "Предмет")
+                title = clean_markdown(a.get("title") or "Завдання")
+                desc = f" — _{clean_markdown(a.get('description'))}_" if a.get("description") else ""
+                lines.append(f"• **{cname}** — {title} (до {due_f}){desc}")
         else:
             lines.append("✅ На завтра дедлайнів немає, можна спокійно виспатися!")
 
@@ -317,7 +375,10 @@ def format_daily_summary(lessons: list[dict], assignments: list[dict], announcem
             lines.append(f"⏳ До кінця цього тижня залишилося здати робіт: **{count}**.")
 
     lines.append("\n👉 Повний список і таймери: команда `/deadlines`")
-    return "\n".join(lines).strip()
+    res = "\n".join(lines).strip()
+    if len(res) > 3900:
+        res = res[:3800] + "\n\n⚠️ _...зводку скорочено через ліміти Telegram._"
+    return res
 
 
 def format_evening_digest(assignments: list[dict], lessons: list[dict] = None, announcements: list[dict] = None) -> str:

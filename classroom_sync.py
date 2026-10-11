@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 import logging
@@ -12,8 +13,12 @@ from googleapiclient.discovery import build
 
 from config import BASE_DIR, KYIV_TZ
 from database import add_assignment_db, get_active_assignments_db, get_subscribed_chats_db, add_announcement_db
+from formatters import clean_markdown
 
 logger = logging.getLogger(__name__)
+
+# Блокування для запобігання паралельним синхронізаціям
+_sync_lock = asyncio.Lock()
 
 # Области доступа для Google Classroom (чтение курсов, заданий и объявлений)
 SCOPES = [
@@ -94,11 +99,16 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
     Синхронизировать активные задания из всех курсов Classroom в SQLite.
     Возвращает статус выполнения и диагностику.
     """
-    creds = get_classroom_credentials()
-    if not creds or not creds.valid:
-        err_msg = "Google Classroom не підключено або токен недійсний (перевірте GOOGLE_TOKEN_JSON на Render)."
-        logger.warning(err_msg)
-        return {"success": False, "courses_count": 0, "new_items": [], "error": err_msg}
+    if _sync_lock.locked():
+        logger.info("Синхронізація Classroom вже виконується, пропускаємо паралельний запит.")
+        return {"success": True, "courses_count": 0, "new_items": [], "error": None, "already_running": True}
+
+    async with _sync_lock:
+        creds = get_classroom_credentials()
+        if not creds or not creds.valid:
+            err_msg = "Google Classroom не підключено або токен недійсний (перевірте GOOGLE_TOKEN_JSON на Render)."
+            logger.warning(err_msg)
+            return {"success": False, "courses_count": 0, "new_items": [], "error": err_msg}
 
     new_items = []
     try:
@@ -202,14 +212,16 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                         # Миттєвий пуш у чати
                         if bot:
                             chats = await get_subscribed_chats_db()
+                            clean_c = clean_markdown(cname)
+                            clean_t = clean_markdown(title)
                             text = (
                                 f"📌 **Нове завдання в Google Classroom!**\n\n"
-                                f"📚 **Дисципліна:** {cname}\n"
-                                f"📝 **Завдання:** {title}\n"
+                                f"📚 **Дисципліна:** {clean_c}\n"
+                                f"📝 **Завдання:** {clean_t}\n"
                                 f"⏳ **Дедлайн:** `{due_date_str}`\n"
                             )
                             if desc:
-                                text += f"\n📖 _{desc[:200]}_\n"
+                                text += f"\n📖 _{clean_markdown(desc[:200])}_\n"
                             if alt_link:
                                 text += f"\n🔗 [Відкрити в Google Classroom]({alt_link})"
 
@@ -217,7 +229,12 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                                 try:
                                     await bot.send_message(chat_id, text, parse_mode="Markdown")
                                 except Exception as e:
-                                    logger.error(f"Не вдалося надіслати сповіщення Classroom у чат {chat_id}: {e}")
+                                    logger.warning(f"Markdown send failed to {chat_id}: {e}. Retrying plain text.")
+                                    try:
+                                        plain_text = text.replace("**", "").replace("*", "").replace("`", "").replace("_", "")
+                                        await bot.send_message(chat_id, plain_text)
+                                    except Exception as e2:
+                                        logger.error(f"Не вдалося надіслати сповіщення Classroom у чат {chat_id}: {e2}")
 
         # Якщо успішно завантажили курси та реальні завдання — очищаємо демо-заглушки та архівуємо старі
         if delete_demo_on_success and len(courses) > 0:

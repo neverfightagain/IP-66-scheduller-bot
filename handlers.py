@@ -1,8 +1,11 @@
+import logging
+import uuid
 from datetime import datetime, timedelta
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramBadRequest
 
 from config import (
     KYIV_TZ,
@@ -13,9 +16,86 @@ from config import (
 )
 from kpi_api import get_lessons_for_date, get_current_time_info
 from links_manager import load_links
-from formatters import format_morning_digest
+from formatters import format_morning_digest, clean_markdown
+
+logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+def strip_markdown(text: str) -> str:
+    """Видаляє символи Markdown для безпечної відправки повідомлення звичайним текстом."""
+    return (
+        text.replace("**", "")
+        .replace("*", "")
+        .replace("`", "")
+        .replace("_", "")
+        .replace("~", "")
+    )
+
+
+async def safe_answer(message: Message, text: str, reply_markup=None, disable_web_page_preview: bool = False):
+    """Безпечна відправка повідомлення з резервним plain-text варіантом при збоях Markdown-парсера."""
+    try:
+        return await message.answer(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+    except TelegramBadRequest as e:
+        logger.warning(f"Помилка парсингу Markdown: {e}. Відправляю простим текстом.")
+        plain_text = strip_markdown(text)
+        return await message.answer(
+            plain_text,
+            reply_markup=reply_markup,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+    except Exception as e:
+        logger.error(f"Непередбачена помилка в safe_answer: {e}")
+        plain_text = strip_markdown(text)
+        return await message.answer(
+            plain_text,
+            reply_markup=reply_markup,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+
+
+async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None):
+    """Безпечне редагування тексту повідомлення з резервним plain-text варіантом."""
+    try:
+        return await callback.message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+        )
+    except TelegramBadRequest as e:
+        logger.warning(f"Помилка парсингу Markdown при редагуванні: {e}. Редагую простим текстом.")
+        plain_text = strip_markdown(text)
+        try:
+            return await callback.message.edit_text(plain_text, reply_markup=reply_markup)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"Помилка в safe_edit_text: {e}")
+
+
+def normalize_due_date(due_str: str) -> str | None:
+    """Валідація та нормалізація введеної користувачем дати дедлайну."""
+    s = due_str.strip()
+    formats = [
+        ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M"),
+        ("%Y-%m-%d", "%Y-%m-%d 23:59"),
+        ("%d.%m.%Y %H:%M", "%Y-%m-%d %H:%M"),
+        ("%d.%m.%Y", "%Y-%m-%d 23:59"),
+    ]
+    for in_fmt, out_fmt in formats:
+        try:
+            dt = datetime.strptime(s, in_fmt)
+            return dt.strftime(out_fmt)
+        except ValueError:
+            continue
+    return None
 
 
 @router.message(Command("start"))
@@ -56,25 +136,25 @@ async def cmd_start(message: Message):
         "/unsubscribe — Вимкнути сповіщення\n"
         "/help — Повна довідка з поясненням можливостей"
     )
-    await message.answer(text, parse_mode="Markdown")
+    await safe_answer(message, text)
 
 
 @router.message(Command("subscribe"))
 async def cmd_subscribe(message: Message):
     chat_id = message.chat.id
     if add_subscribed_chat(chat_id):
-        await message.answer("✅ Чат успішно підписано на автоматичні сповіщення!")
+        await safe_answer(message, "✅ Чат успішно підписано на автоматичні сповіщення!")
     else:
-        await message.answer("ℹ️ Цей чат вже підписаний на сповіщення.")
+        await safe_answer(message, "ℹ️ Цей чат вже підписаний на сповіщення.")
 
 
 @router.message(Command("unsubscribe"))
 async def cmd_unsubscribe(message: Message):
     chat_id = message.chat.id
     if remove_subscribed_chat(chat_id):
-        await message.answer("🛑 Сповіщення для цього чату вимкнено.")
+        await safe_answer(message, "🛑 Сповіщення для цього чату вимкнено.")
     else:
-        await message.answer("ℹ️ Цей чат не був підписаний на сповіщення.")
+        await safe_answer(message, "ℹ️ Цей чат не був підписаний на сповіщення.")
 
 
 @router.message(Command("today"))
@@ -83,9 +163,9 @@ async def cmd_today(message: Message):
     try:
         week, day_name, lessons = await get_lessons_for_date(KPI_GROUP_ID, today)
         text, kb = format_morning_digest(week, day_name, lessons)
-        await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+        await safe_answer(message, text, reply_markup=kb)
     except Exception as e:
-        await message.answer(f"⚠️ Не вдалося отримати розклад: {e}")
+        await safe_answer(message, f"⚠️ Не вдалося отримати розклад: {clean_markdown(str(e))}")
 
 
 @router.message(Command("tomorrow"))
@@ -94,11 +174,10 @@ async def cmd_tomorrow(message: Message):
     try:
         week, day_name, lessons = await get_lessons_for_date(KPI_GROUP_ID, tomorrow)
         text, kb = format_morning_digest(week, day_name, lessons)
-        # Меняем заголовок на "на завтра"
         text = text.replace("на сьогодні", "на завтра")
-        await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+        await safe_answer(message, text, reply_markup=kb)
     except Exception as e:
-        await message.answer(f"⚠️ Не вдалося отримати розклад: {e}")
+        await safe_answer(message, f"⚠️ Не вдалося отримати розклад: {clean_markdown(str(e))}")
 
 
 @router.message(Command("week"))
@@ -108,20 +187,20 @@ async def cmd_week(message: Message):
         week = info.get("currentWeek", 1)
         now = datetime.now(KYIV_TZ)
         time_str = now.strftime("%H:%M:%S")
-        await message.answer(
+        await safe_answer(
+            message,
             f"🕒 **Київський час:** `{time_str}`\n"
             f"📅 **Зараз триває:** `{week}-й тиждень` ({'Чисельник' if week == 1 else 'Знаменник'})",
-            parse_mode="Markdown"
         )
     except Exception as e:
-        await message.answer(f"⚠️ Не вдалося визначити тиждень: {e}")
+        await safe_answer(message, f"⚠️ Не вдалося визначити тиждень: {clean_markdown(str(e))}")
 
 
 @router.message(Command("links"))
 async def cmd_links(message: Message):
     links = load_links()
     if not links:
-        await message.answer("📂 Список посилань порожній.")
+        await safe_answer(message, "📂 Список посилань порожній.")
         return
 
     lines = ["🔗 **Збережені посилання на заняття:**\n"]
@@ -131,14 +210,16 @@ async def cmd_links(message: Message):
         comment = data.get("comment", "").strip()
         if url:
             has_any = True
-            comment_str = f" _({comment})_" if comment else ""
-            lines.append(f"• **{title}**:\n  [Приєднатися]({url}){comment_str}")
+            c_title = clean_markdown(str(title))
+            c_comment = clean_markdown(str(comment))
+            comment_str = f" _({c_comment})_" if c_comment else ""
+            lines.append(f"• **{c_title}**:\n  [Приєднатися]({url}){comment_str}")
 
     if not has_any:
-        await message.answer("ℹ️ Посилання ще не додані в `links.json`.")
+        await safe_answer(message, "ℹ️ Посилання ще не додані в `links.json`.")
         return
 
-    await message.answer("\n\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
+    await safe_answer(message, "\n\n".join(lines), disable_web_page_preview=True)
 
 
 @router.message(Command("help"))
@@ -167,7 +248,7 @@ async def cmd_help(message: Message):
         "• /subscribe — Увімкнути автоматичні сповіщення для цього чату\n"
         "• /unsubscribe — Призупинити сповіщення для цього чату"
     )
-    await message.answer(text, parse_mode="Markdown")
+    await safe_answer(message, text)
 
 
 @router.message(Command("deadlines"))
@@ -182,7 +263,7 @@ async def cmd_deadlines(message: Message):
             [InlineKeyboardButton(text="🔄 Оновити з Google Classroom", callback_data="refresh_deadlines")]
         ]
     )
-    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+    await safe_answer(message, text, reply_markup=kb)
 
 
 @router.callback_query(F.data == "refresh_deadlines")
@@ -197,35 +278,39 @@ async def cb_refresh_deadlines(callback: CallbackQuery, bot: Bot):
     text = format_deadlines_radar(assignments)
 
     if not res.get("success"):
-        text += f"\n\n⚠️ _Синхронізація не вдалася: {res.get('error')}_"
+        err_msg = clean_markdown(str(res.get("error", "Помилка")))
+        text += f"\n\n⚠️ _Синхронізація не вдалася: {err_msg}_"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Оновити з Google Classroom", callback_data="refresh_deadlines")]
         ]
     )
-    try:
-        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
-    except Exception:
-        pass
+    await safe_edit_text(callback, text, reply_markup=kb)
 
 
 @router.message(Command("sync"))
 async def cmd_sync(message: Message, bot: Bot):
-    status_msg = await message.answer("🔄 Запускаю синхронізацію з Google Classroom...")
+    status_msg = await safe_answer(message, "🔄 Запускаю синхронізацію з Google Classroom...")
     from classroom_sync import sync_classroom_tasks
     from database import get_active_assignments_db
 
     res = await sync_classroom_tasks(bot=bot)
     if not res.get("success"):
-        err = res.get("error", "Невідома помилка")
-        await status_msg.edit_text(
+        err = clean_markdown(str(res.get("error", "Невідома помилка")))
+        err_text = (
             f"❌ **Помилка синхронізації Google Classroom:**\n`{err}`\n\n"
             f"ℹ️ **Що перевірити:**\n"
             f"1. Чи додана змінна `GOOGLE_TOKEN_JSON` в налаштуваннях Render (розділ **Environment**).\n"
-            f"2. Чи натиснута кнопка **Save Changes** на Render.",
-            parse_mode="Markdown"
+            f"2. Чи натиснута кнопка **Save Changes** на Render."
         )
+        if status_msg:
+            try:
+                await status_msg.edit_text(err_text, parse_mode="Markdown")
+            except Exception:
+                await safe_answer(message, err_text)
+        else:
+            await safe_answer(message, err_text)
         return
 
     active = await get_active_assignments_db()
@@ -233,43 +318,61 @@ async def cmd_sync(message: Message, bot: Bot):
     new_cnt = len(res.get("new_items", []))
     total_cnt = len(active)
 
-    await status_msg.edit_text(
+    success_text = (
         f"✅ **Google Classroom успішно синхронізовано!**\n\n"
         f"📚 Знайдено активних курсів: **{courses_cnt}**\n"
         f"🆕 Нових завдань завантажено: **{new_cnt}**\n"
         f"📋 Всього активних завдань у базі: **{total_cnt}**\n\n"
-        f"Введіть /deadlines, щоб переглянути оновлений радар завдань! 🎯",
-        parse_mode="Markdown"
+        f"Введіть /deadlines, щоб переглянути оновлений радар завдань! 🎯"
     )
+    if status_msg:
+        try:
+            await status_msg.edit_text(success_text, parse_mode="Markdown")
+        except Exception:
+            await safe_answer(message, success_text)
+    else:
+        await safe_answer(message, success_text)
 
 
 @router.message(Command("adddeadline"))
 async def cmd_add_deadline(message: Message):
     from database import add_assignment_db
-    import uuid
 
     raw_text = message.text.replace("/adddeadline", "", 1).strip()
     parts = [p.strip() for p in raw_text.split("|")]
     if len(parts) < 3:
-        await message.answer(
+        await safe_answer(
+            message,
             "ℹ️ **Формат додавання дедлайну:**\n"
             "`/adddeadline Предмет | Назва завдання | РРРР-ММ-ДД HH:MM | Опис (необов'язково)`\n\n"
             "Приклад:\n"
             "`/adddeadline Основи програмування | Лабораторна №1 | 2026-10-15 23:59 | Здати в репозиторій`",
-            parse_mode="Markdown"
         )
         return
 
-    course_name = parts[0]
-    title = parts[1]
-    due_date = parts[2]
-    desc = parts[3] if len(parts) > 3 else ""
-    aid = f"manual_{uuid.uuid4().hex[:6]}"
+    course_name = clean_markdown(parts[0][:60])
+    title = clean_markdown(parts[1][:150])
+    raw_date = parts[2][:30].strip()
+    desc = clean_markdown(parts[3][:300]) if len(parts) > 3 else ""
 
+    due_date = normalize_due_date(raw_date)
+    if not due_date:
+        await safe_answer(
+            message,
+            "❌ **Невірний формат дати!**\n\n"
+            "Вкажіть дату в одному з форматів:\n"
+            "• `РРРР-ММ-ДД HH:MM` (наприклад, `2026-10-25 23:59`)\n"
+            "• `РРРР-ММ-ДД` (наприклад, `2026-10-25`)\n"
+            "• `ДД.ММ.РРРР HH:MM` (наприклад, `25.10.2026 23:59`)\n"
+            "• `ДД.ММ.РРРР` (наприклад, `25.10.2026`)"
+        )
+        return
+
+    aid = f"manual_{uuid.uuid4().hex[:6]}"
     await add_assignment_db(aid, course_name, title, due_date, desc)
-    await message.answer(
-        f"✅ Дедлайн успішно додано!\n🆔 ID: `{aid}`\n📚 **{course_name}** — {title}\n⏳ **Дедлайн:** {due_date}",
-        parse_mode="Markdown"
+    await safe_answer(
+        message,
+        f"✅ Дедлайн успішно додано!\n🆔 ID: `{aid}`\n📚 **{course_name}** — {title}\n⏳ **Дедлайн:** `{due_date}`"
     )
 
 
@@ -279,17 +382,16 @@ async def cmd_del_deadline(message: Message):
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.answer("ℹ️ Вкажіть ID дедлайну для видалення:\n`/deldeadline <id>`", parse_mode="Markdown")
+        await safe_answer(message, "ℹ️ Вкажіть ID дедлайну для видалення:\n`/deldeadline <id>`")
         return
 
-    aid = parts[1].strip()
+    aid = clean_markdown(parts[1].strip()[:50])
     await delete_assignment_db(aid)
-    await message.answer(f"🗑 Дедлайн `{aid}` видалено або позначено як виконаний!", parse_mode="Markdown")
+    await safe_answer(message, f"🗑 Дедлайн `{aid}` видалено або позначено як виконаний!")
 
 
 @router.message(Command("evening"))
 async def cmd_evening(message: Message):
-    # Алиас на команду /summary
     await cmd_summary(message)
 
 
@@ -298,14 +400,15 @@ async def cmd_summary(message: Message):
     from formatters import format_daily_summary
     from database import get_active_assignments_db, get_today_announcements_db
     from kpi_api import get_schedule_for_date
-    from config import KYIV_TZ
-    from datetime import datetime
 
-    today_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
-    lessons = await get_schedule_for_date(today_date)
-    assignments = await get_active_assignments_db()
-    announcements = await get_today_announcements_db()
+    try:
+        today_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+        lessons = await get_schedule_for_date(today_date)
+        assignments = await get_active_assignments_db()
+        announcements = await get_today_announcements_db()
 
-    text = format_daily_summary(lessons, assignments, announcements)
-    await message.answer(text, parse_mode="Markdown")
-
+        text = format_daily_summary(lessons, assignments, announcements)
+        await safe_answer(message, text)
+    except Exception as e:
+        logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
+        await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {clean_markdown(str(e))}")

@@ -19,6 +19,24 @@ from formatters import format_morning_digest, format_lesson_alert
 logger = logging.getLogger(__name__)
 
 
+def strip_markdown(text: str) -> str:
+    """Видаляє символи Markdown для безпечної відправки повідомлення звичайним текстом."""
+    return text.replace("**", "").replace("*", "").replace("`", "").replace("_", "")
+
+
+async def safe_send_message(bot: Bot, chat_id: int, text: str, reply_markup=None):
+    """Безпечна відправка повідомлення з відкатом на звичайний текст при помилці парсингу Markdown."""
+    try:
+        return await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=reply_markup)
+    except Exception as e:
+        logger.warning(f"Помилка відправки Markdown у {chat_id}: {e}. Відправляю простим текстом.")
+        try:
+            return await bot.send_message(chat_id, strip_markdown(text), reply_markup=reply_markup)
+        except Exception as e2:
+            logger.error(f"Не вдалося надіслати повідомлення у чат {chat_id}: {e2}")
+            return None
+
+
 async def delete_message_after_delay(bot: Bot, chat_id: int, message_id: int, delay_seconds: int = 1200):
     """Автоматично видаляє старе повідомлення через delay_seconds (за замовчуванням 20 хвилин)."""
     await asyncio.sleep(delay_seconds)
@@ -66,10 +84,7 @@ async def send_morning_digest(bot: Bot):
     text, kb = format_morning_digest(_today_cached_week, _today_cached_day_name, _today_cached_lessons)
 
     for chat_id in chats:
-        try:
-            await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
-        except Exception as e:
-            logger.error(f"Не вдалося надіслати дайджест у чат {chat_id}: {e}")
+        await safe_send_message(bot, chat_id, text, reply_markup=kb)
 
 
 async def check_upcoming_lessons(bot: Bot):
@@ -116,12 +131,10 @@ async def check_upcoming_lessons(bot: Bot):
 
                 text, kb = format_lesson_alert(lesson, minutes_left=target_minutes)
                 for chat_id in chats:
-                    try:
-                        sent_msg = await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
+                    sent_msg = await safe_send_message(bot, chat_id, text, reply_markup=kb)
+                    if sent_msg:
                         # Автоматически удаляем сообщение через 20 минут, чтобы не засорять чат
                         asyncio.create_task(delete_message_after_delay(bot, chat_id, sent_msg.message_id, delay_seconds=20 * 60))
-                    except Exception as e:
-                        logger.error(f"Не вдалося надіслати сповіщення ({target_minutes} хв) у чат {chat_id}: {e}")
 
                 sent_alerts.add(alert_key)
                 logger.info(f"Надіслано сповіщення за {target_minutes} хв: {lesson['name']} ({lesson['time']})")
@@ -144,10 +157,7 @@ async def send_evening_digest(bot: Bot):
     text = format_daily_summary(lessons, assignments, announcements)
 
     for chat_id in chats:
-        try:
-            await bot.send_message(chat_id, text, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Не вдалося надіслати вечірній дайджест у чат {chat_id}: {e}")
+        await safe_send_message(bot, chat_id, text)
 
 
 async def check_new_youtube_videos(bot: Bot):

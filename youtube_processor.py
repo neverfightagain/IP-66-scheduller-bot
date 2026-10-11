@@ -173,10 +173,16 @@ async def process_video_and_notify(bot, video: dict) -> bool:
             video_url=video.get("url", f"https://www.youtube.com/watch?v={video_id}")
         )
         for cid in chats:
+            full_msg = f"🎬 **Новий запис пари на YouTube!**\n\n{text}"
             try:
-                await bot.send_message(cid, f"🎬 **Новий запис пари на YouTube!**\n\n{text}", parse_mode="Markdown", reply_markup=kb)
+                await bot.send_message(cid, full_msg, parse_mode="Markdown", reply_markup=kb)
             except Exception as e:
-                logger.error(f"Не вдалося надіслати конспект у чат {cid}: {e}")
+                logger.warning(f"Markdown send failed for YouTube video in chat {cid}: {e}. Retrying plain text.")
+                try:
+                    plain_msg = full_msg.replace("**", "").replace("*", "").replace("`", "").replace("_", "")
+                    await bot.send_message(cid, plain_msg, reply_markup=kb)
+                except Exception as e2:
+                    logger.error(f"Не вдалося надіслати конспект у чат {cid}: {e2}")
 
     logger.info(f"Успішно оброблено нове відео {video_id}: {topic}")
     return True

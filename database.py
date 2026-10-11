@@ -89,7 +89,8 @@ async def init_db():
 
         # Автоматическая миграция из старых JSON-файлов
         await _migrate_legacy_data(db)
-        await seed_demo_assignments_if_empty()
+        await db.execute("DELETE FROM assignments WHERE id IN ('op_lab1', 'asd_lab1', 'kdm_calc1')")
+        await db.commit()
         await cleanup_past_assignments_db()
 
 
@@ -267,33 +268,5 @@ async def delete_assignment_db(assignment_id: str) -> bool:
 
 
 async def seed_demo_assignments_if_empty():
-    """Добавить демонстрационные дедлайны для проверки, если база пустая."""
-    from datetime import datetime, timedelta
-    from config import KYIV_TZ
-    now = datetime.now(KYIV_TZ)
-
-    async with get_db() as db:
-        async with db.execute("SELECT COUNT(*) as cnt FROM assignments") as cursor:
-            row = await cursor.fetchone()
-            if row and row["cnt"] > 0:
-                return
-
-        # Добавляем 3 тестовых дедлайна
-        d1 = (now + timedelta(days=2)).strftime("%Y-%m-%d 23:59")
-        d2 = (now + timedelta(days=4)).strftime("%Y-%m-%d 23:59")
-        d3 = (now + timedelta(days=9)).strftime("%Y-%m-%d 23:59")
-
-        demo_data = [
-            ("op_lab1", "Основи програмування", "Лабораторна робота №1 (Базові конструкції)", d1, "Здавати через репозиторій GitHub"),
-            ("asd_lab1", "Алгоритми та структури даних", "Лабораторна робота №1 (Основи алгоритмізації)", d2, "Звіт у форматі PDF + код"),
-            ("kdm_calc1", "Комп'ютерна дискретна математика", "Розрахункова робота №1 (Множини та відношення)", d3, "Варіанти згідно зі списком у журналі")
-        ]
-
-        for aid, cname, title, due, desc in demo_data:
-            await db.execute("""
-                INSERT OR IGNORE INTO assignments (id, course_id, title, due_date, description, status)
-                VALUES (?, ?, ?, ?, ?, 'active')
-            """, (aid, cname, title, due, desc))
-
-        await db.commit()
-        logger.info("Додано тестові дедлайни для перевірки команди /deadlines.")
+    """Заглушка: генерацію демо-дедлайнів вимкнено для реального використання."""
+    pass
