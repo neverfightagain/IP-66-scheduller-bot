@@ -166,6 +166,15 @@ async def check_new_youtube_videos(bot: Bot):
         logger.error(f"Помилка при перевірці YouTube-відео: {e}")
 
 
+async def check_new_classroom_tasks(bot: Bot):
+    """Фонова перевірка нових завдань у Google Classroom (кожні 15 хв)."""
+    try:
+        from classroom_sync import sync_classroom_tasks
+        await sync_classroom_tasks(bot)
+    except Exception as e:
+        logger.error(f"Помилка при фоновій перевірці Classroom: {e}")
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Настроить и запустить планировщик задач."""
     scheduler = AsyncIOScheduler(timezone=KYIV_TZ)
@@ -218,6 +227,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=IntervalTrigger(minutes=30, timezone=KYIV_TZ),
         args=[bot],
         name="check_new_youtube_videos",
+    )
+
+    # 7. Автоматическая проверка новых заданий в Google Classroom каждые 15 минут
+    scheduler.add_job(
+        check_new_classroom_tasks,
+        trigger=IntervalTrigger(minutes=15, timezone=KYIV_TZ),
+        args=[bot],
+        name="check_new_classroom_tasks",
     )
 
     return scheduler
