@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 import aiosqlite
-from config import BASE_DIR, CHATS_FILE, LINKS_FILE
+from config import BASE_DIR, CHATS_FILE, LINKS_FILE, ENV_CHAT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,17 @@ async def _migrate_legacy_data(db: aiosqlite.Connection):
                 await db.commit()
         except Exception as e:
             logger.warning(f"Помилка міграції chats.json: {e}")
+
+    # Добавляем чат из переменной окружения CHAT_ID, если задан
+    if ENV_CHAT_ID:
+        try:
+            await db.execute(
+                "INSERT OR IGNORE INTO chat_settings (chat_id) VALUES (?)",
+                (int(ENV_CHAT_ID),)
+            )
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"Помилка додавання ENV_CHAT_ID: {e}")
 
     # Миграция links.json
     if LINKS_FILE.exists():
