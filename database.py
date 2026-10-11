@@ -182,6 +182,17 @@ async def save_video_summary(video_id: str, title: str, course_id: str | None, p
         await db.commit()
 
 
+async def add_announcement_db(course_id: str | None, source: str, text: str, detected_date: str | None = None, conflict_flag: int = 0) -> int:
+    """Сохранить обнаруженное объявление или анонс в базу данных."""
+    async with get_db() as db:
+        cursor = await db.execute("""
+            INSERT INTO announcements (course_id, source, text, detected_date, conflict_flag)
+            VALUES (?, ?, ?, ?, ?)
+        """, (course_id, source, text, detected_date, conflict_flag))
+        await db.commit()
+        return cursor.lastrowid
+
+
 async def get_today_announcements_db() -> list[dict]:
     """Получить объявления и анонсы за сегодня."""
     async with get_db() as db:

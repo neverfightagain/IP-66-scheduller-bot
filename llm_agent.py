@@ -54,16 +54,28 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
         client = genai.Client(api_key=api_key)
         prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
 
-        # Используем Gemini 2.5 Flash с принудительным форматом JSON
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt_content,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                system_instruction=SYSTEM_INSTRUCTION,
-                temperature=0.2,
-            ),
-        )
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_content,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    temperature=0.2,
+                ),
+            )
+        except Exception as e_model:
+            logger.warning(f"Модель {model_name} повернула помилку ({e_model}), спробуємо gemini-2.0-flash...")
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt_content,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    temperature=0.2,
+                ),
+            )
 
         result_json = json.loads(response.text)
         return result_json

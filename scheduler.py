@@ -150,6 +150,21 @@ async def send_evening_digest(bot: Bot):
             logger.error(f"Не вдалося надіслати вечірній дайджест у чат {chat_id}: {e}")
 
 
+async def check_new_youtube_videos(bot: Bot):
+    """Фонова перевірка нових відео на YouTube-каналі групи (кожні 30 хв)."""
+    channel_id = os.getenv("YOUTUBE_CHANNEL_ID", "").strip()
+    if not channel_id:
+        return
+
+    from youtube_processor import fetch_latest_channel_videos, process_video_and_notify
+    try:
+        videos = fetch_latest_channel_videos(channel_id, max_results=3)
+        for vid in videos:
+            await process_video_and_notify(bot, vid)
+    except Exception as e:
+        logger.error(f"Помилка при перевірці YouTube-відео: {e}")
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Настроить и запустить планировщик задач."""
     scheduler = AsyncIOScheduler(timezone=KYIV_TZ)
@@ -186,6 +201,22 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=CronTrigger(day_of_week="mon-sun", hour=21, minute=0, timezone=KYIV_TZ),
         args=[bot],
         name="evening_digest",
+    )
+
+    # 5. Утренний дайджест дедлайнов выходного дня в 10:00 (суббота и воскресенье)
+    scheduler.add_job(
+        send_evening_digest,
+        trigger=CronTrigger(day_of_week="sat,sun", hour=10, minute=0, timezone=KYIV_TZ),
+        args=[bot],
+        name="weekend_morning_digest",
+    )
+
+    # 6. Автоматическая проверка новых лекций на YouTube каждые 30 минут
+    scheduler.add_job(
+        check_new_youtube_videos,
+        trigger=IntervalTrigger(minutes=30, timezone=KYIV_TZ),
+        args=[bot],
+        name="check_new_youtube_videos",
     )
 
     return scheduler

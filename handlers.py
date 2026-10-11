@@ -142,8 +142,6 @@ async def cmd_help(message: Message):
         "📊 **Зводка та дедлайни:**\n"
         "/summary — Підсумок дня та статус дедлайнів\n"
         "/deadlines — Радар усіх дедлайнів на тижні\n\n"
-        "🎬 **AI Конспекти (за бажанням):**\n"
-        "/summary <посилання> — Зробити вижимку лекції з YouTube\n\n"
         "⚙️ **Налаштування:**\n"
         "/subscribe — Увімкнути сповіщення в цьому чаті\n"
         "/unsubscribe — Вимкнути сповіщення\n"
@@ -214,54 +212,12 @@ async def cmd_evening(message: Message):
 
 @router.message(Command("summary"))
 async def cmd_summary(message: Message):
-    from youtube_processor import extract_video_id, get_video_transcript
-    from llm_agent import analyze_lecture_transcript
-    from formatters import format_lecture_summary, format_daily_summary
-    from database import save_video_summary, get_active_assignments_db, get_today_announcements_db
+    from formatters import format_daily_summary
+    from database import get_active_assignments_db, get_today_announcements_db
     from kpi_api import get_schedule_for_date
     from config import KYIV_TZ
     from datetime import datetime
 
-    parts = message.text.split(maxsplit=1)
-    # Если передана ссылка на YouTube — запускаем AI конспект
-    if len(parts) >= 2 and ("youtu.be" in parts[1] or "youtube.com" in parts[1]):
-        url = parts[1].strip()
-        video_id = extract_video_id(url)
-        if not video_id:
-            await message.answer("⚠️ Не вдалося розпізнати посилання на YouTube.")
-            return
-
-        wait_msg = await message.answer("⏳ Завантажую субтитри та аналізую пару за допомогою Gemini AI... Зачекайте 10-15 секунд.")
-
-        transcript_info = get_video_transcript(video_id)
-        if not transcript_info:
-            await wait_msg.edit_text("❌ На цьому відео немає доступних автоматичних субтитрів для аналізу.")
-            return
-
-        transcript_text, _ = transcript_info
-        summary = await analyze_lecture_transcript(transcript_text, video_title=f"YouTube {video_id}")
-        if not summary:
-            await wait_msg.edit_text("❌ Помилка при обробці лекції штучним інтелектом (перевірте наявність GEMINI_API_KEY).")
-            return
-
-        await save_video_summary(
-            video_id=video_id,
-            title=summary.get("topic", "Лекція"),
-            course_id=summary.get("subject_detected"),
-            published_at=None,
-            summary=summary
-        )
-
-        text, kb = format_lecture_summary(
-            summary=summary,
-            video_title=summary.get("topic", "Лекція"),
-            video_url=f"https://www.youtube.com/watch?v={video_id}"
-        )
-        await wait_msg.delete()
-        await message.answer(text, parse_mode="Markdown", reply_markup=kb)
-        return
-
-    # Иначе генерируем дневной/вечерний дайджест (пары + дедлайны)
     today_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
     lessons = await get_schedule_for_date(today_date)
     assignments = await get_active_assignments_db()
