@@ -1,4 +1,5 @@
 import datetime
+import json
 import logging
 import os
 from pathlib import Path
@@ -28,30 +29,44 @@ TOKEN_FILE = BASE_DIR / "token.json"
 def get_classroom_credentials() -> Credentials | None:
     """Получить или обновить валидные учетные данные OAuth 2.0."""
     creds = None
-    # Поддержка переменной окружения GOOGLE_TOKEN_JSON (для Render / Cloud хостингов)
-    if not TOKEN_FILE.exists() and os.getenv("GOOGLE_TOKEN_JSON"):
-        try:
-            with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-                f.write(os.getenv("GOOGLE_TOKEN_JSON").strip())
-        except Exception as e:
-            logger.warning(f"Не вдалося записати token.json з env: {e}")
+    raw_env = os.getenv("GOOGLE_TOKEN_JSON", "").strip()
 
-    if TOKEN_FILE.exists():
+    # 1. Если передана переменная GOOGLE_TOKEN_JSON (на Render / облаке)
+    if raw_env:
+        # Убираем внешние кавычки, если пользователь случайно вставил '{"token":...}'
+        if (raw_env.startswith("'") and raw_env.endswith("'")) or (raw_env.startswith('"') and raw_env.endswith('"')):
+            raw_env = raw_env[1:-1].strip()
+        try:
+            token_data = json.loads(raw_env)
+            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+            logger.info("Успішно завантажено Google Credentials напряму з GOOGLE_TOKEN_JSON.")
+        except Exception as e:
+            logger.error(f"Помилка парсингу GOOGLE_TOKEN_JSON з env: {e}")
+
+    # 2. Если из env не получилось, пробуем локальный файл token.json
+    if not creds and TOKEN_FILE.exists():
         try:
             creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+            logger.info("Успішно завантажено Google Credentials з файлу token.json.")
         except Exception as e:
-            logger.warning(f"Не вдалося завантажити token.json: {e}")
+            logger.error(f"Не вдалося завантажити token.json: {e}")
 
-    # Если токен просрочен, но есть refresh_token — обновляем в фоне
-    if creds and creds.expired and creds.refresh_token:
+    # 3. Обновляем токен, если он просрочен или еще не валидирован
+    if creds and (not creds.valid or creds.expired) and creds.refresh_token:
         try:
             creds.refresh(Request())
-            with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-            logger.info("Успішно оновлено токен Google Classroom.")
+            logger.info("Успішно оновлено токен Google Classroom через refresh_token.")
+            try:
+                with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+                    f.write(creds.to_json())
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Помилка оновлення токена Google Classroom: {e}")
             creds = None
+
+    if not creds:
+        logger.warning("Google Classroom Credentials не знайдено (ні в GOOGLE_TOKEN_JSON, ні в token.json).")
 
     return creds
 
@@ -74,12 +89,16 @@ def run_auth_flow() -> bool:
         return False
 
 
-async def sync_classroom_tasks(bot = None) -> list[dict]:
-    """Синхронизировать активные задания из всех курсов Classroom в SQLite."""
+async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) -> dict:
+    """
+    Синхронизировать активные задания из всех курсов Classroom в SQLite.
+    Возвращает статус выполнения и диагностику.
+    """
     creds = get_classroom_credentials()
     if not creds or not creds.valid:
-        logger.debug("Google Classroom не підключено або token.json недійсний.")
-        return []
+        err_msg = "Google Classroom не підключено або токен недійсний (перевірте GOOGLE_TOKEN_JSON на Render)."
+        logger.warning(err_msg)
+        return {"success": False, "courses_count": 0, "new_items": [], "error": err_msg}
 
     new_items = []
     try:
@@ -95,9 +114,13 @@ async def sync_classroom_tasks(bot = None) -> list[dict]:
             cid = course["id"]
             cname = course.get("name", "Невідомий курс")
 
-            # 1. Загружаем задания (courseWork)
-            cw_resp = service.courses().courseWork().list(courseId=cid).execute()
-            course_works = cw_resp.get("courseWork", [])
+            # 1. Загружаем задания (courseWork) с защитой от сбоя отдельного курса
+            try:
+                cw_resp = service.courses().courseWork().list(courseId=cid).execute()
+                course_works = cw_resp.get("courseWork", [])
+            except Exception as e:
+                logger.warning(f"Не вдалося завантажити завдання для курсу {cname}: {e}")
+                course_works = []
 
             for cw in course_works:
                 cw_id = f"gc_{cw['id']}"
@@ -161,7 +184,14 @@ async def sync_classroom_tasks(bot = None) -> list[dict]:
                             except Exception as e:
                                 logger.error(f"Не вдалося надіслати сповіщення Classroom у чат {chat_id}: {e}")
 
-        return new_items
+        # Если успешно загрузили курсы и реальные задания — очищаем демо-заглушки
+        if delete_demo_on_success and len(courses) > 0:
+            from database import delete_assignment_db
+            await delete_assignment_db("op_lab1")
+            await delete_assignment_db("asd_lab1")
+            await delete_assignment_db("kdm_calc1")
+
+        return {"success": True, "courses_count": len(courses), "new_items": new_items, "error": None}
     except Exception as e:
         logger.error(f"Помилка синхронізації Google Classroom: {e}")
-        return []
+        return {"success": False, "courses_count": 0, "new_items": [], "error": str(e)}

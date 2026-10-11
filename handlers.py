@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
-from aiogram import Router
+from aiogram import Router, F, Bot
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ChatType
 
 from config import (
@@ -141,7 +141,8 @@ async def cmd_help(message: Message):
         "/links — Список посилань на Zoom/Meet\n\n"
         "📊 **Зводка та дедлайни:**\n"
         "/summary — Підсумок дня та статус дедлайнів\n"
-        "/deadlines — Радар усіх дедлайнів на тижні\n\n"
+        "/deadlines — Радар усіх дедлайнів на тижні\n"
+        "/sync — Ручна синхронізація завдань з Google Classroom\n\n"
         "⚙️ **Налаштування:**\n"
         "/subscribe — Увімкнути сповіщення в цьому чаті\n"
         "/unsubscribe — Вимкнути сповіщення\n"
@@ -157,7 +158,70 @@ async def cmd_deadlines(message: Message):
 
     assignments = await get_active_assignments_db()
     text = format_deadlines_radar(assignments)
-    await message.answer(text, parse_mode="Markdown")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Оновити з Google Classroom", callback_data="refresh_deadlines")]
+        ]
+    )
+    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+
+
+@router.callback_query(F.data == "refresh_deadlines")
+async def cb_refresh_deadlines(callback: CallbackQuery, bot: Bot):
+    await callback.answer("⏳ Синхронізація з Classroom...")
+    from classroom_sync import sync_classroom_tasks
+    from database import get_active_assignments_db
+    from formatters import format_deadlines_radar
+
+    res = await sync_classroom_tasks(bot=bot)
+    assignments = await get_active_assignments_db()
+    text = format_deadlines_radar(assignments)
+
+    if not res.get("success"):
+        text += f"\n\n⚠️ _Синхронізація не вдалася: {res.get('error')}_"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Оновити з Google Classroom", callback_data="refresh_deadlines")]
+        ]
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        pass
+
+
+@router.message(Command("sync"))
+async def cmd_sync(message: Message, bot: Bot):
+    status_msg = await message.answer("🔄 Запускаю синхронізацію з Google Classroom...")
+    from classroom_sync import sync_classroom_tasks
+    from database import get_active_assignments_db
+
+    res = await sync_classroom_tasks(bot=bot)
+    if not res.get("success"):
+        err = res.get("error", "Невідома помилка")
+        await status_msg.edit_text(
+            f"❌ **Помилка синхронізації Google Classroom:**\n`{err}`\n\n"
+            f"ℹ️ **Що перевірити:**\n"
+            f"1. Чи додана змінна `GOOGLE_TOKEN_JSON` в налаштуваннях Render (розділ **Environment**).\n"
+            f"2. Чи натиснута кнопка **Save Changes** на Render.",
+            parse_mode="Markdown"
+        )
+        return
+
+    active = await get_active_assignments_db()
+    courses_cnt = res.get("courses_count", 0)
+    new_cnt = len(res.get("new_items", []))
+    total_cnt = len(active)
+
+    await status_msg.edit_text(
+        f"✅ **Google Classroom успішно синхронізовано!**\n\n"
+        f"📚 Знайдено активних курсів: **{courses_cnt}**\n"
+        f"🆕 Нових завдань завантажено: **{new_cnt}**\n"
+        f"📋 Всього активних завдань у базі: **{total_cnt}**\n\n"
+        f"Введіть /deadlines, щоб переглянути оновлений радар завдань! 🎯",
+        parse_mode="Markdown"
+    )
 
 
 @router.message(Command("adddeadline"))
