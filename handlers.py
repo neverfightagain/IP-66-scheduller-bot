@@ -398,17 +398,54 @@ async def cb_refresh_deadlines(callback: CallbackQuery, bot: Bot):
     await safe_edit_text(callback, text, reply_markup=kb)
 
 
+@router.message(Command("youtube"))
+async def cmd_youtube(message: Message, bot: Bot):
+    await safe_answer(message, "🎬 Перевіряю нові лекції на YouTube-каналі групи...")
+    from scheduler import check_new_youtube_videos
+    from config import YOUTUBE_CHANNEL_ID
+    from youtube_processor import fetch_latest_channel_videos
+    from database import is_video_processed
+
+    try:
+        videos = fetch_latest_channel_videos(YOUTUBE_CHANNEL_ID, max_results=5) if YOUTUBE_CHANNEL_ID else []
+        new_vids = []
+        for v in videos:
+            if not await is_video_processed(v["video_id"]):
+                new_vids.append(v)
+
+        await check_new_youtube_videos(bot=bot)
+
+        if new_vids:
+            cnt = len(new_vids)
+            await safe_answer(message, f"✅ Оброблено та опубліковано нових лекцій: **{cnt}**! Пости надіслано в чат.")
+        else:
+            await safe_answer(message, "ℹ️ Наразі нових неопублікованих лекцій на YouTube немає (усі останні відео вже оброблено).")
+    except Exception as e:
+        await safe_answer(message, f"❌ Помилка при перевірці YouTube: {clean_markdown(str(e))}")
+
+
 @router.message(Command("sync"))
 async def cmd_sync(message: Message, bot: Bot):
-    status_msg = await safe_answer(message, "🔄 Запускаю синхронізацію з Google Classroom...")
+    status_msg = await safe_answer(message, "🔄 Запускаю синхронізацію з Google Classroom та YouTube...")
     from classroom_sync import sync_classroom_tasks
     from database import get_active_assignments_db
+    from scheduler import check_new_youtube_videos
 
+    # 1. Синхронізація Google Classroom
     res = await sync_classroom_tasks(bot=bot)
+
+    # 2. Перевірка YouTube
+    yt_status = ""
+    try:
+        await check_new_youtube_videos(bot=bot)
+        yt_status = "\n🎬 **YouTube:** перевірено на нові лекції."
+    except Exception as e_yt:
+        yt_status = f"\n⚠️ **YouTube:** {clean_markdown(str(e_yt))}"
+
     if not res.get("success"):
         err = clean_markdown(str(res.get("error", "Невідома помилка")))
         err_text = (
-            f"❌ **Помилка синхронізації Google Classroom:**\n`{err}`\n\n"
+            f"❌ **Помилка синхронізації Google Classroom:**\n`{err}`{yt_status}\n\n"
             f"ℹ️ **Що перевірити:**\n"
             f"1. Чи додана змінна `GOOGLE_TOKEN_JSON` в налаштуваннях Render (розділ **Environment**).\n"
             f"2. Чи натиснута кнопка **Save Changes** на Render."
@@ -428,10 +465,10 @@ async def cmd_sync(message: Message, bot: Bot):
     total_cnt = len(active)
 
     success_text = (
-        f"✅ **Google Classroom успішно синхронізовано!**\n\n"
+        f"✅ **Google Classroom та YouTube успішно синхронізовано!**\n\n"
         f"📚 Знайдено активних курсів: **{courses_cnt}**\n"
         f"🆕 Нових завдань завантажено: **{new_cnt}**\n"
-        f"📋 Всього активних завдань у базі: **{total_cnt}**\n\n"
+        f"📋 Всього активних завдань у базі: **{total_cnt}**{yt_status}\n\n"
         f"Введіть /deadlines, щоб переглянути оновлений радар завдань! 🎯"
     )
     if status_msg:

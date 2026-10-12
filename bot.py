@@ -98,7 +98,8 @@ async def main():
             BotCommand(command="week", description="Поточний навчальний тиждень"),
             BotCommand(command="deadlines", description="Радар дедлайнів (Classroom)"),
             BotCommand(command="summary", description="Підсумок дня та дедлайни"),
-            BotCommand(command="sync", description="Синхронізація з Classroom"),
+            BotCommand(command="sync", description="Синхронізація з Classroom та YouTube"),
+            BotCommand(command="youtube", description="Перевірити нові лекції на YouTube"),
             BotCommand(command="links", description="Посилання на Zoom/Meet"),
             BotCommand(command="setlink", description="Додати або оновити лінк"),
             BotCommand(command="dellink", description="Видалити лінк на предмет"),
@@ -122,6 +123,13 @@ async def main():
         await sync_classroom_tasks(bot)
     except Exception as e:
         logger.warning(f"Classroom sync on startup: {e}")
+
+    # Первинна перевірка нових лекцій на YouTube одразу при старті (без очікування таймера)
+    try:
+        from scheduler import check_new_youtube_videos
+        await check_new_youtube_videos(bot)
+    except Exception as e:
+        logger.warning(f"YouTube check on startup: {e}")
 
     # Запуск планировщика задач (дайджест + пуши за 5 минут)
     scheduler = setup_scheduler(bot)

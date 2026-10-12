@@ -314,10 +314,10 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         name="weekend_morning_digest",
     )
 
-    # 6. Автоматическая проверка новых лекций на YouTube каждые 30 минут
+    # 6. Автоматична перевірка нових лекцій на YouTube кожні 10 хвилин
     scheduler.add_job(
         check_new_youtube_videos,
-        trigger=IntervalTrigger(minutes=30, timezone=KYIV_TZ),
+        trigger=IntervalTrigger(minutes=10, timezone=KYIV_TZ),
         args=[bot],
         name="check_new_youtube_videos",
     )
