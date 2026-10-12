@@ -198,10 +198,33 @@ async def cmd_today(message: Message):
     today = datetime.now(KYIV_TZ).date()
     try:
         week, day_name, lessons = await get_lessons_for_date(KPI_GROUP_ID, today)
-        text, kb = format_morning_digest(week, day_name, lessons)
-        await safe_answer(message, text, reply_markup=kb)
+        is_group = message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+
+        from scheduler import calculate_lessons_end_datetime
+        from database import add_scheduled_deletion_db
+
+        now_dt = datetime.now(KYIV_TZ)
+        end_dt = calculate_lessons_end_datetime(lessons, today)
+        delete_time_str = end_dt.strftime("%H:%M")
+        show_delete = is_group and lessons and end_dt > now_dt
+
+        text, kb = format_morning_digest(
+            week,
+            day_name,
+            lessons,
+            auto_delete_time=delete_time_str if show_delete else None
+        )
+        sent = await safe_answer(message, text, reply_markup=kb)
+        if sent and show_delete:
+            await add_scheduled_deletion_db(
+                chat_id=message.chat.id,
+                message_id=sent.message_id,
+                delete_at=end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                tag="today_command"
+            )
     except Exception as e:
         await safe_answer(message, f"⚠️ Не вдалося отримати розклад: {clean_markdown(str(e))}")
+
 
 
 @router.message(Command("tomorrow"))

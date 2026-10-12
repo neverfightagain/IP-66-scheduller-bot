@@ -21,12 +21,15 @@ def clean_markdown(text: str | None) -> str:
     )
 
 
-def format_morning_digest(week: int | str | None, day_name: str | None, lessons: list[dict] | None) -> tuple[str, InlineKeyboardMarkup | None]:
+def format_morning_digest(week: int | str | None, day_name: str | None, lessons: list[dict] | None, auto_delete_time: str | None = None) -> tuple[str, InlineKeyboardMarkup | None]:
     lessons = lessons or []
     w_str = clean_markdown(str(week) if week is not None else "1")
     d_str = clean_markdown(str(day_name) if day_name is not None else "")
     if not lessons:
-        return f"🏖 **Розклад на сьогодні ({d_str}, {w_str}-й тиждень):**\n\nСьогодні пар немає!", None
+        msg = f"🏖 **Розклад на сьогодні ({d_str}, {w_str}-й тиждень):**\n\nСьогодні пар немає!"
+        if auto_delete_time:
+            msg += f"\n\n🧹 _Повідомлення буде очищено о {auto_delete_time}_"
+        return msg, None
 
     lines = [
         f"📅 **Розклад на сьогодні ({d_str}, {w_str}-й тиждень):**\n"
@@ -58,7 +61,11 @@ def format_morning_digest(week: int | str | None, day_name: str | None, lessons:
             f"   👤 {llect}{link_str}"
         )
 
+    if auto_delete_time:
+        lines.append(f"🧹 _Повідомлення буде автоматично видалено після завершення пар (о {auto_delete_time})_")
+
     return "\n\n".join(lines), None
+
 
 
 def format_lesson_alert(lesson: dict | None, minutes_left: int = 5) -> tuple[str, InlineKeyboardMarkup | None]:

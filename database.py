@@ -90,6 +90,18 @@ async def init_db():
             );
         """)
 
+        # 6. Таблиця запланованого видалення повідомлень (видалення ранкового розкладу після закінчення пар)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_deletions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                delete_at TIMESTAMP NOT NULL,
+                tag TEXT DEFAULT 'digest',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -328,3 +340,33 @@ async def delete_assignment_db(assignment_id: str) -> bool:
 async def seed_demo_assignments_if_empty():
     """Заглушка: генерацію демо-дедлайнів вимкнено для реального використання."""
     pass
+
+
+async def add_scheduled_deletion_db(chat_id: int, message_id: int, delete_at: str, tag: str = "digest"):
+    """Зберегти повідомлення для автоматичного видалення після закінчення пар."""
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO scheduled_deletions (chat_id, message_id, delete_at, tag)
+            VALUES (?, ?, ?, ?)
+        """, (chat_id, message_id, delete_at, tag))
+        await db.commit()
+
+
+async def get_due_scheduled_deletions_db(current_time_str: str) -> list[dict]:
+    """Отримати повідомлення, термін збереження яких закінчився."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, chat_id, message_id, delete_at, tag
+            FROM scheduled_deletions
+            WHERE delete_at <= ?
+        """, (current_time_str,)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def remove_scheduled_deletion_db(deletion_id: int):
+    """Видалити повідомлення зі списку запланованого видалення."""
+    async with get_db() as db:
+        await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
+        await db.commit()
+

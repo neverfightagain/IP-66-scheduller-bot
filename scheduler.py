@@ -84,28 +84,92 @@ async def refresh_today_cache():
         logger.error(f"Помилка при оновленні розкладу: {e}")
 
 
+def calculate_lessons_end_datetime(lessons: list[dict], target_date: date) -> datetime:
+    """
+    Розрахувати час закінчення останньої пари на день.
+    Пара в КПІ триває 1 год 35 хв (95 хв).
+    Додаємо 5 хв запасу (разом 100 хв від початку останньої пари).
+    Якщо пар немає — видаляти о 16:00.
+    """
+    valid = [l for l in (lessons or []) if isinstance(l, dict) and l.get("time")]
+    if not valid:
+        return datetime.combine(target_date, time(16, 0), tzinfo=KYIV_TZ)
+
+    last_lesson = max(valid, key=lambda l: l["time"])
+    try:
+        parts = [int(p) for p in last_lesson["time"][:5].split(":")]
+        start_dt = datetime.combine(target_date, time(parts[0], parts[1]), tzinfo=KYIV_TZ)
+        return start_dt + timedelta(minutes=100)
+    except Exception:
+        return datetime.combine(target_date, time(16, 0), tzinfo=KYIV_TZ)
+
+
+async def process_scheduled_deletions(bot: Bot):
+    """
+    Перевірити базу та видалити повідомлення, час збереження яких вичерпано
+    (зокрема ранковий розклад після того, як закінчилися пари).
+    """
+    from database import get_due_scheduled_deletions_db, remove_scheduled_deletion_db
+    now_str = datetime.now(KYIV_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    due_items = await get_due_scheduled_deletions_db(now_str)
+    for item in due_items:
+        cid = item["chat_id"]
+        mid = item["message_id"]
+        tag = item.get("tag", "digest")
+        try:
+            await bot.delete_message(chat_id=cid, message_id=mid)
+            logger.info(f"Успішно видалено {tag} (id {mid}) у чаті {cid} після закінчення пар.")
+        except Exception as e:
+            logger.debug(f"Не вдалося видалити повідомлення {mid} у чаті {cid}: {e}")
+        finally:
+            await remove_scheduled_deletion_db(item["id"])
+
+
 async def send_morning_digest(bot: Bot):
-    """Отправить утренний дайджест во все подписанные чаты и топики."""
-    from database import get_subscribed_chats_db
+    """Отправить утренний дайджест во все подписанные чаты и топики и запланировать его автоудаление после окончания пар."""
+    from database import get_subscribed_chats_db, add_scheduled_deletion_db
     targets = await get_subscribed_chats_db()
     if not targets:
         logger.info("Немає підписаних чатів для ранкового дайджесту.")
         return
 
     await refresh_today_cache()
-    text, kb = format_morning_digest(_today_cached_week, _today_cached_day_name, _today_cached_lessons)
+    now_dt = datetime.now(KYIV_TZ)
+    end_dt = calculate_lessons_end_datetime(_today_cached_lessons, now_dt.date())
+    delete_time_str = end_dt.strftime("%H:%M")
+
+    text, kb = format_morning_digest(
+        _today_cached_week,
+        _today_cached_day_name,
+        _today_cached_lessons,
+        auto_delete_time=delete_time_str if _today_cached_lessons else None
+    )
 
     for target in targets:
         cid = target["chat_id"]
         tid = target.get("thread_id")
-        await safe_send_message(bot, cid, text, reply_markup=kb, message_thread_id=tid)
+        sent_msg = await safe_send_message(bot, cid, text, reply_markup=kb, message_thread_id=tid)
+        if sent_msg:
+            await add_scheduled_deletion_db(
+                chat_id=cid,
+                message_id=sent_msg.message_id,
+                delete_at=end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                tag="morning_digest"
+            )
+            logger.info(f"Заплановано авто-видалення ранкового дайджесту {sent_msg.message_id} у чаті {cid} о {delete_time_str}")
 
 
 async def check_upcoming_lessons(bot: Bot):
     """
-    Каждую минуту проверяем, не начинается ли пара через NOTIFY_MINUTES_BEFORE (5) минут.
+    Каждую минуту проверяем приближение пар, а также очищаем устаревший розклад после окончания пар.
     """
     global sent_alerts, _today_cache_date
+
+    # 1. Автоматичне очищення повідомлень розкладу після завершення пар
+    try:
+        await process_scheduled_deletions(bot)
+    except Exception as e_del:
+        logger.error(f"Помилка при обробці запланованих видалень: {e_del}")
 
     now = datetime.now(KYIV_TZ)
     today = now.date()
