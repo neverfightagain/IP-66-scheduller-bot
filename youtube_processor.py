@@ -182,7 +182,12 @@ async def resolve_channel_id(url_or_handle: str) -> str | None:
     return None
 
 
-async def process_video_and_notify(bot, video: dict) -> bool:
+async def process_video_and_notify(
+    bot,
+    video: dict,
+    fallback_chat_id: int | None = None,
+    fallback_thread_id: int | None = None,
+) -> bool:
     """
     Обробити нове відео з YouTube та розіслати конспект.
     Стратегія 3-рівнева:
@@ -251,6 +256,8 @@ async def process_video_and_notify(bot, video: dict) -> bool:
             summary={"topic": topic, "summary_points": ["Відео опубліковано на каналі групи."]}
         )
         chats = await get_subscribed_chats_db()
+        if not chats and fallback_chat_id:
+            chats = [{"chat_id": fallback_chat_id, "thread_id": fallback_thread_id}]
         if chats:
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="▶️ Дивитися на YouTube", url=video_url)]])
@@ -291,6 +298,8 @@ async def process_video_and_notify(bot, video: dict) -> bool:
         await add_announcement_db(course_id=course_name, source="youtube", text=text, detected_date=d_date)
 
     chats = await get_subscribed_chats_db()
+    if not chats and fallback_chat_id:
+        chats = [{"chat_id": fallback_chat_id, "thread_id": fallback_thread_id}]
     if chats:
         text, kb = format_lecture_summary(
             summary=summary,

@@ -243,7 +243,7 @@ async def send_evening_digest(bot: Bot):
         await safe_send_message(bot, cid, text, message_thread_id=tid)
 
 
-async def check_new_youtube_videos(bot: Bot) -> int:
+async def check_new_youtube_videos(bot: Bot, fallback_chat_id: int | None = None, fallback_thread_id: int | None = None) -> int:
     """Фонова перевірка нових відео на YouTube-каналі групи (кожні 10 хв)."""
     from config import YOUTUBE_CHANNEL_ID
     if not YOUTUBE_CHANNEL_ID:
@@ -255,7 +255,12 @@ async def check_new_youtube_videos(bot: Bot) -> int:
     try:
         videos = await fetch_latest_channel_videos(channel_id, max_results=5)
         for vid in videos:
-            processed = await process_video_and_notify(bot, vid)
+            processed = await process_video_and_notify(
+                bot,
+                vid,
+                fallback_chat_id=fallback_chat_id,
+                fallback_thread_id=fallback_thread_id
+            )
             if processed:
                 new_count += 1
     except Exception as e:

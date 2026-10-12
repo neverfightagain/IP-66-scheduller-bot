@@ -59,8 +59,6 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
             os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
             "gemini-3.8-flash",
             "gemini-3.5-flash",
-            "gemini-flash-latest",
-            "gemini-3.5-flash-lite",
         ]
         # Видаляємо дублікати зберігаючи порядок
         seen = set()
@@ -79,10 +77,13 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
                             temperature=0.2,
                         ),
                     ),
-                    timeout=35.0,
+                    timeout=50.0,
                 )
                 if response and response.text:
                     break
+            except asyncio.TimeoutError:
+                logger.warning(f"Модель {m} перевищила таймаут 50с при аналізі транскрипту")
+                continue
             except Exception as e_m:
                 logger.warning(f"Модель {m} повернула помилку при аналізі транскрипту: {e_m}")
                 continue
@@ -118,8 +119,6 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
             os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
             "gemini-3.8-flash",
             "gemini-3.5-flash",
-            "gemini-flash-latest",
-            "gemini-3.5-flash-lite",
         ]
         seen = set()
         models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
@@ -137,10 +136,13 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
                             temperature=0.2,
                         ),
                     ),
-                    timeout=35.0,
+                    timeout=85.0,
                 )
                 if response and response.text:
                     break
+            except asyncio.TimeoutError:
+                logger.warning(f"Модель {m} перевищила таймаут 85с при прямому аналізі відео")
+                continue
             except Exception as e_m:
                 logger.warning(f"Модель {m} повернула помилку при аналізі відео: {e_m}")
                 continue

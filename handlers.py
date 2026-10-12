@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -401,7 +402,11 @@ async def cb_refresh_deadlines(callback: CallbackQuery, bot: Bot):
 async def _run_youtube_check_bg(message: Message, bot: Bot, status_msg: Message):
     from scheduler import check_new_youtube_videos
     try:
-        new_cnt = await check_new_youtube_videos(bot=bot)
+        new_cnt = await check_new_youtube_videos(
+            bot=bot,
+            fallback_chat_id=message.chat.id,
+            fallback_thread_id=message.message_thread_id,
+        )
         if new_cnt > 0:
             res_text = f"✅ Оброблено та опубліковано нових лекцій: **{new_cnt}**! Пости надіслано в чат."
         else:
