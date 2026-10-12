@@ -82,3 +82,51 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
     except Exception as e:
         logger.error(f"Помилка при аналізі лекції через Gemini API: {e}")
         return None
+
+
+async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict | None:
+    """
+    Прямий аналіз відео з YouTube через мультимодальні можливості Gemini.
+    Працює без парсингу субтитрів та без проксі (Google сам отримує відео на своїх серверах).
+    """
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        logger.warning("GEMINI_API_KEY не вказаний у .env. Прямий аналіз відео пропущено.")
+        return None
+
+    try:
+        client = genai.Client(api_key=api_key)
+        prompt_parts = [
+            types.Part.from_uri(file_uri=video_url, mime_type="video/mp4"),
+            f"Назва відео: {video_title}\n\nПроаналізуй це навчальне заняття відповідно до системної інструкції та поверни структурований JSON."
+        ]
+
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_parts,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    temperature=0.2,
+                ),
+            )
+        except Exception as e_model:
+            logger.warning(f"Модель {model_name} повернула помилку ({e_model}), спробуємо gemini-3.8-flash...")
+            response = client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=prompt_parts,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    temperature=0.2,
+                ),
+            )
+
+        result_json = json.loads(response.text)
+        return result_json
+    except Exception as e:
+        logger.error(f"Помилка при прямому аналізі відео {video_url} через Gemini: {e}")
+        return None
+

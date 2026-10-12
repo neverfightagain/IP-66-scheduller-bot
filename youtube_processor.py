@@ -178,28 +178,74 @@ def resolve_channel_id(url_or_handle: str) -> str | None:
 
 
 async def process_video_and_notify(bot, video: dict) -> bool:
-    """Обработать видео через Gemini и разослать конспект."""
+    """
+    Обробити нове відео з YouTube та розіслати конспект.
+    Стратегія 3-рівнева:
+    1. Прямий мультимодальний аналіз Gemini через YouTube URL (без блокування IP і без потреби в проксі)
+    2. Якщо прямий аналіз недоступний, пробуємо отримати субтитри через youtube-transcript-api (з підтримкою проксі)
+    3. Якщо AI-аналіз не вдався, все одно надсилаємо студентам сповіщення з посиланням на нову пару!
+    """
     from database import is_video_processed, save_video_summary, add_announcement_db, get_subscribed_chats_db
-    from llm_agent import analyze_lecture_transcript
-    from formatters import format_lecture_summary
+    from llm_agent import analyze_lecture_video, analyze_lecture_transcript
+    from formatters import format_lecture_summary, clean_markdown
 
     video_id = video["video_id"]
+    video_url = video.get("url", f"https://www.youtube.com/watch?v={video_id}")
+    video_title = video.get("title", "Лекція")
+
     if await is_video_processed(video_id):
         return False
 
-    transcript_info = get_video_transcript(video_id)
-    if not transcript_info:
-        logger.info(f"Субтитри для {video_id} поки недоступні. Спробуємо пізніше.")
-        return False
+    summary = None
 
-    transcript_text, _ = transcript_info
-    summary = await analyze_lecture_transcript(transcript_text, video_title=video.get("title", ""))
+    # Рівень 1: Прямий мультимодальний аналіз Gemini через YouTube URL
+    try:
+        summary = await analyze_lecture_video(video_url, video_title=video_title)
+        if summary:
+            logger.info(f"Отримано прямий мультимодальний аналіз Gemini для {video_id}")
+    except Exception as e_direct:
+        logger.warning(f"Прямий аналіз Gemini не вдався для {video_id}: {e_direct}")
+
+    # Рівень 2: Резервний аналіз через субтитри (якщо є проксі або YouTube не заблокував IP)
     if not summary:
-        logger.warning(f"Не вдалося отримати аналіз Gemini для {video_id}")
-        return False
+        transcript_info = get_video_transcript(video_id)
+        if transcript_info:
+            transcript_text, _ = transcript_info
+            summary = await analyze_lecture_transcript(transcript_text, video_title=video_title)
 
+    # Рівень 3: Якщо AI-аналіз не вдався, все одно сповіщаємо студентів про нову лекцію
+    if not summary:
+        logger.warning(f"AI-конспект недоступний для {video_id}. Відправляємо базове сповіщення про запис пари.")
+        topic = video_title
+        course_name = "Запис пари"
+        await save_video_summary(
+            video_id=video_id,
+            title=topic,
+            course_id=course_name,
+            published_at=video.get("published_at"),
+            summary={"topic": topic, "summary_points": ["Відео опубліковано на каналі групи."]}
+        )
+        chats = await get_subscribed_chats_db()
+        if chats:
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="▶️ Дивитися на YouTube", url=video_url)]])
+            full_msg = f"🎬 **Новий запис пари на YouTube!**\n\n📌 **{clean_markdown(topic)}**\n\n🔗 [Переглянути відео]({video_url})"
+            for target in chats:
+                cid = target["chat_id"]
+                tid = target.get("thread_id")
+                try:
+                    await bot.send_message(cid, full_msg, parse_mode="Markdown", reply_markup=kb, message_thread_id=tid)
+                except Exception:
+                    try:
+                        plain_msg = f"🎬 Новий запис пари на YouTube!\n\n📌 {topic}\n\n🔗 {video_url}"
+                        await bot.send_message(cid, plain_msg, reply_markup=kb, message_thread_id=tid)
+                    except Exception as e_send:
+                        logger.error(f"Не вдалося надіслати базове сповіщення в чат {cid}: {e_send}")
+        return True
+
+    # Якщо конспект успішно створено:
     course_name = summary.get("subject_detected")
-    topic = summary.get("topic", video.get("title", "Лекція"))
+    topic = summary.get("topic", video_title)
     await save_video_summary(
         video_id=video_id,
         title=topic,
@@ -224,7 +270,7 @@ async def process_video_and_notify(bot, video: dict) -> bool:
         text, kb = format_lecture_summary(
             summary=summary,
             video_title=topic,
-            video_url=video.get("url", f"https://www.youtube.com/watch?v={video_id}")
+            video_url=video_url
         )
         for target in chats:
             cid = target["chat_id"]
