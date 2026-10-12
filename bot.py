@@ -117,26 +117,29 @@ async def main():
     # Первичная загрузка расписания на сегодня
     await refresh_today_cache()
 
-    # Первинна синхронізація Google Classroom (якщо токен є)
-    try:
-        from classroom_sync import sync_classroom_tasks
-        await sync_classroom_tasks(bot)
-    except Exception as e:
-        logger.warning(f"Classroom sync on startup: {e}")
-
-    # Первинна перевірка нових лекцій на YouTube одразу при старті (без очікування таймера)
-    try:
-        from scheduler import check_new_youtube_videos
-        await check_new_youtube_videos(bot)
-    except Exception as e:
-        logger.warning(f"YouTube check on startup: {e}")
-
     # Запуск планировщика задач (дайджест + пуши за 5 минут)
     scheduler = setup_scheduler(bot)
     scheduler.start()
     logger.info("Планувальник завдань успішно запущено!")
 
-    # Удаляем вебхуки и запускаем поллинг
+    # Фонова первинна синхронізація (НЕ блокує старт прийому команд!)
+    async def run_startup_syncs():
+        await asyncio.sleep(2)  # Даємо боту запустити polling
+        try:
+            from classroom_sync import sync_classroom_tasks
+            await sync_classroom_tasks(bot)
+        except Exception as e_cr:
+            logger.warning(f"Classroom sync on startup: {e_cr}")
+
+        try:
+            from scheduler import check_new_youtube_videos
+            await check_new_youtube_videos(bot)
+        except Exception as e_yt:
+            logger.warning(f"YouTube check on startup: {e_yt}")
+
+    asyncio.create_task(run_startup_syncs())
+
+    # Удаляем вебхуки и запускаем поллинг МИТТЄВО
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info(f"Бот @{me.username} запущений і очікує повідомлень...")
 

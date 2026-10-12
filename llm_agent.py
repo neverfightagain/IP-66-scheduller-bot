@@ -54,28 +54,36 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
         client = genai.Client(api_key=api_key)
         prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
 
-        model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt_content,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.2,
-                ),
-            )
-        except Exception as e_model:
-            logger.warning(f"Модель {model_name} повернула помилку ({e_model}), спробуємо gemini-3.8-flash...")
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt_content,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.2,
-                ),
-            )
+        candidate_models = [
+            os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.8-flash",
+        ]
+        # Видаляємо дублікати зберігаючи порядок
+        seen = set()
+        models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
+
+        response = None
+        for m in models:
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=prompt_content,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.2,
+                    ),
+                )
+                if response and response.text:
+                    break
+            except Exception as e_m:
+                logger.warning(f"Модель {m} повернула помилку: {e_m}")
+                continue
+
+        if not response or not response.text:
+            return None
 
         result_json = json.loads(response.text)
         return result_json
@@ -101,32 +109,40 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
             f"Назва відео: {video_title}\n\nПроаналізуй це навчальне заняття відповідно до системної інструкції та поверни структурований JSON."
         ]
 
-        model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt_parts,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.2,
-                ),
-            )
-        except Exception as e_model:
-            logger.warning(f"Модель {model_name} повернула помилку ({e_model}), спробуємо gemini-3.8-flash...")
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt_parts,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.2,
-                ),
-            )
+        candidate_models = [
+            os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.8-flash",
+        ]
+        seen = set()
+        models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
+
+        response = None
+        for m in models:
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=prompt_parts,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.2,
+                    ),
+                )
+                if response and response.text:
+                    break
+            except Exception as e_m:
+                logger.warning(f"Модель {m} повернула помилку при аналізі відео: {e_m}")
+                continue
+
+        if not response or not response.text:
+            return None
 
         result_json = json.loads(response.text)
         return result_json
     except Exception as e:
         logger.error(f"Помилка при прямому аналізі відео {video_url} через Gemini: {e}")
         return None
+
 
