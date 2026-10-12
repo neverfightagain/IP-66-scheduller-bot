@@ -398,35 +398,39 @@ async def cb_refresh_deadlines(callback: CallbackQuery, bot: Bot):
     await safe_edit_text(callback, text, reply_markup=kb)
 
 
+async def _run_youtube_check_bg(message: Message, bot: Bot, status_msg: Message):
+    from scheduler import check_new_youtube_videos
+    try:
+        new_cnt = await check_new_youtube_videos(bot=bot)
+        if new_cnt > 0:
+            res_text = f"✅ Оброблено та опубліковано нових лекцій: **{new_cnt}**! Пости надіслано в чат."
+        else:
+            res_text = "ℹ️ Наразі нових неопублікованих лекцій на YouTube немає (усі останні відео вже оброблено)."
+        if status_msg:
+            try:
+                await status_msg.edit_text(res_text, parse_mode="Markdown")
+                return
+            except Exception:
+                pass
+        await safe_answer(message, res_text)
+    except Exception as e:
+        err_text = f"❌ Помилка при перевірці YouTube: {clean_markdown(str(e))}"
+        if status_msg:
+            try:
+                await status_msg.edit_text(err_text, parse_mode="Markdown")
+                return
+            except Exception:
+                pass
+        await safe_answer(message, err_text)
+
+
 @router.message(Command("youtube"))
 async def cmd_youtube(message: Message, bot: Bot):
-    await safe_answer(message, "🎬 Перевіряю нові лекції на YouTube-каналі групи...")
-    from scheduler import check_new_youtube_videos
-    from config import YOUTUBE_CHANNEL_ID
-    from youtube_processor import fetch_latest_channel_videos
-    from database import is_video_processed
-
-    try:
-        videos = fetch_latest_channel_videos(YOUTUBE_CHANNEL_ID, max_results=5) if YOUTUBE_CHANNEL_ID else []
-        new_vids = []
-        for v in videos:
-            if not await is_video_processed(v["video_id"]):
-                new_vids.append(v)
-
-        await check_new_youtube_videos(bot=bot)
-
-        if new_vids:
-            cnt = len(new_vids)
-            await safe_answer(message, f"✅ Оброблено та опубліковано нових лекцій: **{cnt}**! Пости надіслано в чат.")
-        else:
-            await safe_answer(message, "ℹ️ Наразі нових неопублікованих лекцій на YouTube немає (усі останні відео вже оброблено).")
-    except Exception as e:
-        await safe_answer(message, f"❌ Помилка при перевірці YouTube: {clean_markdown(str(e))}")
+    status_msg = await safe_answer(message, "🎬 Перевіряю нові лекції на YouTube-каналі групи...")
+    asyncio.create_task(_run_youtube_check_bg(message, bot, status_msg))
 
 
-@router.message(Command("sync"))
-async def cmd_sync(message: Message, bot: Bot):
-    status_msg = await safe_answer(message, "🔄 Запускаю синхронізацію з Google Classroom та YouTube...")
+async def _run_sync_bg(message: Message, bot: Bot, status_msg: Message):
     from classroom_sync import sync_classroom_tasks
     from database import get_active_assignments_db
     from scheduler import check_new_youtube_videos
@@ -437,8 +441,11 @@ async def cmd_sync(message: Message, bot: Bot):
     # 2. Перевірка YouTube
     yt_status = ""
     try:
-        await check_new_youtube_videos(bot=bot)
-        yt_status = "\n🎬 **YouTube:** перевірено на нові лекції."
+        yt_new = await check_new_youtube_videos(bot=bot)
+        if yt_new > 0:
+            yt_status = f"\n🎬 **YouTube:** знайдено та опубліковано нових лекцій: {yt_new}."
+        else:
+            yt_status = "\n🎬 **YouTube:** перевірено, нових лекцій немає."
     except Exception as e_yt:
         yt_status = f"\n⚠️ **YouTube:** {clean_markdown(str(e_yt))}"
 
@@ -453,10 +460,10 @@ async def cmd_sync(message: Message, bot: Bot):
         if status_msg:
             try:
                 await status_msg.edit_text(err_text, parse_mode="Markdown")
+                return
             except Exception:
-                await safe_answer(message, err_text)
-        else:
-            await safe_answer(message, err_text)
+                pass
+        await safe_answer(message, err_text)
         return
 
     active = await get_active_assignments_db()
@@ -474,10 +481,16 @@ async def cmd_sync(message: Message, bot: Bot):
     if status_msg:
         try:
             await status_msg.edit_text(success_text, parse_mode="Markdown")
+            return
         except Exception:
-            await safe_answer(message, success_text)
-    else:
-        await safe_answer(message, success_text)
+            pass
+    await safe_answer(message, success_text)
+
+
+@router.message(Command("sync"))
+async def cmd_sync(message: Message, bot: Bot):
+    status_msg = await safe_answer(message, "🔄 Запускаю синхронізацію з Google Classroom та YouTube...")
+    asyncio.create_task(_run_sync_bg(message, bot, status_msg))
 
 
 @router.message(Command("adddeadline"))

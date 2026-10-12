@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 SYSTEM_INSTRUCTION = """
 Ти — академічний аналітичний AI-асистент для студентської групи ІП-66 КПІ.
-Твоє завдання — уважно проаналізувати стенограму (субтитри з таймкодами) університетської пари та скласти чітку структуровану вижимку для одногрупників.
+Твоє завдання — уважно проаналізувати стенограму (субтитри з таймкодами) або відеозапис університетської пари та скласти чітку структуровану вижимку для одногрупників.
 
 Звертай особливу увагу на:
 1. Тему заняття та ключові теоретичні/практичні концепції.
@@ -42,8 +43,8 @@ SYSTEM_INSTRUCTION = """
 
 async def analyze_lecture_transcript(transcript_text: str, video_title: str = "") -> dict | None:
     """
-    Проанализировать транскрипт лекции с помощью Gemini Flash.
-    Возвращает структурированный словарь с конспектом и анонсами.
+    Проаналізувати транскрипт лекції за допомогою Gemini Flash (повністю асинхронно).
+    Повертає структурований словник з конспектом та анонсами.
     """
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -55,10 +56,11 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
         prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
 
         candidate_models = [
-            os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
-            "gemini-3.5-flash-lite",
-            "gemini-3.5-flash",
+            os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
             "gemini-3.8-flash",
+            "gemini-3.5-flash",
+            "gemini-flash-latest",
+            "gemini-3.5-flash-lite",
         ]
         # Видаляємо дублікати зберігаючи порядок
         seen = set()
@@ -67,19 +69,22 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
         response = None
         for m in models:
             try:
-                response = client.models.generate_content(
-                    model=m,
-                    contents=prompt_content,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        temperature=0.2,
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=m,
+                        contents=prompt_content,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            system_instruction=SYSTEM_INSTRUCTION,
+                            temperature=0.2,
+                        ),
                     ),
+                    timeout=35.0,
                 )
                 if response and response.text:
                     break
             except Exception as e_m:
-                logger.warning(f"Модель {m} повернула помилку: {e_m}")
+                logger.warning(f"Модель {m} повернула помилку при аналізі транскрипту: {e_m}")
                 continue
 
         if not response or not response.text:
@@ -94,8 +99,8 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
 
 async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict | None:
     """
-    Прямий аналіз відео з YouTube через мультимодальні можливості Gemini.
-    Працює без парсингу субтитрів та без проксі (Google сам отримує відео на своїх серверах).
+    Прямий асинхронний аналіз відео з YouTube через мультимодальні можливості Gemini.
+    Працює без парсингу субтитрів та без потреби в проксі (Google сам отримує відео на своїх серверах).
     """
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -110,10 +115,11 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
         ]
 
         candidate_models = [
-            os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
-            "gemini-3.5-flash-lite",
-            "gemini-3.5-flash",
+            os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
             "gemini-3.8-flash",
+            "gemini-3.5-flash",
+            "gemini-flash-latest",
+            "gemini-3.5-flash-lite",
         ]
         seen = set()
         models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
@@ -121,14 +127,17 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
         response = None
         for m in models:
             try:
-                response = client.models.generate_content(
-                    model=m,
-                    contents=prompt_parts,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        temperature=0.2,
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=m,
+                        contents=prompt_parts,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            system_instruction=SYSTEM_INSTRUCTION,
+                            temperature=0.2,
+                        ),
                     ),
+                    timeout=35.0,
                 )
                 if response and response.text:
                     break

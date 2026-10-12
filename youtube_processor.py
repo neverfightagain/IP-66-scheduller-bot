@@ -1,8 +1,11 @@
+import asyncio
+from datetime import datetime, timezone
 import logging
 import os
 import re
 import urllib.request
 import xml.etree.ElementTree as ET
+import httpx
 from youtube_transcript_api import YouTubeTranscriptApi
 try:
     from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
@@ -115,15 +118,17 @@ def get_video_transcript(video_id: str, languages: list[str] = None) -> tuple[st
         return None
 
 
-def fetch_latest_channel_videos(channel_id: str, max_results: int = 5) -> list[dict]:
+async def fetch_latest_channel_videos(channel_id: str, max_results: int = 5) -> list[dict]:
     """
-    Получить список последних видео с канала через бесплатный RSS-фид (0 квот API).
+    Отримати список останніх відео з каналу через безкоштовний RSS-фід (0 квот API).
+    Повністю асинхронно через httpx.AsyncClient без блокування event loop.
     """
     rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
     try:
-        req = urllib.request.Request(rss_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            xml_data = resp.read()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(rss_url, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            xml_data = resp.content
 
         root = ET.fromstring(xml_data)
         namespace = {"atom": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015"}
@@ -149,8 +154,8 @@ def fetch_latest_channel_videos(channel_id: str, max_results: int = 5) -> list[d
         return []
 
 
-def resolve_channel_id(url_or_handle: str) -> str | None:
-    """Определить UC-идентификатор канала по ссылке, @handle или прямому ID."""
+async def resolve_channel_id(url_or_handle: str) -> str | None:
+    """Визначити UC-ідентифікатор каналу за посиланням, @handle або прямим ID."""
     clean = url_or_handle.strip()
     if clean.startswith("UC") and len(clean) == 24:
         return clean
@@ -162,9 +167,9 @@ def resolve_channel_id(url_or_handle: str) -> str | None:
             clean = f"https://www.youtube.com/@{clean}"
 
     try:
-        req = urllib.request.Request(clean, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.get(clean, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            html = resp.text
 
         match = re.search(r'"channelId":"(UC[\w-]{22})"', html)
         if match:
@@ -192,9 +197,29 @@ async def process_video_and_notify(bot, video: dict) -> bool:
     video_id = video["video_id"]
     video_url = video.get("url", f"https://www.youtube.com/watch?v={video_id}")
     video_title = video.get("title", "Лекція")
+    published_at_str = video.get("published_at")
 
     if await is_video_processed(video_id):
         return False
+
+    # Перевірка давності відео: якщо відео старіше за 36 годин, архівуємо без ШІ-аналізу та без спаму в чат
+    if published_at_str:
+        try:
+            pub_dt = datetime.fromisoformat(published_at_str.replace("Z", "+00:00"))
+            now_utc = datetime.now(timezone.utc)
+            age_hours = (now_utc - pub_dt).total_seconds() / 3600.0
+            if age_hours > 36:
+                logger.info(f"Відео {video_id} ('{video_title}') опубліковано {age_hours:.1f} год тому (>36 год). Архівуємо без ШІ-аналізу.")
+                await save_video_summary(
+                    video_id=video_id,
+                    title=video_title,
+                    course_id="Архів",
+                    published_at=published_at_str,
+                    summary={"topic": video_title, "summary_points": ["Архівоване відео минулих днів."]}
+                )
+                return False
+        except Exception as e_age:
+            logger.debug(f"Помилка перевірки дати {published_at_str}: {e_age}")
 
     summary = None
 
@@ -206,9 +231,9 @@ async def process_video_and_notify(bot, video: dict) -> bool:
     except Exception as e_direct:
         logger.warning(f"Прямий аналіз Gemini не вдався для {video_id}: {e_direct}")
 
-    # Рівень 2: Резервний аналіз через субтитри (якщо є проксі або YouTube не заблокував IP)
+    # Рівень 2: Резервний аналіз через субтитри (у окремому потоці, щоб не блокувати event loop)
     if not summary:
-        transcript_info = get_video_transcript(video_id)
+        transcript_info = await asyncio.to_thread(get_video_transcript, video_id)
         if transcript_info:
             transcript_text, _ = transcript_info
             summary = await analyze_lecture_transcript(transcript_text, video_title=video_title)

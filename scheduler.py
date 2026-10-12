@@ -243,20 +243,24 @@ async def send_evening_digest(bot: Bot):
         await safe_send_message(bot, cid, text, message_thread_id=tid)
 
 
-async def check_new_youtube_videos(bot: Bot):
-    """Фонова перевірка нових відео на YouTube-каналі групи (кожні 30 хв)."""
+async def check_new_youtube_videos(bot: Bot) -> int:
+    """Фонова перевірка нових відео на YouTube-каналі групи (кожні 10 хв)."""
     from config import YOUTUBE_CHANNEL_ID
     if not YOUTUBE_CHANNEL_ID:
-        return
+        return 0
     channel_id = YOUTUBE_CHANNEL_ID
 
     from youtube_processor import fetch_latest_channel_videos, process_video_and_notify
+    new_count = 0
     try:
-        videos = fetch_latest_channel_videos(channel_id, max_results=3)
+        videos = await fetch_latest_channel_videos(channel_id, max_results=5)
         for vid in videos:
-            await process_video_and_notify(bot, vid)
+            processed = await process_video_and_notify(bot, vid)
+            if processed:
+                new_count += 1
     except Exception as e:
         logger.error(f"Помилка при перевірці YouTube-відео: {e}")
+    return new_count
 
 
 async def check_new_classroom_tasks(bot: Bot):
