@@ -30,6 +30,8 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("KPIScheduleBot")
+# Приглушуємо шум від aiogram.event, щоб не засмічувати логи звичайними повідомленнями з чатів
+logging.getLogger("aiogram.event").setLevel(logging.WARNING)
 
 
 async def start_health_check_server():

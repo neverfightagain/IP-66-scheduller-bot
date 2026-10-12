@@ -1,10 +1,49 @@
 import logging
+import os
 import re
 import urllib.request
 import xml.etree.ElementTree as ET
 from youtube_transcript_api import YouTubeTranscriptApi
+try:
+    from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
+except ImportError:
+    GenericProxyConfig = None
+    WebshareProxyConfig = None
 
 logger = logging.getLogger(__name__)
+
+
+def get_proxy_config():
+    """
+    Отримати конфігурацію проксі для YouTubeTranscriptApi.
+    Підтримує:
+    1. Webshare (WEBSHARE_USERNAME, WEBSHARE_PASSWORD)
+    2. Будь-який проксі через YOUTUBE_PROXY, HTTPS_PROXY, HTTP_PROXY
+    """
+    webshare_user = os.getenv("WEBSHARE_USERNAME", "").strip()
+    webshare_pass = os.getenv("WEBSHARE_PASSWORD", "").strip()
+    if webshare_user and webshare_pass and WebshareProxyConfig:
+        return WebshareProxyConfig(proxy_username=webshare_user, proxy_password=webshare_pass)
+
+    proxy_url = os.getenv("YOUTUBE_PROXY", "").strip() or os.getenv("HTTPS_PROXY", "").strip() or os.getenv("HTTP_PROXY", "").strip()
+    if proxy_url and GenericProxyConfig:
+        return GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
+
+    return None
+
+
+def get_proxies_dict() -> dict | None:
+    """Для сумісності зі старими версіями YouTubeTranscriptApi."""
+    webshare_user = os.getenv("WEBSHARE_USERNAME", "").strip()
+    webshare_pass = os.getenv("WEBSHARE_PASSWORD", "").strip()
+    if webshare_user and webshare_pass:
+        url = f"http://{webshare_user}-rotate:{webshare_pass}@p.webshare.io:80/"
+        return {"http": url, "https": url}
+
+    proxy_url = os.getenv("YOUTUBE_PROXY", "").strip() or os.getenv("HTTPS_PROXY", "").strip() or os.getenv("HTTP_PROXY", "").strip()
+    if proxy_url:
+        return {"http": proxy_url, "https": proxy_url}
+    return None
 
 
 def extract_video_id(url_or_id: str) -> str | None:
@@ -33,11 +72,19 @@ def get_video_transcript(video_id: str, languages: list[str] = None) -> tuple[st
     if languages is None:
         languages = ["uk", "ru", "en"]
 
+    proxy_cfg = get_proxy_config()
+    if proxy_cfg:
+        logger.info(f"Завантаження субтитрів для {video_id} з використанням проксі ({type(proxy_cfg).__name__})...")
+
     try:
         if hasattr(YouTubeTranscriptApi, "get_transcript"):
-            transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+            proxies_dict = get_proxies_dict()
+            kwargs = {"languages": languages}
+            if proxies_dict:
+                kwargs["proxies"] = proxies_dict
+            transcript_data = YouTubeTranscriptApi.get_transcript(video_id, **kwargs)
         else:
-            api = YouTubeTranscriptApi()
+            api = YouTubeTranscriptApi(proxy_config=proxy_cfg) if proxy_cfg else YouTubeTranscriptApi()
             transcript_data = api.fetch(video_id, languages=languages)
 
         formatted_lines = []
@@ -57,7 +104,14 @@ def get_video_transcript(video_id: str, languages: list[str] = None) -> tuple[st
         full_text = "\n".join(formatted_lines)
         return full_text, raw_segments
     except Exception as e:
-        logger.warning(f"Не вдалося отримати субтитри для відео {video_id}: {e}")
+        err_msg = str(e)
+        if "blocking requests from your IP" in err_msg and not proxy_cfg:
+            logger.warning(
+                f"YouTube блокує запити субтитрів з IP цього сервера для відео {video_id}. "
+                "Щоб обійти блокування, додайте YOUTUBE_PROXY або WEBSHARE_USERNAME/WEBSHARE_PASSWORD у змінні середовища."
+            )
+        else:
+            logger.warning(f"Не вдалося отримати субтитри для відео {video_id}: {e}")
         return None
 
 

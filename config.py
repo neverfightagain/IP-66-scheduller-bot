@@ -34,6 +34,9 @@ NOTIFY_MINUTES_BEFORE = int(os.getenv("NOTIFY_MINUTES_BEFORE", "5"))
 # YouTube & AI Config
 YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID", "UC8pccc2zKBP6vrOlA1hWFBw").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+YOUTUBE_PROXY = os.getenv("YOUTUBE_PROXY", "").strip()
+WEBSHARE_USERNAME = os.getenv("WEBSHARE_USERNAME", "").strip()
+WEBSHARE_PASSWORD = os.getenv("WEBSHARE_PASSWORD", "").strip()
 
 # Файлы данных
 CHATS_FILE = BASE_DIR / "chats.json"
