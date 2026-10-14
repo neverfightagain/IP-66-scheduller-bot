@@ -56,7 +56,9 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
         prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
 
         candidate_models = [
-            os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
+            os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
             "gemini-3.8-flash",
             "gemini-3.5-flash",
         ]
@@ -86,6 +88,7 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
                 continue
             except Exception as e_m:
                 logger.warning(f"Модель {m} повернула помилку при аналізі транскрипту: {e_m}")
+                await asyncio.sleep(2)
                 continue
 
         if not response or not response.text:
@@ -116,7 +119,9 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
         ]
 
         candidate_models = [
-            os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
+            os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
             "gemini-3.8-flash",
             "gemini-3.5-flash",
         ]
@@ -145,6 +150,7 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
                 continue
             except Exception as e_m:
                 logger.warning(f"Модель {m} повернула помилку при аналізі відео: {e_m}")
+                await asyncio.sleep(2)
                 continue
 
         if not response or not response.text:

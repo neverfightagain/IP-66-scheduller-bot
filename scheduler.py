@@ -263,6 +263,7 @@ async def check_new_youtube_videos(bot: Bot, fallback_chat_id: int | None = None
             )
             if processed:
                 new_count += 1
+                await asyncio.sleep(5)
     except Exception as e:
         logger.error(f"Помилка при перевірці YouTube-відео: {e}")
     return new_count

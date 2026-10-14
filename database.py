@@ -248,16 +248,11 @@ remove_subscribed_chat_db = remove_subscription_db
 # --- API для работы с видео и конспектами ---
 
 async def is_video_processed(video_id: str) -> bool:
-    """Проверить, было ли видео уже успешно обработано нейросетью."""
+    """Проверить, было ли видео уже сохранено в базе (гарантирует отсутствие повторного спама)."""
     async with get_db() as db:
-        async with db.execute("SELECT course_id FROM videos WHERE video_id = ?", (video_id,)) as cursor:
+        async with db.execute("SELECT 1 FROM videos WHERE video_id = ?", (video_id,)) as cursor:
             row = await cursor.fetchone()
-            if not row:
-                return False
-            # Якщо відео збережене як тимчасова заглушка при таймауті ШІ, дозволяємо повторну обробку
-            if row["course_id"] == "Запис пари":
-                return False
-            return True
+            return row is not None
 
 
 async def save_video_summary(video_id: str, title: str, course_id: str | None, published_at: str | None, summary: dict):
