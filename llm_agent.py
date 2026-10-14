@@ -56,11 +56,10 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
         prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
 
         candidate_models = [
-            os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
-            "gemini-flash-latest",
+            os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
             "gemini-flash-lite-latest",
-            "gemini-3.8-flash",
-            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-flash-latest",
         ]
         # Видаляємо дублікати зберігаючи порядок
         seen = set()
@@ -87,8 +86,12 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
                 logger.warning(f"Модель {m} перевищила таймаут 50с при аналізі транскрипту")
                 continue
             except Exception as e_m:
-                logger.warning(f"Модель {m} повернула помилку при аналізі транскрипту: {e_m}")
-                await asyncio.sleep(2)
+                err_str = str(e_m)
+                logger.warning(f"Модель {m} повернула помилку при аналізі транскрипту: {err_str}")
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    logger.warning("Ліміт добової квоти Gemini вичерпано. Припиняємо подальші запити.")
+                    break
+                await asyncio.sleep(1)
                 continue
 
         if not response or not response.text:
@@ -119,11 +122,10 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
         ]
 
         candidate_models = [
-            os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
-            "gemini-flash-latest",
+            os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
             "gemini-flash-lite-latest",
-            "gemini-3.8-flash",
-            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-flash-latest",
         ]
         seen = set()
         models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
@@ -149,8 +151,12 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
                 logger.warning(f"Модель {m} перевищила таймаут 85с при прямому аналізі відео")
                 continue
             except Exception as e_m:
-                logger.warning(f"Модель {m} повернула помилку при аналізі відео: {e_m}")
-                await asyncio.sleep(2)
+                err_str = str(e_m)
+                logger.warning(f"Модель {m} повернула помилку при аналізі відео: {err_str}")
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    logger.warning("Ліміт добової квоти Gemini вичерпано. Припиняємо подальші запити.")
+                    break
+                await asyncio.sleep(1)
                 continue
 
         if not response or not response.text:
