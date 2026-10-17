@@ -282,14 +282,12 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Настроить и запустить планировщик задач."""
     scheduler = AsyncIOScheduler(timezone=KYIV_TZ)
 
-    # 1. Час ранкового дайджесту для навчальних будніх днів (09:00)
+    # 1. Час ранкового дайджесту для навчальних будніх днів (08:00)
     # Навчальні дні групи ІП-66: понеділок, вівторок, четвер, п'ятниця, субота
-    raw_time = (MORNING_DIGEST_TIME or "09:00").strip()
-    if raw_time == "08:00":
-        raw_time = "09:00"
+    raw_time = (MORNING_DIGEST_TIME or "08:00").strip()
     digest_hour, digest_minute = [int(x) for x in raw_time.split(":")]
 
-    # Ранковий дайджест пар у будні навчальні дні (пн, вт, чт, пт, сб) о 09:00
+    # Ранковий дайджест пар у будні навчальні дні (пн, вт, чт, пт, сб) о 08:00
     scheduler.add_job(
         send_morning_digest,
         trigger=CronTrigger(day_of_week="mon,tue,thu,fri,sat", hour=digest_hour, minute=digest_minute, timezone=KYIV_TZ),
