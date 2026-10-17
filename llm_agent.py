@@ -110,27 +110,39 @@ async def analyze_lecture_transcript_groq(transcript_text: str, video_title: str
         "Authorization": f"Bearer {groq_key}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": [
-            {"role": "system", "content": SYSTEM_INSTRUCTION},
-            {"role": "user", "content": f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"}
-        ],
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"}
-    }
-    try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                logger.info("✅ Успішно отримано AI-конспект через резервний Groq API (Llama-3.3-70B)")
-                return json.loads(content)
-            else:
-                logger.warning(f"Groq API повернув помилку {resp.status_code}: {resp.text[:200]}")
-    except Exception as e_groq:
-        logger.warning(f"Збій запиту до Groq API: {e_groq}")
+    groq_models = [
+        os.getenv("GROQ_MODEL", "").strip(),
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b",
+        "llama-3.3-70b-versatile",
+    ]
+    seen_g = set()
+    candidate_groq_models = [gm for gm in groq_models if gm and not (gm in seen_g or seen_g.add(gm))]
+
+    for gm in candidate_groq_models:
+        payload = {
+            "model": gm,
+            "messages": [
+                {"role": "system", "content": SYSTEM_INSTRUCTION},
+                {"role": "user", "content": f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"}
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"}
+        }
+        try:
+            async with httpx.AsyncClient(timeout=35.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    logger.info(f"✅ Успішно отримано AI-конспект через резервний Groq API ({gm})")
+                    return json.loads(content)
+                else:
+                    logger.warning(f"Groq API ({gm}) повернув помилку {resp.status_code}: {resp.text[:150]}")
+        except Exception as e_groq:
+            logger.warning(f"Збій запиту до Groq API ({gm}): {e_groq}")
+            continue
     return None
 
 
@@ -407,28 +419,40 @@ async def summarize_assignment_requirements_groq(title: str, description: str, c
         "Content-Type": "application/json"
     }
     prompt = f"Предмет: {course_name}\nНазва завдання: {title}\n\nОпис від викладача:\n{description.strip()}"
-    payload = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": [
-            {"role": "system", "content": ASSIGNMENT_SUMMARY_INSTRUCTION},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.2,
-        "max_tokens": 150
-    }
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                summary = data["choices"][0]["message"]["content"].strip().replace('"', '')
-                summary = re.sub(r'^(Суть(:|\s)|Вимоги(:|\s)|Завдання(:|\s))\s*', '', summary, flags=re.IGNORECASE)
-                logger.info("✅ Створено вижимку завдання через резервний Groq API (Llama-3.3-70B)")
-                return summary.strip()
-            else:
-                logger.warning(f"Groq API помилка при вижимці завдання ({resp.status_code}): {resp.text[:150]}")
-    except Exception as e_groq:
-        logger.warning(f"Збій Groq API при вижимці завдання: {e_groq}")
+    groq_models = [
+        os.getenv("GROQ_MODEL", "").strip(),
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b",
+        "llama-3.3-70b-versatile",
+    ]
+    seen_g = set()
+    candidate_groq_models = [gm for gm in groq_models if gm and not (gm in seen_g or seen_g.add(gm))]
+
+    for gm in candidate_groq_models:
+        payload = {
+            "model": gm,
+            "messages": [
+                {"role": "system", "content": ASSIGNMENT_SUMMARY_INSTRUCTION},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 150
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    summary = data["choices"][0]["message"]["content"].strip().replace('"', '')
+                    summary = re.sub(r'^(Суть(:|\s)|Вимоги(:|\s)|Завдання(:|\s))\s*', '', summary, flags=re.IGNORECASE)
+                    logger.info(f"✅ Створено вижимку завдання через резервний Groq API ({gm})")
+                    return summary.strip()
+                else:
+                    logger.warning(f"Groq API ({gm}) помилка при вижимці завдання ({resp.status_code}): {resp.text[:150]}")
+        except Exception as e_groq:
+            logger.warning(f"Збій Groq API ({gm}) при вижимці завдання: {e_groq}")
+            continue
     return None
 
 
