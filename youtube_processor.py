@@ -120,8 +120,10 @@ def get_video_transcript(video_id: str, languages: list[str] = None) -> tuple[st
 
 async def fetch_latest_channel_videos(channel_id: str, max_results: int = 5) -> list[dict]:
     """
-    Отримати список останніх відео з каналу через безкоштовний RSS-фід (0 квот API).
-    Повністю асинхронно через httpx.AsyncClient без блокування event loop.
+    Отримати список останніх відео з каналу.
+    1. Спочатку пробує стандартний RSS-фід (0 квот API).
+    2. Якщо YouTube повертає 404 або блокує RSS з серверного IP (Render),
+       перемикається на прямий парсинг сторінки каналу + oEmbed API + watch page meta.
     """
     rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
     try:
@@ -148,9 +150,61 @@ async def fetch_latest_channel_videos(channel_id: str, max_results: int = 5) -> 
                     "url": f"https://www.youtube.com/watch?v={video_id_elem.text}"
                 })
 
-        return videos
-    except Exception as e:
-        logger.error(f"Помилка при читанні RSS каналу {channel_id}: {e}")
+        if videos:
+            return videos
+    except Exception as e_rss:
+        logger.info(f"RSS фід недоступний для {channel_id} ({e_rss}). Використовуємо прямий веб-скрейпінг каналу...")
+
+    # Резервний веб-скрейпінг каналу
+    try:
+        channel_url = f"https://www.youtube.com/channel/{channel_id}/videos"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
+        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+            resp = await client.get(channel_url, follow_redirects=True)
+            if resp.status_code != 200:
+                logger.warning(f"Не вдалося відкрити сторінку каналу {channel_id}: статус {resp.status_code}")
+                return []
+
+            video_ids = list(dict.fromkeys(re.findall(r'"videoId":"([\w-]{11})"', resp.text)))
+            if not video_ids:
+                return []
+
+            videos = []
+            for vid in video_ids[:max_results]:
+                title = f"Запис заняття ({vid})"
+                try:
+                    oe_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json"
+                    oe_resp = await client.get(oe_url, timeout=5.0)
+                    if oe_resp.status_code == 200:
+                        title = oe_resp.json().get("title", title)
+                except Exception:
+                    pass
+
+                pub_date = None
+                try:
+                    watch_resp = await client.get(f"https://www.youtube.com/watch?v={vid}", timeout=5.0)
+                    if watch_resp.status_code == 200:
+                        m_pub = re.search(r'itemprop="uploadDate"\s+content="([^"]+)"', watch_resp.text)
+                        if not m_pub:
+                            m_pub = re.search(r'itemprop="datePublished"\s+content="([^"]+)"', watch_resp.text)
+                        if m_pub:
+                            pub_date = m_pub.group(1)
+                except Exception:
+                    pass
+
+                videos.append({
+                    "video_id": vid,
+                    "title": title,
+                    "published_at": pub_date,
+                    "url": f"https://www.youtube.com/watch?v={vid}"
+                })
+
+            return videos
+    except Exception as e_scrape:
+        logger.error(f"Помилка при резервному читанні каналу {channel_id}: {e_scrape}")
         return []
 
 

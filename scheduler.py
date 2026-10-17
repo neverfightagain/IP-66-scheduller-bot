@@ -316,15 +316,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         name="evening_digest",
     )
 
-    # 5. Утренний дайджест дедлайнов выходного дня в 10:00 (суббота и воскресенье)
-    scheduler.add_job(
-        send_evening_digest,
-        trigger=CronTrigger(day_of_week="sat,sun", hour=10, minute=0, timezone=KYIV_TZ),
-        args=[bot],
-        name="weekend_morning_digest",
-    )
-
-    # 6. Автоматична перевірка нових лекцій на YouTube кожні 10 хвилин
+    # 5. Автоматична перевірка нових лекцій на YouTube кожні 10 хвилин
     scheduler.add_job(
         check_new_youtube_videos,
         trigger=IntervalTrigger(minutes=10, timezone=KYIV_TZ),

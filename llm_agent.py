@@ -156,6 +156,9 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     logger.warning("Ліміт добової квоти Gemini вичерпано. Припиняємо подальші запити.")
                     break
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    logger.warning("Gemini відеосервіс перевантажений (503 UNAVAILABLE). Припиняємо повторні спроби для цього відео.")
+                    break
                 await asyncio.sleep(1)
                 continue
 
