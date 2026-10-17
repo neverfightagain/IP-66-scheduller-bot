@@ -1,7 +1,10 @@
 import asyncio
-import logging
-import uuid
 from datetime import datetime, timedelta
+import html
+import logging
+import re
+import uuid
+
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -17,64 +20,68 @@ from config import (
 )
 from kpi_api import get_lessons_for_date, get_current_time_info
 from links_manager import load_links
-from formatters import format_morning_digest, clean_markdown
+from formatters import format_morning_digest, clean_markdown, escape_html_text
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
 
+def strip_html_tags(text: str) -> str:
+    """Видаляє HTML теги для безпечної відправки повідомлення звичайним текстом."""
+    if not text:
+        return ""
+    clean = re.sub(r'<[^>]+>', '', text)
+    return html.unescape(clean)
+
+
 def strip_markdown(text: str) -> str:
-    """Видаляє символи Markdown для безпечної відправки повідомлення звичайним текстом."""
-    return (
-        text.replace("**", "")
-        .replace("*", "")
-        .replace("`", "")
-        .replace("_", "")
-        .replace("~", "")
-    )
+    """Зворотна сумісність: очищення спецсимволів."""
+    return strip_html_tags(text).replace("**", "").replace("*", "").replace("`", "").replace("_", "").replace("~", "")
 
 
 async def safe_answer(message: Message, text: str, reply_markup=None, disable_web_page_preview: bool = False):
-    """Безпечна відправка повідомлення з резервним plain-text варіантом при збоях Markdown-парсера."""
+    """Безпечна відправка повідомлення з підтримкою HTML та резервним plain-text варіантом при збоях парсера."""
     try:
         return await message.answer(
             text,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=reply_markup,
             disable_web_page_preview=disable_web_page_preview,
         )
     except TelegramBadRequest as e:
-        logger.warning(f"Помилка парсингу Markdown: {e}. Відправляю простим текстом.")
-        plain_text = strip_markdown(text)
+        logger.warning(f"Помилка парсингу HTML: {e}. Відправляю простим текстом.")
+        plain_text = strip_html_tags(text)
         return await message.answer(
             plain_text,
+            parse_mode=None,
             reply_markup=reply_markup,
             disable_web_page_preview=disable_web_page_preview,
         )
     except Exception as e:
         logger.error(f"Непередбачена помилка в safe_answer: {e}")
-        plain_text = strip_markdown(text)
+        plain_text = strip_html_tags(text)
         return await message.answer(
             plain_text,
+            parse_mode=None,
             reply_markup=reply_markup,
             disable_web_page_preview=disable_web_page_preview,
         )
 
 
 async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None):
-    """Безпечне редагування тексту повідомлення з резервним plain-text варіантом."""
+    """Безпечне редагування тексту повідомлення з підтримкою HTML та резервним plain-text варіантом."""
     try:
         return await callback.message.edit_text(
             text,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=reply_markup,
         )
     except TelegramBadRequest as e:
-        logger.warning(f"Помилка парсингу Markdown при редагуванні: {e}. Редагую простим текстом.")
-        plain_text = strip_markdown(text)
+        logger.warning(f"Помилка парсингу HTML при редагуванні: {e}. Редагую простим текстом.")
+        plain_text = strip_html_tags(text)
         try:
-            return await callback.message.edit_text(plain_text, reply_markup=reply_markup)
+            return await callback.message.edit_text(plain_text, parse_mode=None, reply_markup=reply_markup)
         except Exception:
             pass
     except Exception as e:
@@ -110,11 +117,11 @@ async def cmd_start(message: Message):
     add_subscribed_chat(chat_id, thread_id)
 
     is_group = chat_type in (ChatType.GROUP, ChatType.SUPERGROUP)
-    topic_desc = f" (топік ID: `{thread_id}`)" if thread_id else ""
+    topic_desc = f" (топік ID: <code>{thread_id}</code>)" if thread_id else ""
     chat_desc = f"цього групового чату{topic_desc}" if is_group else "вас"
-    id_info = f"\n🆔 **ID чату:** `{chat_id}`" if is_group else ""
+    id_info = f"\n🆔 <b>ID чату:</b> <code>{chat_id}</code>" if is_group else ""
     if thread_id:
-        id_info += f"\n📌 **ID топіку:** `{thread_id}`"
+        id_info += f"\n📌 <b>ID топіку:</b> <code>{thread_id}</code>"
 
     sub_status = (
         f"✅ Сповіщення активовано для {chat_desc}!{id_info}"
@@ -123,29 +130,29 @@ async def cmd_start(message: Message):
     )
 
     text = (
-        "👋 **Привіт! Я розумний розклад-асистент ІП-66.**\n\n"
-        "🤖 **Що я роблю на автоматі:**\n"
-        "• ☀️ **08:00** — Ранковий розклад пар з посиланнями на заняття\n"
-        "• 🔔 **За 20 та 5 хв** — Нагадування перед кожною парою (з автовидаленням через 20 хв)\n"
-        "• 📚 **Google Classroom** — Миттєві сповіщення про нові завдання та дедлайни\n"
-        "• 🎬 **YouTube `@ip-66_studio`** — Автоматичний конспект лекцій через Gemini AI\n"
-        "• 🌙 **21:00** (та 10:00 у вихідні) — Розумний підсумок дня `/summary`\n\n"
+        "👋 <b>Привіт! Я розумний розклад-асистент ІП-66.</b>\n\n"
+        "🤖 <b>Що я роблю на автоматі:</b>\n"
+        "• ☀️ <b>08:00</b> — Ранковий розклад пар з посиланнями на заняття\n"
+        "• 🔔 <b>За 20 та 5 хв</b> — Нагадування перед кожною парою (з автовидаленням через 20 хв)\n"
+        "• 📚 <b>Google Classroom</b> — Миттєві сповіщення про нові завдання та дедлайни\n"
+        "• 🎬 <b>YouTube <code>@ip-66_studio</code></b> — Автоматичний конспект лекцій через Gemini AI\n"
+        "• 🌙 <b>21:00</b> (та 10:00 у вихідні) — Розумний підсумок дня /summary\n\n"
         f"{sub_status}\n\n"
-        "📋 **Повний список команд:**\n\n"
-        "📅 **Розклад пар:**\n"
+        "📋 <b>Повний список команд:</b>\n\n"
+        "📅 <b>Розклад пар:</b>\n"
         "/today — Розклад пар на сьогодні з лінками на Zoom/Meet\n"
         "/tomorrow — Розклад пар на завтра\n"
         "/week — Номер поточного тижня (чисельник/знаменник) та київський час\n"
         "/links — Збережені посилання на конференції та лекції\n"
-        "/setlink — Додати/оновити посилання на пару (`/setlink Предмет | URL | Коментар`)\n"
-        "/dellink — Видалити посилання на предмет (`/dellink Предмет`)\n\n"
-        "📊 **Дедлайни та Classroom:**\n"
+        "/setlink — Додати/оновити посилання на пару (<code>/setlink Предмет | URL | Коментар</code>)\n"
+        "/dellink — Видалити посилання на предмет (<code>/dellink Предмет</code>)\n\n"
+        "📊 <b>Дедлайни та Classroom:</b>\n"
         "/deadlines — Радар усіх дедлайнів (палаючі, на тиждень, без дедлайну)\n"
         "/summary — Підсумок дня, що задали та палаючі дедлайни\n"
         "/sync — Миттєва ручна синхронізація з Google Classroom\n"
-        "/adddeadline — Додати завдання вручну (`/adddeadline Предмет | Назва | Дедлайн | Опис`)\n"
-        "/deldeadline — Видалити завдання за ID (`/deldeadline <id>`)\n\n"
-        "⚙️ **Керування сповіщеннями:**\n"
+        "/adddeadline — Додати завдання вручну (<code>/adddeadline Предмет | Назва | Дедлайн | Опис</code>)\n"
+        "/deldeadline — Видалити завдання за ID (<code>/deldeadline &lt;id&gt;</code>)\n\n"
+        "⚙️ <b>Керування сповіщеннями:</b>\n"
         "/subscribe — Увімкнути сповіщення в цьому чаті / топіку\n"
         "/unsubscribe — Вимкнути сповіщення\n"
         "/help — Повна довідка з поясненням можливостей"
@@ -165,17 +172,17 @@ async def cmd_subscribe(message: Message):
     if thread_id:
         await safe_answer(
             message,
-            f"✅ **Сповіщення успішно налаштовано для цього топіку!**\n\n"
-            f"🆔 **ID чату:** `{chat_id}`\n"
-            f"📌 **ID топіку:** `{thread_id}`\n\n"
+            f"✅ <b>Сповіщення успішно налаштовано для цього топіку!</b>\n\n"
+            f"🆔 <b>ID чату:</b> <code>{chat_id}</code>\n"
+            f"📌 <b>ID топіку:</b> <code>{thread_id}</code>\n\n"
             f"🎯 Усі ранкові розклади, нагадування перед парами, дедлайни з Classroom та конспекти лекцій "
-            f"надсилатимуться **виключно в цю гілку**."
+            f"надсилатимуться <b>виключно в цю гілку</b>."
         )
     else:
         await safe_answer(
             message,
-            f"✅ **Сповіщення успішно активовано для цього чату!**\n"
-            f"🆔 **ID чату:** `{chat_id}`"
+            f"✅ <b>Сповіщення успішно активовано для цього чату!</b>\n"
+            f"🆔 <b>ID чату:</b> <code>{chat_id}</code>"
         )
 
 
@@ -189,7 +196,7 @@ async def cmd_unsubscribe(message: Message):
     remove_subscribed_chat(chat_id, thread_id)
 
     if thread_id:
-        await safe_answer(message, f"🛑 Сповіщення для топіку `{thread_id}` вимкнено.")
+        await safe_answer(message, f"🛑 Сповіщення для топіку <code>{thread_id}</code> вимкнено.")
     else:
         await safe_answer(message, "🛑 Сповіщення для цього чату вимкнено.")
 
@@ -224,8 +231,7 @@ async def cmd_today(message: Message):
                 tag="today_command"
             )
     except Exception as e:
-        await safe_answer(message, f"⚠️ Не вдалося отримати розклад: {clean_markdown(str(e))}")
-
+        await safe_answer(message, f"⚠️ Не вдалося отримати розклад: {escape_html_text(str(e))}")
 
 
 @router.message(Command("tomorrow"))
@@ -237,7 +243,7 @@ async def cmd_tomorrow(message: Message):
         text = text.replace("на сьогодні", "на завтра")
         await safe_answer(message, text, reply_markup=kb)
     except Exception as e:
-        await safe_answer(message, f"⚠️ Не вдалося отримати розклад: {clean_markdown(str(e))}")
+        await safe_answer(message, f"⚠️ Не вдалося отримати розклад: {escape_html_text(str(e))}")
 
 
 @router.message(Command("week"))
@@ -249,11 +255,11 @@ async def cmd_week(message: Message):
         time_str = now.strftime("%H:%M:%S")
         await safe_answer(
             message,
-            f"🕒 **Київський час:** `{time_str}`\n"
-            f"📅 **Зараз триває:** `{week}-й тиждень` ({'Чисельник' if week == 1 else 'Знаменник'})",
+            f"🕒 <b>Київський час:</b> <code>{time_str}</code>\n"
+            f"📅 <b>Зараз триває:</b> <code>{week}-й тиждень</code> ({'Чисельник' if week == 1 else 'Знаменник'})",
         )
     except Exception as e:
-        await safe_answer(message, f"⚠️ Не вдалося визначити тиждень: {clean_markdown(str(e))}")
+        await safe_answer(message, f"⚠️ Не вдалося визначити тиждень: {escape_html_text(str(e))}")
 
 
 @router.message(Command("links"))
@@ -263,20 +269,20 @@ async def cmd_links(message: Message):
         await safe_answer(message, "📂 Список посилань порожній.")
         return
 
-    lines = ["🔗 **Збережені посилання на заняття:**\n"]
+    lines = ["🔗 <b>Збережені посилання на заняття:</b>\n"]
     has_any = False
     for title, data in links.items():
         url = data.get("url", "").strip()
         comment = data.get("comment", "").strip()
         if url:
             has_any = True
-            c_title = clean_markdown(str(title))
-            c_comment = clean_markdown(str(comment))
-            comment_str = f" _({c_comment})_" if c_comment else ""
-            lines.append(f"• **{c_title}**:\n  [Приєднатися]({url}){comment_str}")
+            c_title = escape_html_text(str(title))
+            c_comment = escape_html_text(str(comment))
+            comment_str = f" <i>({c_comment})</i>" if c_comment else ""
+            lines.append(f'• <b>{c_title}</b>:\n  <a href="{html.escape(url)}">Приєднатися</a>{comment_str}')
 
     if not has_any:
-        await safe_answer(message, "ℹ️ Посилання ще не додані в `links.json`.")
+        await safe_answer(message, "ℹ️ Посилання ще не додані в <code>links.json</code>.")
         return
 
     await safe_answer(message, "\n\n".join(lines), disable_web_page_preview=True)
@@ -290,10 +296,10 @@ async def cmd_set_link(message: Message):
     if len(parts) < 2:
         await safe_answer(
             message,
-            "ℹ️ **Формат додавання/оновлення посилання на пару:**\n"
-            "`/setlink Предмет (Тип) | URL | Коментар (необов'язково)`\n\n"
+            "ℹ️ <b>Формат додавання/оновлення посилання на пару:</b>\n"
+            "<code>/setlink Предмет (Тип) | URL | Коментар (необов'язково)</code>\n\n"
             "Приклад:\n"
-            "`/setlink Філософія (Лек) | https://us02web.zoom.us/j/... | Zoom`"
+            "<code>/setlink Філософія (Лек) | https://us02web.zoom.us/j/... | Zoom</code>"
         )
         return
 
@@ -302,16 +308,16 @@ async def cmd_set_link(message: Message):
     comment = parts[2][:100].strip() if len(parts) > 2 else ""
 
     if not (url.startswith("http://") or url.startswith("https://")):
-        await safe_answer(message, "❌ Посилання має починатися з `https://` або `http://`!")
+        await safe_answer(message, "❌ Посилання має починатися з <code>https://</code> або <code>http://</code>!")
         return
 
     set_course_link(raw_key, url, comment)
-    c_key = clean_markdown(raw_key)
-    comment_str = f" _({clean_markdown(comment)})_" if comment else ""
+    c_key = escape_html_text(raw_key)
+    comment_str = f" <i>({escape_html_text(comment)})</i>" if comment else ""
     await safe_answer(
         message,
-        f"✅ Посилання для **{c_key}** успішно збережено!\n"
-        f"🔗 [Перейти до заняття]({url}){comment_str}"
+        f"✅ Посилання для <b>{c_key}</b> успішно збережено!\n"
+        f'🔗 <a href="{html.escape(url)}">Перейти до заняття</a>{comment_str}'
     )
 
 
@@ -320,41 +326,41 @@ async def cmd_del_link(message: Message):
     from links_manager import delete_course_link
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await safe_answer(message, "ℹ️ Вкажіть назву предмета для видалення:\n`/dellink Назва`")
+        await safe_answer(message, "ℹ️ Вкажіть назву предмета для видалення:\n<code>/dellink Назва</code>")
         return
 
     key = parts[1].strip()
     if delete_course_link(key):
-        await safe_answer(message, f"🗑 Посилання для **{clean_markdown(key)}** видалено!")
+        await safe_answer(message, f"🗑 Посилання для <b>{escape_html_text(key)}</b> видалено!")
     else:
-        await safe_answer(message, f"⚠️ Посилання для «{clean_markdown(key)}» не знайдено.")
+        await safe_answer(message, f"⚠️ Посилання для «{escape_html_text(key)}» не знайдено.")
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        "📖 **Повна довідка по боту ІП-66:**\n\n"
-        "📅 **Розклад пар та посилання:**\n"
+        "📖 <b>Повна довідка по боту ІП-66:</b>\n\n"
+        "📅 <b>Розклад пар та посилання:</b>\n"
         "• /today — Пари на сьогодні з посиланнями на Zoom/Teams/Meet\n"
         "• /tomorrow — Пари на завтра\n"
         "• /week — Номер навчального тижня (1 чи 2) та точний київський час\n"
         "• /links — База збережених посилань на дистанційні заняття\n"
-        "• /setlink — Додати або оновити посилання на пару (`/setlink Предмет | URL | Коментар`)\n"
-        "• /dellink — Видалити посилання на предмет (`/dellink Предмет`)\n\n"
-        "📊 **Завдання, Classroom та AI:**\n"
+        "• /setlink — Додати або оновити посилання на пару (<code>/setlink Предмет | URL | Коментар</code>)\n"
+        "• /dellink — Видалити посилання на предмет (<code>/dellink Предмет</code>)\n\n"
+        "📊 <b>Завдання, Classroom та AI:</b>\n"
         "• /deadlines — Радар активних завдань з Google Classroom із розрахунком часу, що залишився\n"
         "• /summary (або /evening) — Розумний підсумок дня (пари, що задали, анонси та палаючі дедлайни)\n"
         "• /sync — Примусова синхронізація завдань із Google Classroom\n"
         "• /adddeadline — Додати власне завдання або дедлайн вручну\n"
-        "  _Формат:_ `/adddeadline Предмет | Назва | РРРР-ММ-ДД HH:MM | Опис`\n"
-        "• /deldeadline — Видалити завдання за ID (`/deldeadline <id>`)\n\n"
-        "🔔 **Автоматичні функції бота:**\n"
-        "• ☀️ **08:00 (Пн-Сб)** — Ранковий дайджест пар на день\n"
-        "• ⏰ **За 20 хв і 5 хв до пари** — Нагадування з прямим лінком (автовидалення через 20 хв)\n"
-        "• 📚 **Кожні 15 хв** — Перевірка нових завдань у Google Classroom\n"
-        "• 🎬 **Кожні 30 хв** — Моніторинг нових лекцій на YouTube `@ip-66_studio` та Gemini AI конспект\n"
-        "• 🌙 **21:00** — Вечірній підсумок дня (о 10:00 у вихідні дні)\n\n"
-        "⚙️ **Керування чатом:**\n"
+        "  <i>Формат:</i> <code>/adddeadline Предмет | Назва | РРРР-ММ-ДД HH:MM | Опис</code>\n"
+        "• /deldeadline — Видалити завдання за ID (<code>/deldeadline &lt;id&gt;</code>)\n\n"
+        "🔔 <b>Автоматичні функції бота:</b>\n"
+        "• ☀️ <b>08:00 (Пн-Сб)</b> — Ранковий дайджест пар на день\n"
+        "• ⏰ <b>За 20 хв і 5 хв до пари</b> — Нагадування з прямим лінком (автовидалення через 20 хв)\n"
+        "• 📚 <b>Кожні 15 хв</b> — Перевірка нових завдань у Google Classroom\n"
+        "• 🎬 <b>Кожні 10 хв</b> — Моніторинг нових лекцій на YouTube <code>@ip-66_studio</code> та Gemini AI конспект\n"
+        "• 🌙 <b>21:00</b> — Вечірній підсумок дня (о 10:00 у вихідні дні)\n\n"
+        "⚙️ <b>Керування чатом:</b>\n"
         "• /subscribe — Увімкнути автоматичні сповіщення для цього чату / топіку\n"
         "• /unsubscribe — Призупинити сповіщення для цього чату / топіку"
     )
@@ -388,8 +394,8 @@ async def cb_refresh_deadlines(callback: CallbackQuery, bot: Bot):
     text = format_deadlines_radar(assignments)
 
     if not res.get("success"):
-        err_msg = clean_markdown(str(res.get("error", "Помилка")))
-        text += f"\n\n⚠️ _Синхронізація не вдалася: {err_msg}_"
+        err_msg = escape_html_text(str(res.get("error", "Помилка")))
+        text += f"\n\n⚠️ <i>Синхронізація не вдалася: {err_msg}</i>"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -408,21 +414,21 @@ async def _run_youtube_check_bg(message: Message, bot: Bot, status_msg: Message)
             fallback_thread_id=message.message_thread_id,
         )
         if new_cnt > 0:
-            res_text = f"✅ Оброблено та опубліковано нових лекцій: **{new_cnt}**! Пости надіслано в чат."
+            res_text = f"✅ Оброблено та опубліковано нових лекцій: <b>{new_cnt}</b>! Пости надіслано в чат."
         else:
             res_text = "ℹ️ Наразі нових неопублікованих лекцій на YouTube немає (усі останні відео вже оброблено)."
         if status_msg:
             try:
-                await status_msg.edit_text(res_text, parse_mode="Markdown")
+                await status_msg.edit_text(res_text, parse_mode="HTML")
                 return
             except Exception:
                 pass
         await safe_answer(message, res_text)
     except Exception as e:
-        err_text = f"❌ Помилка при перевірці YouTube: {clean_markdown(str(e))}"
+        err_text = f"❌ Помилка при перевірці YouTube: {escape_html_text(str(e))}"
         if status_msg:
             try:
-                await status_msg.edit_text(err_text, parse_mode="Markdown")
+                await status_msg.edit_text(err_text, parse_mode="HTML")
                 return
             except Exception:
                 pass
@@ -448,23 +454,23 @@ async def _run_sync_bg(message: Message, bot: Bot, status_msg: Message):
     try:
         yt_new = await check_new_youtube_videos(bot=bot)
         if yt_new > 0:
-            yt_status = f"\n🎬 **YouTube:** знайдено та опубліковано нових лекцій: {yt_new}."
+            yt_status = f"\n🎬 <b>YouTube:</b> знайдено та опубліковано нових лекцій: {yt_new}."
         else:
-            yt_status = "\n🎬 **YouTube:** перевірено, нових лекцій немає."
+            yt_status = "\n🎬 <b>YouTube:</b> перевірено, нових лекцій немає."
     except Exception as e_yt:
-        yt_status = f"\n⚠️ **YouTube:** {clean_markdown(str(e_yt))}"
+        yt_status = f"\n⚠️ <b>YouTube:</b> {escape_html_text(str(e_yt))}"
 
     if not res.get("success"):
-        err = clean_markdown(str(res.get("error", "Невідома помилка")))
+        err = escape_html_text(str(res.get("error", "Невідома помилка")))
         err_text = (
-            f"❌ **Помилка синхронізації Google Classroom:**\n`{err}`{yt_status}\n\n"
-            f"ℹ️ **Що перевірити:**\n"
-            f"1. Чи додана змінна `GOOGLE_TOKEN_JSON` в налаштуваннях Render (розділ **Environment**).\n"
-            f"2. Чи натиснута кнопка **Save Changes** на Render."
+            f"❌ <b>Помилка синхронізації Google Classroom:</b>\n<code>{err}</code>{yt_status}\n\n"
+            f"ℹ️ <b>Що перевірити:</b>\n"
+            f"1. Чи додана змінна <code>GOOGLE_TOKEN_JSON</code> в налаштуваннях Render (розділ <b>Environment</b>).\n"
+            f"2. Чи натиснута кнопка <b>Save Changes</b> на Render."
         )
         if status_msg:
             try:
-                await status_msg.edit_text(err_text, parse_mode="Markdown")
+                await status_msg.edit_text(err_text, parse_mode="HTML")
                 return
             except Exception:
                 pass
@@ -477,15 +483,15 @@ async def _run_sync_bg(message: Message, bot: Bot, status_msg: Message):
     total_cnt = len(active)
 
     success_text = (
-        f"✅ **Google Classroom та YouTube успішно синхронізовано!**\n\n"
-        f"📚 Знайдено активних курсів: **{courses_cnt}**\n"
-        f"🆕 Нових завдань завантажено: **{new_cnt}**\n"
-        f"📋 Всього активних завдань у базі: **{total_cnt}**{yt_status}\n\n"
+        f"✅ <b>Google Classroom та YouTube успішно синхронізовано!</b>\n\n"
+        f"📚 Знайдено активних курсів: <b>{courses_cnt}</b>\n"
+        f"🆕 Нових завдань завантажено: <b>{new_cnt}</b>\n"
+        f"📋 Всього активних завдань у базі: <b>{total_cnt}</b>{yt_status}\n\n"
         f"Введіть /deadlines, щоб переглянути оновлений радар завдань! 🎯"
     )
     if status_msg:
         try:
-            await status_msg.edit_text(success_text, parse_mode="Markdown")
+            await status_msg.edit_text(success_text, parse_mode="HTML")
             return
         except Exception:
             pass
@@ -507,28 +513,28 @@ async def cmd_add_deadline(message: Message):
     if len(parts) < 3:
         await safe_answer(
             message,
-            "ℹ️ **Формат додавання дедлайну:**\n"
-            "`/adddeadline Предмет | Назва завдання | РРРР-ММ-ДД HH:MM | Опис (необов'язково)`\n\n"
+            "ℹ️ <b>Формат додавання дедлайну:</b>\n"
+            "<code>/adddeadline Предмет | Назва завдання | РРРР-ММ-ДД HH:MM | Опис (необов'язково)</code>\n\n"
             "Приклад:\n"
-            "`/adddeadline Основи програмування | Лабораторна №1 | 2026-10-15 23:59 | Здати в репозиторій`",
+            "<code>/adddeadline Основи програмування | Лабораторна №1 | 2026-10-15 23:59 | Здати в репозиторій</code>",
         )
         return
 
-    course_name = clean_markdown(parts[0][:60])
-    title = clean_markdown(parts[1][:150])
+    course_name = escape_html_text(parts[0][:60])
+    title = escape_html_text(parts[1][:150])
     raw_date = parts[2][:30].strip()
-    desc = clean_markdown(parts[3][:300]) if len(parts) > 3 else ""
+    desc = parts[3][:300] if len(parts) > 3 else ""
 
     due_date = normalize_due_date(raw_date)
     if not due_date:
         await safe_answer(
             message,
-            "❌ **Невірний формат дати!**\n\n"
+            "❌ <b>Невірний формат дати!</b>\n\n"
             "Вкажіть дату в одному з форматів:\n"
-            "• `РРРР-ММ-ДД HH:MM` (наприклад, `2026-10-25 23:59`)\n"
-            "• `РРРР-ММ-ДД` (наприклад, `2026-10-25`)\n"
-            "• `ДД.ММ.РРРР HH:MM` (наприклад, `25.10.2026 23:59`)\n"
-            "• `ДД.ММ.РРРР` (наприклад, `25.10.2026`)"
+            "• <code>РРРР-ММ-ДД HH:MM</code> (наприклад, <code>2026-10-25 23:59</code>)\n"
+            "• <code>РРРР-ММ-ДД</code> (наприклад, <code>2026-10-25</code>)\n"
+            "• <code>ДД.ММ.РРРР HH:MM</code> (наприклад, <code>25.10.2026 23:59</code>)\n"
+            "• <code>ДД.ММ.РРРР</code> (наприклад, <code>25.10.2026</code>)"
         )
         return
 
@@ -536,7 +542,7 @@ async def cmd_add_deadline(message: Message):
     await add_assignment_db(aid, course_name, title, due_date, desc)
     await safe_answer(
         message,
-        f"✅ Дедлайн успішно додано!\n🆔 ID: `{aid}`\n📚 **{course_name}** — {title}\n⏳ **Дедлайн:** `{due_date}`"
+        f"✅ Дедлайн успішно додано!\n🆔 ID: <code>{aid}</code>\n📚 <b>{course_name}</b> — {title}\n⏳ <b>Дедлайн:</b> <code>{due_date}</code>"
     )
 
 
@@ -546,12 +552,12 @@ async def cmd_del_deadline(message: Message):
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await safe_answer(message, "ℹ️ Вкажіть ID дедлайну для видалення:\n`/deldeadline <id>`")
+        await safe_answer(message, "ℹ️ Вкажіть ID дедлайну для видалення:\n<code>/deldeadline &lt;id&gt;</code>")
         return
 
-    aid = clean_markdown(parts[1].strip()[:50])
+    aid = escape_html_text(parts[1].strip()[:50])
     await delete_assignment_db(aid)
-    await safe_answer(message, f"🗑 Дедлайн `{aid}` видалено або позначено як виконаний!")
+    await safe_answer(message, f"🗑 Дедлайн <code>{aid}</code> видалено або позначено як виконаний!")
 
 
 @router.message(Command("evening"))
@@ -575,4 +581,4 @@ async def cmd_summary(message: Message):
         await safe_answer(message, text)
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
-        await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {clean_markdown(str(e))}")
+        await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")

@@ -13,7 +13,9 @@ from googleapiclient.discovery import build
 
 from config import BASE_DIR, KYIV_TZ
 from database import add_assignment_db, get_active_assignments_db, get_subscribed_chats_db, add_announcement_db
-from formatters import clean_markdown
+import html
+import re
+from formatters import clean_markdown, format_latex_to_unicode
 
 logger = logging.getLogger(__name__)
 
@@ -212,28 +214,32 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                         # Миттєвий пуш у чати
                         if bot:
                             chats = await get_subscribed_chats_db()
-                            clean_c = clean_markdown(cname)
-                            clean_t = clean_markdown(title)
+                            clean_c = html.escape(cname)
+                            clean_t = html.escape(title)
+                            due_esc = html.escape(due_date_str)
                             text = (
-                                f"📌 **Нове завдання в Google Classroom!**\n\n"
-                                f"📚 **Дисципліна:** {clean_c}\n"
-                                f"📝 **Завдання:** {clean_t}\n"
-                                f"⏳ **Дедлайн:** `{due_date_str}`\n"
+                                f"📌 <b>Нове завдання в Google Classroom!</b>\n\n"
+                                f"📚 <b>Дисципліна:</b> <b>{clean_c}</b>\n"
+                                f"📝 <b>Завдання:</b> {clean_t}\n"
+                                f"⏳ <b>Дедлайн:</b> <code>{due_esc}</code>\n"
                             )
-                            if desc:
-                                text += f"\n📖 _{clean_markdown(desc[:200])}_\n"
+                            if desc and desc.strip():
+                                clean_desc = format_latex_to_unicode(desc.strip())
+                                if len(clean_desc) > 500:
+                                    clean_desc = clean_desc[:490].rstrip() + "..."
+                                text += f"\n<blockquote expandable>📝 <b>Вимоги:</b>\n{clean_desc}</blockquote>\n"
                             if alt_link:
-                                text += f"\n🔗 [Відкрити в Google Classroom]({alt_link})"
+                                text += f'\n🔗 <a href="{html.escape(alt_link)}">Відкрити в Google Classroom</a>'
 
                             for target in chats:
                                 cid = target["chat_id"]
                                 tid = target.get("thread_id")
                                 try:
-                                    await bot.send_message(cid, text, parse_mode="Markdown", message_thread_id=tid)
+                                    await bot.send_message(cid, text, parse_mode="HTML", message_thread_id=tid)
                                 except Exception as e:
-                                    logger.warning(f"Markdown send failed to {cid} (thread {tid}): {e}. Retrying plain text.")
+                                    logger.warning(f"HTML send failed to {cid} (thread {tid}): {e}. Retrying plain text.")
                                     try:
-                                        plain_text = text.replace("**", "").replace("*", "").replace("`", "").replace("_", "")
+                                        plain_text = re.sub(r'<[^>]+>', '', text)
                                         await bot.send_message(cid, plain_text, message_thread_id=tid)
                                     except Exception as e2:
                                         logger.error(f"Не вдалося надіслати сповіщення Classroom у чат {cid}: {e2}")

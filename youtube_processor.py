@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+import html
 import logging
 import os
 import re
@@ -333,12 +334,13 @@ async def process_video_and_notify(
         if chats:
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="▶️ Дивитися на YouTube", url=video_url)]])
-            full_msg = f"🎬 **Новий запис пари на YouTube!**\n\n📌 **{clean_markdown(topic)}**\n\n🔗 [Переглянути відео]({video_url})"
+            c_topic = html.escape(topic)
+            full_msg = f"🎬 <b>Новий запис пари на YouTube!</b>\n\n📌 <b>{c_topic}</b>\n\n🔗 <a href=\"{html.escape(video_url)}\">Переглянути відео</a>"
             for target in chats:
                 cid = target["chat_id"]
                 tid = target.get("thread_id")
                 try:
-                    await bot.send_message(cid, full_msg, parse_mode="Markdown", reply_markup=kb, message_thread_id=tid)
+                    await bot.send_message(cid, full_msg, parse_mode="HTML", reply_markup=kb, message_thread_id=tid)
                 except Exception:
                     try:
                         plain_msg = f"🎬 Новий запис пари на YouTube!\n\n📌 {topic}\n\n🔗 {video_url}"
@@ -381,13 +383,12 @@ async def process_video_and_notify(
         for target in chats:
             cid = target["chat_id"]
             tid = target.get("thread_id")
-            full_msg = f"🎬 **Новий запис пари на YouTube!**\n\n{text}"
             try:
-                await bot.send_message(cid, full_msg, parse_mode="Markdown", reply_markup=kb, message_thread_id=tid)
+                await bot.send_message(cid, text, parse_mode="HTML", reply_markup=kb, message_thread_id=tid)
             except Exception as e:
-                logger.warning(f"Markdown send failed for YouTube video in chat {cid} (thread {tid}): {e}. Retrying plain text.")
+                logger.warning(f"HTML send failed for YouTube video in chat {cid} (thread {tid}): {e}. Retrying plain text.")
                 try:
-                    plain_msg = full_msg.replace("**", "").replace("*", "").replace("`", "").replace("_", "")
+                    plain_msg = re.sub(r'<[^>]+>', '', text)
                     await bot.send_message(cid, plain_msg, reply_markup=kb, message_thread_id=tid)
                 except Exception as e2:
                     logger.error(f"Не вдалося надіслати конспект у чат {cid}: {e2}")

@@ -16,30 +16,42 @@ from config import (
 from kpi_api import get_lessons_for_date
 from formatters import format_morning_digest, format_lesson_alert
 
+import html
+import re
+
 logger = logging.getLogger(__name__)
 
 
+def strip_html_tags(text: str) -> str:
+    """Видаляє HTML теги для безпечної відправки повідомлення звичайним текстом."""
+    if not text:
+        return ""
+    clean = re.sub(r'<[^>]+>', '', text)
+    return html.unescape(clean)
+
+
 def strip_markdown(text: str) -> str:
-    """Видаляє символи Markdown для безпечної відправки повідомлення звичайним текстом."""
-    return text.replace("**", "").replace("*", "").replace("`", "").replace("_", "")
+    """Зворотна сумісність: очищення спецсимволів."""
+    return strip_html_tags(text).replace("**", "").replace("*", "").replace("`", "").replace("_", "")
 
 
 async def safe_send_message(bot: Bot, chat_id: int, text: str, reply_markup=None, message_thread_id: int | None = None):
-    """Безпечна відправка повідомлення з підтримкою топіків та відкатом на звичайний текст при помилці Markdown."""
+    """Безпечна відправка повідомлення з підтримкою топіків та відкатом на звичайний текст при помилці HTML."""
     try:
         return await bot.send_message(
             chat_id=chat_id,
             text=text,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=reply_markup,
             message_thread_id=message_thread_id,
         )
     except Exception as e:
-        logger.warning(f"Помилка відправки Markdown у {chat_id} (топік {message_thread_id}): {e}. Відправляю простим текстом.")
+        logger.warning(f"Помилка відправки HTML у {chat_id} (топік {message_thread_id}): {e}. Відправляю простим текстом.")
         try:
             return await bot.send_message(
                 chat_id=chat_id,
-                text=strip_markdown(text),
+                text=strip_html_tags(text),
+                parse_mode=None,
                 reply_markup=reply_markup,
                 message_thread_id=message_thread_id,
             )
