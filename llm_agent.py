@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import httpx
 from google import genai
 from google.genai import types
 
@@ -41,56 +42,105 @@ SYSTEM_INSTRUCTION = """
 """
 
 _active_key_idx = 0
-_exhausted_keys: set[str] = set()
 
 
 def get_gemini_keys() -> list[str]:
-    """Отримати список доступних ключів Gemini (підтримка пулу ключів через кому або один ключ)."""
+    """Отримати список доступних ключів Gemini (підтримка пулу ключів через кому/крапку з комою або один ключ)."""
     raw = os.getenv("GEMINI_API_KEYS", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
     if not raw:
         return []
-    return [k.strip() for k in re.split(r"[,;]", raw) if k.strip()]
+    return [k.strip().strip('"\'') for k in re.split(r"[\n,;]", raw) if k.strip().strip('"\'')]
+
+
+def get_ordered_gemini_keys() -> list[str]:
+    """
+    Повертає список ключів Gemini у порядку ротації, починаючи з поточного активного індексу.
+    """
+    global _active_key_idx
+    keys = get_gemini_keys()
+    if not keys:
+        return []
+    n = len(keys)
+    start = _active_key_idx % n
+    return [keys[(start + i) % n] for i in range(n)]
+
+
+def mark_key_success(api_key: str):
+    """Позначити ключ як робочий (встановити його активним для наступних запитів)."""
+    global _active_key_idx
+    keys = get_gemini_keys()
+    if api_key in keys:
+        _active_key_idx = keys.index(api_key)
+
+
+def advance_to_next_key():
+    """Перемкнути активний покажчик на наступний ключ у пулі."""
+    global _active_key_idx
+    keys = get_gemini_keys()
+    if keys:
+        _active_key_idx = (_active_key_idx + 1) % len(keys)
+        logger.warning(f"🔄 Перемкнуто активний ключ Gemini на індекс #{_active_key_idx + 1} з {len(keys)}")
 
 
 def get_gemini_client() -> tuple[genai.Client | None, str]:
-    """Отримати клієнт Gemini для першого невичерпаного ключа з пулу."""
-    global _active_key_idx, _exhausted_keys
+    """Сумісність: отримати клієнт для поточного активного ключа."""
     keys = get_gemini_keys()
     if not keys:
         return None, ""
-
-    for _ in range(len(keys)):
-        k = keys[_active_key_idx % len(keys)]
-        if k not in _exhausted_keys:
-            return genai.Client(api_key=k), k
-        _active_key_idx = (_active_key_idx + 1) % len(keys)
-
-    # Якщо всі вичерпані, повертаємо поточний (на випадок скидання добового ліміту Google)
     k = keys[_active_key_idx % len(keys)]
     return genai.Client(api_key=k), k
 
 
-def rotate_key(exhausted_key: str):
-    """Позначити ключ як вичерпаний та перемкнутися на наступний ключ у пулі."""
-    global _active_key_idx, _exhausted_keys
-    _exhausted_keys.add(exhausted_key)
-    keys = get_gemini_keys()
-    if len(keys) > 1:
-        _active_key_idx = (_active_key_idx + 1) % len(keys)
-        logger.warning(f"Ключ Gemini вичерпав ліміт. Перемкнуто на ключ #{_active_key_idx + 1} з {len(keys)}")
+def rotate_key(exhausted_key: str = ""):
+    """Сумісність: перемкнутися на наступний ключ."""
+    advance_to_next_key()
+
+
+async def analyze_lecture_transcript_groq(transcript_text: str, video_title: str = "") -> dict | None:
+    """
+    Резервний аналіз транскрипту через Groq API (Llama-3.3-70b-versatile).
+    Викликається якщо всі ключі Gemini вичерпані або Google повертає 500/503.
+    """
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not groq_key:
+        return None
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {groq_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": SYSTEM_INSTRUCTION},
+            {"role": "user", "content": f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"}
+        ],
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"}
+    }
+    try:
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                logger.info("✅ Успішно отримано AI-конспект через резервний Groq API (Llama-3.3-70B)")
+                return json.loads(content)
+            else:
+                logger.warning(f"Groq API повернув помилку {resp.status_code}: {resp.text[:200]}")
+    except Exception as e_groq:
+        logger.warning(f"Збій запиту до Groq API: {e_groq}")
+    return None
 
 
 async def analyze_lecture_transcript(transcript_text: str, video_title: str = "") -> dict | None:
     """
-    Проаналізувати транскрипт лекції за допомогою Gemini Flash (повністю асинхронно).
-    Повертає структурований словник з конспектом та анонсами.
+    Проаналізувати транскрипт лекції.
+    Цикл перебору ключів Gemini до талого при помилках 500/503/429/timeout,
+    з автоматичним перемиканням на Groq (Llama-3.3-70B) при відмові всіх ключів Google.
     """
-    client, key = get_gemini_client()
-    if not client:
-        logger.warning("GEMINI_API_KEY не вказаний. Аналіз лекцій пропущено.")
-        return None
-
-    prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
+    keys = get_ordered_gemini_keys()
     candidate_models = [
         os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
         "gemini-flash-lite-latest",
@@ -99,34 +149,43 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
     seen = set()
     models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
-    for m in models:
-        try:
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=m,
-                    contents=prompt_content,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        temperature=0.2,
+    prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
+
+    # 1. Цикл по ключах Gemini (перебір до талого)
+    for key_idx, key in enumerate(keys, 1):
+        client = genai.Client(api_key=key)
+        for m in models:
+            try:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=m,
+                        contents=prompt_content,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            system_instruction=SYSTEM_INSTRUCTION,
+                            temperature=0.2,
+                        ),
                     ),
-                ),
-                timeout=50.0,
-            )
-            if response and response.text:
-                return json.loads(response.text)
-        except asyncio.TimeoutError:
-            logger.warning(f"Модель {m} перевищила таймаут 50с при аналізі транскрипту")
-            continue
-        except Exception as e_m:
-            err_str = str(e_m)
-            logger.warning(f"Модель {m} повернула помилку при аналізі транскрипту: {err_str}")
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                rotate_key(key)
-                client, key = get_gemini_client()
+                    timeout=50.0,
+                )
+                if response and response.text:
+                    mark_key_success(key)
+                    return json.loads(response.text)
+            except asyncio.TimeoutError:
+                logger.warning(f"[Ключ #{key_idx} ({key[:8]}...)] Модель {m} перевищила таймаут 50с")
                 continue
-            await asyncio.sleep(1)
-            continue
+            except Exception as e_m:
+                err_str = str(e_m)
+                logger.warning(f"[Ключ #{key_idx} ({key[:8]}...)] Модель {m} повернула помилку: {err_str}")
+                continue
+        # Якщо обидві моделі на цьому ключі дали збій — перемикаємось на наступний ключ
+        advance_to_next_key()
+
+    # 2. Якщо всі ключі Gemini відмовили — звертаємось до резервного Groq (Llama-3.3-70B)
+    logger.warning("Усі ключі Gemini вичерпано або вони недоступні. Викликаємо резервний Groq API...")
+    groq_result = await analyze_lecture_transcript_groq(transcript_text, video_title=video_title)
+    if groq_result:
+        return groq_result
 
     return None
 
@@ -134,11 +193,11 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
 async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict | None:
     """
     Прямий асинхронний аналіз відео з YouTube через мультимодальні можливості Gemini.
-    Працює без парсингу субтитрів та без потреби в проксі (Google сам отримує відео на своїх серверах).
+    Перебирає всі доступні ключі Gemini до талого при помилках 500, 503, 429.
     """
-    client, key = get_gemini_client()
-    if not client:
-        logger.warning("GEMINI_API_KEY не вказаний. Прямий аналіз відео пропущено.")
+    keys = get_ordered_gemini_keys()
+    if not keys:
+        logger.warning("Жодного ключа Gemini не вказано. Прямий аналіз відео пропущено.")
         return None
 
     prompt_parts = [
@@ -153,37 +212,33 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
     seen = set()
     models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
-    for m in models:
-        try:
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=m,
-                    contents=prompt_parts,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        temperature=0.2,
+    for key_idx, key in enumerate(keys, 1):
+        client = genai.Client(api_key=key)
+        for m in models:
+            try:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=m,
+                        contents=prompt_parts,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            system_instruction=SYSTEM_INSTRUCTION,
+                            temperature=0.2,
+                        ),
                     ),
-                ),
-                timeout=80.0,
-            )
-            if response and response.text:
-                return json.loads(response.text)
-        except asyncio.TimeoutError:
-            logger.warning(f"Модель {m} перевищила таймаут 80с при прямому аналізі відео")
-            continue
-        except Exception as e_m:
-            err_str = str(e_m)
-            logger.warning(f"Модель {m} повернула помилку при аналізі відео: {err_str}")
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                rotate_key(key)
-                client, key = get_gemini_client()
+                    timeout=80.0,
+                )
+                if response and response.text:
+                    mark_key_success(key)
+                    return json.loads(response.text)
+            except asyncio.TimeoutError:
+                logger.warning(f"[Відео / Ключ #{key_idx} ({key[:8]}...)] Модель {m} перевищила таймаут 80с")
                 continue
-            if "503" in err_str or "UNAVAILABLE" in err_str:
-                logger.warning("Gemini черга обробки відео перевантажена (503 UNAVAILABLE). Переходимо до контекстного аналізу розкладу.")
-                break
-            await asyncio.sleep(1)
-            continue
+            except Exception as e_m:
+                err_str = str(e_m)
+                logger.warning(f"[Відео / Ключ #{key_idx} ({key[:8]}...)] Модель {m} повернула помилку: {err_str}")
+                continue
+        advance_to_next_key()
 
     return None
 
@@ -338,24 +393,56 @@ ASSIGNMENT_SUMMARY_INSTRUCTION = """
 """
 
 
+async def summarize_assignment_requirements_groq(title: str, description: str, course_name: str = "") -> str | None:
+    """
+    Резервне створення вижимки завдання через Groq API (Llama-3.3-70b-versatile).
+    """
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not groq_key:
+        return None
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {groq_key}",
+        "Content-Type": "application/json"
+    }
+    prompt = f"Предмет: {course_name}\nНазва завдання: {title}\n\nОпис від викладача:\n{description.strip()}"
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": ASSIGNMENT_SUMMARY_INSTRUCTION},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.2,
+        "max_tokens": 150
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                summary = data["choices"][0]["message"]["content"].strip().replace('"', '')
+                summary = re.sub(r'^(Суть(:|\s)|Вимоги(:|\s)|Завдання(:|\s))\s*', '', summary, flags=re.IGNORECASE)
+                logger.info("✅ Створено вижимку завдання через резервний Groq API (Llama-3.3-70B)")
+                return summary.strip()
+            else:
+                logger.warning(f"Groq API помилка при вижимці завдання ({resp.status_code}): {resp.text[:150]}")
+    except Exception as e_groq:
+        logger.warning(f"Збій Groq API при вижимці завдання: {e_groq}")
+    return None
+
+
 async def summarize_assignment_requirements(title: str, description: str, course_name: str = "") -> str:
     """
     Аналізує довгий сирий опис викладача з Classroom та формує лаконічну вижимку вимог у 1-2 речення.
-    Працює через Gemini Flash, практично без витрат квот.
+    Працює через Gemini Flash з перебором пулу ключів до талого, а при відмові — перемикається на Groq.
     """
     if not description or len(description.strip()) < 35:
         return description.strip() if description else ""
 
-    client, key = get_gemini_client()
-    if not client:
-        # Швидкий локальний фолбек без API
-        clean = re.sub(r'https?://\S+', '', description.strip())
-        clean = re.sub(r'\s+', ' ', clean).strip()
-        first_part = clean.split('\n')[0].strip()
-        return first_part[:180] + ("..." if len(first_part) > 180 else "")
-
     prompt = f"Предмет: {course_name}\nНазва завдання: {title}\n\nОпис від викладача:\n{description.strip()}"
 
+    keys = get_ordered_gemini_keys()
     candidate_models = [
         os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
         "gemini-flash-lite-latest",
@@ -364,29 +451,39 @@ async def summarize_assignment_requirements(title: str, description: str, course
     seen = set()
     models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
-    for m in models:
-        try:
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=m,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=ASSIGNMENT_SUMMARY_INSTRUCTION,
-                        temperature=0.2,
-                        max_output_tokens=150,
+    # 1. Спроба через Gemini з перебором усіх ключів
+    for key_idx, key in enumerate(keys, 1):
+        client = genai.Client(api_key=key)
+        for m in models:
+            try:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=m,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=ASSIGNMENT_SUMMARY_INSTRUCTION,
+                            temperature=0.2,
+                            max_output_tokens=150,
+                        ),
                     ),
-                ),
-                timeout=12.0,
-            )
-            if response and response.text:
-                summary = response.text.strip().replace('"', '')
-                summary = re.sub(r'^(Суть(:|\s)|Вимоги(:|\s)|Завдання(:|\s))\s*', '', summary, flags=re.IGNORECASE)
-                return summary.strip()
-        except Exception as e:
-            logger.debug(f"Помилка створення AI-вижимки завдання ({m}): {e}")
-            continue
+                    timeout=12.0,
+                )
+                if response and response.text:
+                    mark_key_success(key)
+                    summary = response.text.strip().replace('"', '')
+                    summary = re.sub(r'^(Суть(:|\s)|Вимоги(:|\s)|Завдання(:|\s))\s*', '', summary, flags=re.IGNORECASE)
+                    return summary.strip()
+            except Exception as e:
+                logger.debug(f"[Завдання / Ключ #{key_idx}] Помилка моделі {m}: {e}")
+                continue
+        advance_to_next_key()
 
-    # Резервний локальний варіант при недоступності API
+    # 2. Якщо всі ключі Gemini відмовили — резервний Groq API (Llama-3.3-70B)
+    groq_summary = await summarize_assignment_requirements_groq(title, description, course_name)
+    if groq_summary:
+        return groq_summary
+
+    # 3. Резервний локальний варіант при недоступності API
     clean = re.sub(r'https?://\S+', '', description.strip())
     clean = re.sub(r'\s+', ' ', clean).strip()
     first_part = clean.split('\n')[0].strip()

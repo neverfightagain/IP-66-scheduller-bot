@@ -120,5 +120,33 @@ class TestLLMAgentSummarizer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, short_desc)
 
 
+class TestKeyRotationAndFallback(unittest.TestCase):
+    def test_key_parsing_and_rotation(self):
+        import os
+        from llm_agent import get_gemini_keys, get_ordered_gemini_keys, advance_to_next_key, mark_key_success
+
+        orig = os.environ.get("GEMINI_API_KEYS")
+        try:
+            os.environ["GEMINI_API_KEYS"] = "key_alpha, key_beta; key_gamma\nkey_delta"
+            keys = get_gemini_keys()
+            self.assertEqual(keys, ["key_alpha", "key_beta", "key_gamma", "key_delta"])
+
+            # Test ordered keys
+            mark_key_success("key_alpha")
+            self.assertEqual(get_ordered_gemini_keys()[0], "key_alpha")
+
+            # Advance
+            advance_to_next_key()
+            self.assertEqual(get_ordered_gemini_keys()[0], "key_beta")
+
+            advance_to_next_key()
+            self.assertEqual(get_ordered_gemini_keys()[0], "key_gamma")
+        finally:
+            if orig is not None:
+                os.environ["GEMINI_API_KEYS"] = orig
+            else:
+                os.environ.pop("GEMINI_API_KEYS", None)
+
+
 if __name__ == "__main__":
     unittest.main()
