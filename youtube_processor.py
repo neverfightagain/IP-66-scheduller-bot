@@ -249,8 +249,8 @@ async def process_video_and_notify(
     2. Якщо прямий аналіз недоступний, пробуємо отримати субтитри через youtube-transcript-api (з підтримкою проксі)
     3. Якщо AI-аналіз не вдався, все одно надсилаємо студентам сповіщення з посиланням на нову пару!
     """
-    from database import is_video_processed, save_video_summary, add_announcement_db, get_subscribed_chats_db
-    from llm_agent import analyze_lecture_video, analyze_lecture_transcript
+    from database import is_video_processed, mark_video_processing, save_video_summary, add_announcement_db, get_subscribed_chats_db
+    from llm_agent import analyze_lecture_video, analyze_lecture_transcript, analyze_lecture_with_schedule_context
     from formatters import format_lecture_summary, clean_markdown
 
     video_id = video["video_id"]
@@ -260,6 +260,9 @@ async def process_video_and_notify(
 
     if await is_video_processed(video_id):
         return False
+
+    # Фіксуємо відео як таке, що знаходиться в обробці (захист від паралельних черг)
+    await mark_video_processing(video_id, title=video_title, published_at=published_at_str)
 
     # Перевірка давності відео: якщо відео старіше за 36 годин, архівуємо без ШІ-аналізу та без спаму в чат
     if published_at_str:
@@ -282,22 +285,37 @@ async def process_video_and_notify(
 
     summary = None
 
-    # Рівень 1: Прямий мультимодальний аналіз Gemini через YouTube URL
-    try:
-        summary = await analyze_lecture_video(video_url, video_title=video_title)
+    # Рівень 1: Аналіз через субтитри (найшвидший і найекономніший за квотами)
+    transcript_info = await asyncio.to_thread(get_video_transcript, video_id)
+    if transcript_info:
+        transcript_text, _ = transcript_info
+        summary = await analyze_lecture_transcript(transcript_text, video_title=video_title)
         if summary:
-            logger.info(f"Отримано прямий мультимодальний аналіз Gemini для {video_id}")
-    except Exception as e_direct:
-        logger.warning(f"Прямий аналіз Gemini не вдався для {video_id}: {e_direct}")
+            logger.info(f"Отримано AI-конспект через субтитри для {video_id}")
 
-    # Рівень 2: Резервний аналіз через субтитри (у окремому потоці, щоб не блокувати event loop)
+    # Рівень 2: Прямий мультимодальний аналіз Gemini через YouTube URL
     if not summary:
-        transcript_info = await asyncio.to_thread(get_video_transcript, video_id)
-        if transcript_info:
-            transcript_text, _ = transcript_info
-            summary = await analyze_lecture_transcript(transcript_text, video_title=video_title)
+        try:
+            summary = await analyze_lecture_video(video_url, video_title=video_title)
+            if summary:
+                logger.info(f"Отримано прямий мультимодальний аналіз Gemini для {video_id}")
+        except Exception as e_direct:
+            logger.warning(f"Прямий аналіз Gemini не вдався для {video_id}: {e_direct}")
 
-    # Рівень 3: Якщо AI-аналіз не вдався, все одно сповіщаємо студентів про нову лекцію
+    # Рівень 3: Резервний семантичний аналіз за розкладом пар групи ІП-66 (при 503 перевантаженні відео)
+    if not summary:
+        try:
+            summary = await analyze_lecture_with_schedule_context(
+                video_title=video_title,
+                video_url=video_url,
+                published_at_str=published_at_str
+            )
+            if summary:
+                logger.info(f"Отримано контекстний аналіз пари з розкладу КПІ для {video_id}")
+        except Exception as e_sched:
+            logger.warning(f"Контекстний аналіз пари не вдався для {video_id}: {e_sched}")
+
+    # Рівень 4: Якщо всі рівні аналізу не вдалися, відправляємо чисте базове сповіщення
     if not summary:
         logger.warning(f"AI-конспект недоступний для {video_id}. Відправляємо базове сповіщення про запис пари.")
         topic = video_title

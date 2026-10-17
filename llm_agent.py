@@ -1,13 +1,13 @@
 import asyncio
+import datetime
 import json
 import logging
 import os
+import re
 from google import genai
 from google.genai import types
 
 logger = logging.getLogger(__name__)
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 SYSTEM_INSTRUCTION = """
 Ти — академічний аналітичний AI-асистент для студентської групи ІП-66 КПІ.
@@ -40,68 +40,95 @@ SYSTEM_INSTRUCTION = """
 }
 """
 
+_active_key_idx = 0
+_exhausted_keys: set[str] = set()
+
+
+def get_gemini_keys() -> list[str]:
+    """Отримати список доступних ключів Gemini (підтримка пулу ключів через кому або один ключ)."""
+    raw = os.getenv("GEMINI_API_KEYS", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+    if not raw:
+        return []
+    return [k.strip() for k in re.split(r"[,;]", raw) if k.strip()]
+
+
+def get_gemini_client() -> tuple[genai.Client | None, str]:
+    """Отримати клієнт Gemini для першого невичерпаного ключа з пулу."""
+    global _active_key_idx, _exhausted_keys
+    keys = get_gemini_keys()
+    if not keys:
+        return None, ""
+
+    for _ in range(len(keys)):
+        k = keys[_active_key_idx % len(keys)]
+        if k not in _exhausted_keys:
+            return genai.Client(api_key=k), k
+        _active_key_idx = (_active_key_idx + 1) % len(keys)
+
+    # Якщо всі вичерпані, повертаємо поточний (на випадок скидання добового ліміту Google)
+    k = keys[_active_key_idx % len(keys)]
+    return genai.Client(api_key=k), k
+
+
+def rotate_key(exhausted_key: str):
+    """Позначити ключ як вичерпаний та перемкнутися на наступний ключ у пулі."""
+    global _active_key_idx, _exhausted_keys
+    _exhausted_keys.add(exhausted_key)
+    keys = get_gemini_keys()
+    if len(keys) > 1:
+        _active_key_idx = (_active_key_idx + 1) % len(keys)
+        logger.warning(f"Ключ Gemini вичерпав ліміт. Перемкнуто на ключ #{_active_key_idx + 1} з {len(keys)}")
+
 
 async def analyze_lecture_transcript(transcript_text: str, video_title: str = "") -> dict | None:
     """
     Проаналізувати транскрипт лекції за допомогою Gemini Flash (повністю асинхронно).
     Повертає структурований словник з конспектом та анонсами.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        logger.warning("GEMINI_API_KEY не вказаний у .env. Аналіз лекцій пропущено.")
+    client, key = get_gemini_client()
+    if not client:
+        logger.warning("GEMINI_API_KEY не вказаний. Аналіз лекцій пропущено.")
         return None
 
-    try:
-        client = genai.Client(api_key=api_key)
-        prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
+    prompt_content = f"Назва відео: {video_title}\n\nТранскрипт пари з таймкодами:\n{transcript_text}"
+    candidate_models = [
+        os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+    ]
+    seen = set()
+    models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
-        candidate_models = [
-            os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
-            "gemini-flash-lite-latest",
-            "gemini-3.5-flash-lite",
-            "gemini-flash-latest",
-        ]
-        # Видаляємо дублікати зберігаючи порядок
-        seen = set()
-        models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
-
-        response = None
-        for m in models:
-            try:
-                response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
-                        model=m,
-                        contents=prompt_content,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            system_instruction=SYSTEM_INSTRUCTION,
-                            temperature=0.2,
-                        ),
+    for m in models:
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=m,
+                    contents=prompt_content,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.2,
                     ),
-                    timeout=50.0,
-                )
-                if response and response.text:
-                    break
-            except asyncio.TimeoutError:
-                logger.warning(f"Модель {m} перевищила таймаут 50с при аналізі транскрипту")
+                ),
+                timeout=50.0,
+            )
+            if response and response.text:
+                return json.loads(response.text)
+        except asyncio.TimeoutError:
+            logger.warning(f"Модель {m} перевищила таймаут 50с при аналізі транскрипту")
+            continue
+        except Exception as e_m:
+            err_str = str(e_m)
+            logger.warning(f"Модель {m} повернула помилку при аналізі транскрипту: {err_str}")
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                rotate_key(key)
+                client, key = get_gemini_client()
                 continue
-            except Exception as e_m:
-                err_str = str(e_m)
-                logger.warning(f"Модель {m} повернула помилку при аналізі транскрипту: {err_str}")
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    logger.warning("Ліміт добової квоти Gemini вичерпано. Припиняємо подальші запити.")
-                    break
-                await asyncio.sleep(1)
-                continue
+            await asyncio.sleep(1)
+            continue
 
-        if not response or not response.text:
-            return None
-
-        result_json = json.loads(response.text)
-        return result_json
-    except Exception as e:
-        logger.error(f"Помилка при аналізі лекції через Gemini API: {e}")
-        return None
+    return None
 
 
 async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict | None:
@@ -109,66 +136,168 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
     Прямий асинхронний аналіз відео з YouTube через мультимодальні можливості Gemini.
     Працює без парсингу субтитрів та без потреби в проксі (Google сам отримує відео на своїх серверах).
     """
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        logger.warning("GEMINI_API_KEY не вказаний у .env. Прямий аналіз відео пропущено.")
+    client, key = get_gemini_client()
+    if not client:
+        logger.warning("GEMINI_API_KEY не вказаний. Прямий аналіз відео пропущено.")
         return None
 
-    try:
-        client = genai.Client(api_key=api_key)
-        prompt_parts = [
-            types.Part.from_uri(file_uri=video_url, mime_type="video/mp4"),
-            f"Назва відео: {video_title}\n\nПроаналізуй це навчальне заняття відповідно до системної інструкції та поверни структурований JSON."
-        ]
+    prompt_parts = [
+        types.Part.from_uri(file_uri=video_url, mime_type="video/mp4"),
+        f"Назва відео: {video_title}\n\nПроаналізуй це навчальне заняття відповідно до системної інструкції та поверни структурований JSON."
+    ]
 
-        candidate_models = [
-            os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
-            "gemini-flash-lite-latest",
-            "gemini-3.5-flash-lite",
-            "gemini-flash-latest",
-        ]
-        seen = set()
-        models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
+    candidate_models = [
+        os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
+        "gemini-flash-latest",
+    ]
+    seen = set()
+    models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
-        response = None
-        for m in models:
-            try:
-                response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
-                        model=m,
-                        contents=prompt_parts,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            system_instruction=SYSTEM_INSTRUCTION,
-                            temperature=0.2,
-                        ),
+    for m in models:
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=m,
+                    contents=prompt_parts,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.2,
                     ),
-                    timeout=85.0,
-                )
-                if response and response.text:
-                    break
-            except asyncio.TimeoutError:
-                logger.warning(f"Модель {m} перевищила таймаут 85с при прямому аналізі відео")
+                ),
+                timeout=80.0,
+            )
+            if response and response.text:
+                return json.loads(response.text)
+        except asyncio.TimeoutError:
+            logger.warning(f"Модель {m} перевищила таймаут 80с при прямому аналізі відео")
+            continue
+        except Exception as e_m:
+            err_str = str(e_m)
+            logger.warning(f"Модель {m} повернула помилку при аналізі відео: {err_str}")
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                rotate_key(key)
+                client, key = get_gemini_client()
                 continue
-            except Exception as e_m:
-                err_str = str(e_m)
-                logger.warning(f"Модель {m} повернула помилку при аналізі відео: {err_str}")
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    logger.warning("Ліміт добової квоти Gemini вичерпано. Припиняємо подальші запити.")
-                    break
-                if "503" in err_str or "UNAVAILABLE" in err_str:
-                    logger.warning("Gemini відеосервіс перевантажений (503 UNAVAILABLE). Припиняємо повторні спроби для цього відео.")
-                    break
-                await asyncio.sleep(1)
-                continue
+            if "503" in err_str or "UNAVAILABLE" in err_str:
+                logger.warning("Gemini черга обробки відео перевантажена (503 UNAVAILABLE). Переходимо до контекстного аналізу розкладу.")
+                break
+            await asyncio.sleep(1)
+            continue
 
-        if not response or not response.text:
-            return None
+    return None
 
-        result_json = json.loads(response.text)
-        return result_json
-    except Exception as e:
-        logger.error(f"Помилка при прямому аналізі відео {video_url} через Gemini: {e}")
-        return None
+
+def parse_date_from_title_or_published(title: str, published_at_str: str | None = None) -> datetime.date | None:
+    """Визначити дату пари за назвою відео (наприклад '10.16.' чи '16.10') або датою публікації."""
+    m = re.search(r'(\d{1,2})\.(\d{1,2})', title)
+    if m:
+        p1, p2 = int(m.group(1)), int(m.group(2))
+        year = datetime.date.today().year
+        if p1 <= 12 and p2 > 12:
+            return datetime.date(year, p1, p2)
+        elif p1 > 12 and p2 <= 12:
+            return datetime.date(year, p2, p1)
+        else:
+            if p1 == datetime.date.today().month:
+                return datetime.date(year, p1, p2)
+            return datetime.date(year, p2, p1)
+
+    if published_at_str:
+        try:
+            return datetime.datetime.fromisoformat(published_at_str.replace("Z", "+00:00")).date()
+        except Exception:
+            pass
+    return None
+
+
+async def analyze_lecture_with_schedule_context(video_title: str, video_url: str, published_at_str: str | None = None) -> dict | None:
+    """
+    Резервний семантичний аналіз: використовує розклад пар групи ІП-66 за дату заняття.
+    Створює чітку картку пари навіть якщо 90-хвилинне відео тимчасово не аналізується Gemini (503).
+    """
+    from config import KPI_GROUP_ID
+    from kpi_api import get_lessons_for_date
+
+    parsed_date = parse_date_from_title_or_published(video_title, published_at_str)
+    target_date = parsed_date or datetime.date.today()
+
+    matched_lesson = None
+    all_lessons = []
+    try:
+        _, _, lessons = await get_lessons_for_date(KPI_GROUP_ID, target_date)
+        all_lessons = lessons
+        clean_title = re.sub(r'[^\w\s]', '', video_title.lower())
+        for l in lessons:
+            lname = l.get("name", "")
+            clean_lname = re.sub(r'[^\w\s]', '', lname.lower())
+            words = [w for w in clean_lname.split() if len(w) > 3]
+            if any(w in clean_title for w in words):
+                matched_lesson = l
+                break
+    except Exception as e_sched:
+        logger.debug(f"Помилка зіставлення з розкладом КПІ: {e_sched}")
+
+    subject_detected = (
+        matched_lesson.get("name") if matched_lesson
+        else re.split(r'[(.]', video_title)[0].strip() or "Університетська пара"
+    )
+    lecturer = matched_lesson.get("lecturer") if matched_lesson else "Викладач кафедри"
+    ltype = matched_lesson.get("type") if matched_lesson else "Заняття"
+
+    # Спроба легкого текстового аналізу через Gemini Flash (текст майже не витрачає квоту і ніколи не дає 503)
+    client, key = get_gemini_client()
+    if client:
+        prompt_text = f"""
+        Склади структуровану картку пари для студентів групи ІП-66 КПІ:
+        Назва відеозапису: "{video_title}"
+        Посилання: {video_url}
+        Дисципліна за розкладом: {subject_detected}
+        Викладач: {lecturer}
+        Тип заняття: {ltype}
+        Дата: {target_date.strftime('%d.%m.%Y')}
+
+        Завдання:
+        1. Вкажи точну назву дисципліни в "subject_detected".
+        2. Сформуй тему заняття ("topic"), наприклад: "{ltype} ({target_date.strftime('%d.%m')})".
+        3. Сформуй 2-3 практичні тези в "summary_points" про публікацію відео та виконання завдань.
+        Поверни валідний JSON за системною інструкцією.
+        """
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
+                    contents=prompt_text,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.2,
+                    ),
+                ),
+                timeout=25.0,
+            )
+            if response and response.text:
+                return json.loads(response.text)
+        except Exception as e_text:
+            logger.debug(f"Текстова генерація картки повернула помилку: {e_text}")
+
+    # Повний офлайн-шаблон на випадок відсутності інтернету або повного блекауту API
+    summary_pts = [
+        f"Відеозапис ({ltype}) опубліковано на каналі групи.",
+        f"Викладач: {lecturer}."
+    ]
+    if matched_lesson and matched_lesson.get("location"):
+        loc = matched_lesson["location"]
+        loc_str = loc.get("title") if isinstance(loc, dict) else str(loc)
+        if loc_str:
+            summary_pts.append(f"Аудиторія / платформа: {loc_str}")
+
+    return {
+        "subject_detected": subject_detected,
+        "topic": f"{ltype} ({target_date.strftime('%d.%m')})",
+        "summary_points": summary_pts,
+        "teacher_announcements": [],
+        "deadlines_mentioned": []
+    }
 
 

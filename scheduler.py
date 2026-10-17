@@ -243,30 +243,40 @@ async def send_evening_digest(bot: Bot):
         await safe_send_message(bot, cid, text, message_thread_id=tid)
 
 
+_youtube_check_lock = asyncio.Lock()
+
+
 async def check_new_youtube_videos(bot: Bot, fallback_chat_id: int | None = None, fallback_thread_id: int | None = None) -> int:
-    """Фонова перевірка нових відео на YouTube-каналі групи (кожні 10 хв)."""
+    """Фонова перевірка нових відео на YouTube-каналі групи (кожні 10 хв) з захистом від паралельних черг."""
     from config import YOUTUBE_CHANNEL_ID
     if not YOUTUBE_CHANNEL_ID:
         return 0
     channel_id = YOUTUBE_CHANNEL_ID
 
-    from youtube_processor import fetch_latest_channel_videos, process_video_and_notify
-    new_count = 0
-    try:
-        videos = await fetch_latest_channel_videos(channel_id, max_results=5)
-        for vid in videos:
-            processed = await process_video_and_notify(
-                bot,
-                vid,
-                fallback_chat_id=fallback_chat_id,
-                fallback_thread_id=fallback_thread_id
-            )
-            if processed:
-                new_count += 1
-                await asyncio.sleep(5)
-    except Exception as e:
-        logger.error(f"Помилка при перевірці YouTube-відео: {e}")
-    return new_count
+    if _youtube_check_lock.locked():
+        logger.info("Попередній процес обробки YouTube-відео ще триває. Пропускаємо виклик, щоб не створювати конкурентних запитів.")
+        return 0
+
+    async with _youtube_check_lock:
+        from youtube_processor import fetch_latest_channel_videos, process_video_and_notify
+        new_count = 0
+        try:
+            videos = await fetch_latest_channel_videos(channel_id, max_results=5)
+            # Обробляємо нові пари строго послідовно (FIFO Queue)
+            for vid in reversed(videos):  # від старіших до новіших
+                processed = await process_video_and_notify(
+                    bot,
+                    vid,
+                    fallback_chat_id=fallback_chat_id,
+                    fallback_thread_id=fallback_thread_id
+                )
+                if processed:
+                    new_count += 1
+                    # Пауза між обробкою кількох пар, щоб охололи ліміти Google TPM
+                    await asyncio.sleep(6)
+        except Exception as e:
+            logger.error(f"Помилка при перевірці YouTube-відео: {e}")
+        return new_count
 
 
 async def check_new_classroom_tasks(bot: Bot):

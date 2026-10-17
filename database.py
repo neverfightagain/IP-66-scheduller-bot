@@ -248,11 +248,21 @@ remove_subscribed_chat_db = remove_subscription_db
 # --- API для работы с видео и конспектами ---
 
 async def is_video_processed(video_id: str) -> bool:
-    """Проверить, было ли видео уже сохранено в базе (гарантирует отсутствие повторного спама)."""
+    """Проверить, было ли видео уже сохранено в базе или сейчас обрабатывается."""
     async with get_db() as db:
         async with db.execute("SELECT 1 FROM videos WHERE video_id = ?", (video_id,)) as cursor:
             row = await cursor.fetchone()
             return row is not None
+
+
+async def mark_video_processing(video_id: str, title: str, published_at: str | None = None):
+    """Позначити відео як таке, що знаходиться в обробці (запобігає паралельним спробам)."""
+    async with get_db() as db:
+        await db.execute("""
+            INSERT OR IGNORE INTO videos (video_id, course_id, title, published_at, summary_json)
+            VALUES (?, ?, ?, ?, ?)
+        """, (video_id, "В обробці", title, published_at, json.dumps({"status": "processing"})))
+        await db.commit()
 
 
 async def save_video_summary(video_id: str, title: str, course_id: str | None, published_at: str | None, summary: dict):
