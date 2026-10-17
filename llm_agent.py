@@ -189,26 +189,48 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
 
 
 def parse_date_from_title_or_published(title: str, published_at_str: str | None = None) -> datetime.date | None:
-    """Визначити дату пари за назвою відео (наприклад '10.16.' чи '16.10') або датою публікації."""
-    m = re.search(r'(\d{1,2})\.(\d{1,2})', title)
-    if m:
-        p1, p2 = int(m.group(1)), int(m.group(2))
-        year = datetime.date.today().year
-        if p1 <= 12 and p2 > 12:
-            return datetime.date(year, p1, p2)
-        elif p1 > 12 and p2 <= 12:
-            return datetime.date(year, p2, p1)
-        else:
-            if p1 == datetime.date.today().month:
-                return datetime.date(year, p1, p2)
-            return datetime.date(year, p2, p1)
-
+    """
+    Визначити точну дату пари за назвою відео (наприклад '10.16. Назва' чи '16.10. Назва')
+    або за метаданими публікації YouTube. Захищено від помилкового спрацювання на номери робіт ('Лаб 1.2').
+    """
+    pub_date = None
     if published_at_str:
         try:
-            return datetime.datetime.fromisoformat(published_at_str.replace("Z", "+00:00")).date()
+            pub_date = datetime.datetime.fromisoformat(published_at_str.replace("Z", "+00:00")).date()
         except Exception:
             pass
-    return None
+
+    year = pub_date.year if pub_date else datetime.date.today().year
+
+    # Патерн дати: на початку рядка ('10.16.' чи '[10.16]') або з крапкою/пробілом (' 10.16. ')
+    m = re.search(r'^\s*\[?(\d{1,2})\.(\d{1,2})\]?\.?', title)
+    if not m:
+        m = re.search(r'(?:^|\s)\[?(\d{1,2})\.(\d{1,2})\]?\.(?:\s|$)', title)
+
+    if m:
+        p1, p2 = int(m.group(1)), int(m.group(2))
+        if 1 <= p1 <= 31 and 1 <= p2 <= 31:
+            try:
+                if p1 > 12 and p2 <= 12:
+                    return datetime.date(year, p2, p1)  # DD.MM
+                elif p1 <= 12 and p2 > 12:
+                    return datetime.date(year, p1, p2)  # MM.DD
+                elif p1 <= 12 and p2 <= 12:
+                    if pub_date:
+                        if pub_date.month == p1 and pub_date.day == p2:
+                            return datetime.date(year, p1, p2)
+                        elif pub_date.month == p2 and pub_date.day == p1:
+                            return datetime.date(year, p2, p1)
+                    curr_m = datetime.date.today().month
+                    if p1 == curr_m:
+                        return datetime.date(year, p1, p2)
+                    elif p2 == curr_m:
+                        return datetime.date(year, p2, p1)
+                    return datetime.date(year, p1, p2)
+            except ValueError:
+                pass
+
+    return pub_date
 
 
 async def analyze_lecture_with_schedule_context(video_title: str, video_url: str, published_at_str: str | None = None) -> dict | None:

@@ -96,6 +96,16 @@ async def refresh_today_cache():
         logger.error(f"Помилка при оновленні розкладу: {e}")
 
 
+def update_today_cache(week: int, day_name: str, lessons: list[dict], target_date: date):
+    """Синхронізувати кеш розкладу на сьогодні з інших модулів (наприклад, після команди /today)."""
+    global _today_cache_date, _today_cached_lessons, _today_cached_week, _today_cached_day_name
+    _today_cache_date = target_date
+    _today_cached_week = week
+    _today_cached_day_name = day_name
+    _today_cached_lessons = lessons
+    logger.debug(f"Синхронізовано кеш розкладу на {target_date}: {len(lessons)} пар")
+
+
 def calculate_lessons_end_datetime(lessons: list[dict], target_date: date) -> datetime:
     """
     Розрахувати час закінчення останньої пари на день.
@@ -214,8 +224,9 @@ async def check_upcoming_lessons(bot: Bot):
         diff_minutes = diff_seconds / 60.0
 
         for target_minutes in ALERT_INTERVALS:
-            # Окно срабатывания: от (target - 1.0) до (target + 0.5) минут
-            if (target_minutes - 1.0) <= diff_minutes <= (target_minutes + 0.5):
+            # Розширене вікно спрацьовування: від (target - 2.5) до (target + 0.8) хв
+            # Захищає від пропуску нагадування при секундних лагах черги на сервері
+            if (target_minutes - 2.5) <= diff_minutes <= (target_minutes + 0.8):
                 alert_key = f"{today.isoformat()}_{lesson['time']}_{lesson['name']}_{target_minutes}"
                 if alert_key in sent_alerts:
                     continue
@@ -226,7 +237,16 @@ async def check_upcoming_lessons(bot: Bot):
                     tid = target.get("thread_id")
                     sent_msg = await safe_send_message(bot, cid, text, reply_markup=kb, message_thread_id=tid)
                     if sent_msg:
-                        # Автоматически удаляем сообщение через 20 минут, чтобы не засорять чат
+                        # 1. Записуємо в БД для гарантованого видалення навіть після перезапуску сервера
+                        from database import add_scheduled_deletion_db
+                        del_time = (now + timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S")
+                        await add_scheduled_deletion_db(
+                            chat_id=cid,
+                            message_id=sent_msg.message_id,
+                            delete_at=del_time,
+                            tag=f"alert_{target_minutes}m"
+                        )
+                        # 2. Також залишаємо in-memory таймер для миттєвого очищення якщо рестарту не було
                         asyncio.create_task(delete_message_after_delay(bot, cid, sent_msg.message_id, delay_seconds=20 * 60))
 
                 sent_alerts.add(alert_key)

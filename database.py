@@ -286,15 +286,20 @@ async def add_announcement_db(course_id: str | None, source: str, text: str, det
         return cursor.lastrowid
 
 
-async def get_today_announcements_db() -> list[dict]:
-    """Получить объявления и анонсы за сегодня."""
+async def get_today_announcements_db(today_date: str | None = None) -> list[dict]:
+    """Получить объявления и анонсы за сегодня (с коррекцией часового пояса Киева UTC+3)."""
+    from datetime import datetime
+    from config import KYIV_TZ
+    if not today_date:
+        today_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+
     async with get_db() as db:
         async with db.execute("""
             SELECT course_id, text, detected_date, source
             FROM announcements
-            WHERE date(created_at) = date('now')
+            WHERE date(created_at, '+3 hours') = ? OR date(created_at) = ?
             ORDER BY id ASC
-        """) as cursor:
+        """, (today_date, today_date)) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 

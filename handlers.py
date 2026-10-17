@@ -208,8 +208,9 @@ async def cmd_today(message: Message):
         week, day_name, lessons = await get_lessons_for_date(KPI_GROUP_ID, today)
         is_group = message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
 
-        from scheduler import calculate_lessons_end_datetime
+        from scheduler import calculate_lessons_end_datetime, update_today_cache
         from database import add_scheduled_deletion_db
+        update_today_cache(week, day_name, lessons, today)
 
         now_dt = datetime.now(KYIV_TZ)
         end_dt = calculate_lessons_end_datetime(lessons, today)

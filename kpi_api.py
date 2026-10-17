@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import httpx
 from config import KYIV_TZ
 
@@ -51,14 +51,10 @@ async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple
     current_week = time_info.get("currentWeek", 1)
 
     today = datetime.now(KYIV_TZ).date()
-    days_diff = (target_date - today).days
-    today_iso_week = today.isocalendar()[1]
-    target_iso_week = target_date.isocalendar()[1]
-    week_diff = target_iso_week - today_iso_week
-    
-    target_week = current_week
-    if week_diff % 2 != 0:
-        target_week = 2 if current_week == 1 else 1
+    today_monday = today - timedelta(days=today.weekday())
+    target_monday = target_date - timedelta(days=target_date.weekday())
+    week_diff = (target_monday - today_monday).days // 7
+    target_week = 2 if (current_week + week_diff) % 2 == 0 else 1
 
     schedule_data = await get_raw_schedule(group_id)
     week_key = "scheduleFirstWeek" if target_week == 1 else "scheduleSecondWeek"
@@ -78,6 +74,8 @@ async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple
     valid_lessons = []
 
     for p in raw_pairs:
+        if not isinstance(p, dict):
+            continue
         dates = p.get("dates")
         if dates and len(dates) > 0:
             if today_str not in dates:
@@ -85,11 +83,11 @@ async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple
 
         lecturer_obj = p.get("lecturer") or {}
         valid_lessons.append({
-            "name": p.get("name", ""),
-            "type": p.get("type", ""),
-            "time": p.get("time", "")[:5],  # "HH:MM"
+            "name": p.get("name") or "Пара",
+            "type": p.get("type") or "",
+            "time": (p.get("time") or "")[:5],  # "HH:MM"
             "lecturer": lecturer_obj.get("name") or "Не вказано",
-            "tag": p.get("tag", ""),
+            "tag": p.get("tag") or "",
             "location": p.get("location") or "Онлайн",
         })
 
