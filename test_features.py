@@ -121,27 +121,48 @@ class TestLLMAgentSummarizer(unittest.IsolatedAsyncioTestCase):
 
 
 class TestKeyRotationAndFallback(unittest.TestCase):
-    def test_key_parsing_and_rotation(self):
+    def test_key_parsing_and_cooldown_recovery(self):
         import os
-        from llm_agent import get_gemini_keys, get_ordered_gemini_keys, advance_to_next_key, mark_key_success
+        import time
+        from llm_agent import (
+            get_gemini_keys,
+            get_ordered_gemini_keys,
+            mark_key_exhausted,
+            mark_key_success,
+            parse_retry_delay,
+            _key_cooldowns
+        )
 
         orig = os.environ.get("GEMINI_API_KEYS")
         try:
-            os.environ["GEMINI_API_KEYS"] = "key_alpha, key_beta; key_gamma\nkey_delta"
+            os.environ["GEMINI_API_KEYS"] = "key1, key2, key3"
             keys = get_gemini_keys()
-            self.assertEqual(keys, ["key_alpha", "key_beta", "key_gamma", "key_delta"])
+            self.assertEqual(keys, ["key1", "key2", "key3"])
 
-            # Test ordered keys
-            mark_key_success("key_alpha")
-            self.assertEqual(get_ordered_gemini_keys()[0], "key_alpha")
+            # 1. Спочатку всі ключі здорові -> порядок [key1, key2, key3]
+            self.assertEqual(get_ordered_gemini_keys(), ["key1", "key2", "key3"])
 
-            # Advance
-            advance_to_next_key()
-            self.assertEqual(get_ordered_gemini_keys()[0], "key_beta")
+            # 2. key1 вичерпано з кулдауном 1.0с -> черга перемикається на [key2, key3, key1]
+            mark_key_exhausted("key1", cooldown_seconds=1.0)
+            self.assertEqual(get_ordered_gemini_keys(), ["key2", "key3", "key1"])
 
-            advance_to_next_key()
-            self.assertEqual(get_ordered_gemini_keys()[0], "key_gamma")
+            # 3. key2 теж вичерпано з кулдауном 2.0с -> черга [key3, key1, key2]
+            mark_key_exhausted("key2", cooldown_seconds=2.0)
+            self.assertEqual(get_ordered_gemini_keys(), ["key3", "key1", "key2"])
+
+            # 4. Чекаємо 1.1с: кулдаун key1 минув -> key1 автоматично відновлюється на перше місце!
+            time.sleep(1.1)
+            self.assertEqual(get_ordered_gemini_keys(), ["key1", "key3", "key2"])
+
+            # 5. Успішний запит скидає будь-який кулдаун
+            mark_key_success("key2")
+            self.assertEqual(get_ordered_gemini_keys(), ["key1", "key2", "key3"])
+
+            # 6. Тест парсингу retry delay з 429 помилки Google
+            err = "Quota exceeded... Please retry in 42.5s."
+            self.assertAlmostEqual(parse_retry_delay(err), 47.5, delta=1.0)
         finally:
+            _key_cooldowns.clear()
             if orig is not None:
                 os.environ["GEMINI_API_KEYS"] = orig
             else:

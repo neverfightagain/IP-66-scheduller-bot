@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 import httpx
 from google import genai
 from google.genai import types
@@ -41,7 +42,43 @@ SYSTEM_INSTRUCTION = """
 }
 """
 
-_active_key_idx = 0
+_key_cooldowns: dict[str, float] = {}  # api_key -> timestamp коли спливає кулдаун
+DEFAULT_COOLDOWN_SECONDS = 90.0
+
+
+def parse_retry_delay(err_str: str) -> float:
+    """Витягує рекомендований час очікування (retryDelay) з повідомлення про помилку 429 від Google."""
+    m = re.search(r'retry in\s+([\d\.]+)\s*s', err_str, flags=re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1)) + 5.0
+        except ValueError:
+            pass
+    m2 = re.search(r"['\"]retryDelay['\"]\s*:\s*['\"](\d+)s?['\"]", err_str)
+    if m2:
+        try:
+            return float(m2.group(1)) + 5.0
+        except ValueError:
+            pass
+    return DEFAULT_COOLDOWN_SECONDS
+
+
+def mark_key_exhausted(api_key: str, cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS):
+    """Позначити ключ як такий, що тимчасово вичерпав ліміт, з таймером автоматичного відновлення."""
+    global _key_cooldowns
+    now = time.time()
+    _key_cooldowns[api_key] = now + cooldown_seconds
+    masked = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else api_key
+    logger.warning(
+        f"⏳ Ключ Gemini [{masked}] отримав кулдаун на {int(cooldown_seconds)}с. "
+        f"Після завершення таймера бот автоматично повернеться до нього."
+    )
+
+
+def mark_key_success(api_key: str):
+    """Позначити ключ як повністю робочий (скинути кулдаун)."""
+    global _key_cooldowns
+    _key_cooldowns.pop(api_key, None)
 
 
 def get_gemini_keys() -> list[str]:
@@ -54,46 +91,49 @@ def get_gemini_keys() -> list[str]:
 
 def get_ordered_gemini_keys() -> list[str]:
     """
-    Повертає список ключів Gemini у порядку ротації, починаючи з поточного активного індексу.
+    Повертає список ключів Gemini у порядку пріоритету:
+    1. Спочатку ключі в природному порядку (Ключ 1, Ключ 2, Ключ 3), кулдаун яких уже минув.
+    2. Потім ключі, що ще на кулдауні (відсортовані за часом найшвидшого завершення очікування).
+    Таким чином, щойно час ліміту спливає (60-90с або після обробки пари), бот завжди автоматично повертається на перший ключ!
     """
-    global _active_key_idx
     keys = get_gemini_keys()
     if not keys:
         return []
-    n = len(keys)
-    start = _active_key_idx % n
-    return [keys[(start + i) % n] for i in range(n)]
 
+    now = time.time()
+    healthy_keys = []
+    cooling_keys = []
 
-def mark_key_success(api_key: str):
-    """Позначити ключ як робочий (встановити його активним для наступних запитів)."""
-    global _active_key_idx
-    keys = get_gemini_keys()
-    if api_key in keys:
-        _active_key_idx = keys.index(api_key)
+    for k in keys:
+        exp_time = _key_cooldowns.get(k, 0.0)
+        if now >= exp_time:
+            healthy_keys.append(k)
+        else:
+            cooling_keys.append((exp_time, k))
+
+    # Сортуємо ті, що охолоджуються, за часом закінчення блокування
+    cooling_keys.sort(key=lambda x: x[0])
+    return healthy_keys + [k for _, k in cooling_keys]
 
 
 def advance_to_next_key():
-    """Перемкнути активний покажчик на наступний ключ у пулі."""
-    global _active_key_idx
-    keys = get_gemini_keys()
-    if keys:
-        _active_key_idx = (_active_key_idx + 1) % len(keys)
-        logger.warning(f"🔄 Перемкнуто активний ключ Gemini на індекс #{_active_key_idx + 1} з {len(keys)}")
+    """Сумісність: викликається якщо всі моделі на ключі вичерпали спроби."""
+    pass
 
 
 def get_gemini_client() -> tuple[genai.Client | None, str]:
-    """Сумісність: отримати клієнт для поточного активного ключа."""
-    keys = get_gemini_keys()
+    """Сумісність: отримати клієнт для першого доступного ключа."""
+    keys = get_ordered_gemini_keys()
     if not keys:
         return None, ""
-    k = keys[_active_key_idx % len(keys)]
+    k = keys[0]
     return genai.Client(api_key=k), k
 
 
 def rotate_key(exhausted_key: str = ""):
     """Сумісність: перемкнутися на наступний ключ."""
-    advance_to_next_key()
+    if exhausted_key:
+        mark_key_exhausted(exhausted_key)
 
 
 async def analyze_lecture_transcript_groq(transcript_text: str, video_title: str = "") -> dict | None:
@@ -189,9 +229,14 @@ async def analyze_lecture_transcript(transcript_text: str, video_title: str = ""
             except Exception as e_m:
                 err_str = str(e_m)
                 logger.warning(f"[Ключ #{key_idx} ({key[:8]}...)] Модель {m} повернула помилку: {err_str}")
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    delay = parse_retry_delay(err_str)
+                    mark_key_exhausted(key, delay)
+                    break
+                elif "500" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+                    mark_key_exhausted(key, 60.0)
+                    break
                 continue
-        # Якщо обидві моделі на цьому ключі дали збій — перемикаємось на наступний ключ
-        advance_to_next_key()
 
     # 2. Якщо всі ключі Gemini відмовили — звертаємось до резервного Groq (Llama-3.3-70B)
     logger.warning("Усі ключі Gemini вичерпано або вони недоступні. Викликаємо резервний Groq API...")
@@ -249,8 +294,14 @@ async def analyze_lecture_video(video_url: str, video_title: str = "") -> dict |
             except Exception as e_m:
                 err_str = str(e_m)
                 logger.warning(f"[Відео / Ключ #{key_idx} ({key[:8]}...)] Модель {m} повернула помилку: {err_str}")
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    delay = parse_retry_delay(err_str)
+                    mark_key_exhausted(key, delay)
+                    break
+                elif "500" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+                    mark_key_exhausted(key, 60.0)
+                    break
                 continue
-        advance_to_next_key()
 
     return None
 
@@ -498,9 +549,16 @@ async def summarize_assignment_requirements(title: str, description: str, course
                     summary = re.sub(r'^(Суть(:|\s)|Вимоги(:|\s)|Завдання(:|\s))\s*', '', summary, flags=re.IGNORECASE)
                     return summary.strip()
             except Exception as e:
-                logger.debug(f"[Завдання / Ключ #{key_idx}] Помилка моделі {m}: {e}")
+                err_str = str(e)
+                logger.debug(f"[Завдання / Ключ #{key_idx}] Помилка моделі {m}: {err_str}")
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    delay = parse_retry_delay(err_str)
+                    mark_key_exhausted(key, delay)
+                    break
+                elif "500" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+                    mark_key_exhausted(key, 60.0)
+                    break
                 continue
-        advance_to_next_key()
 
     # 2. Якщо всі ключі Gemini відмовили — резервний Groq API (Llama-3.3-70B)
     groq_summary = await summarize_assignment_requirements_groq(title, description, course_name)
