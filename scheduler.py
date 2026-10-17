@@ -282,13 +282,17 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Настроить и запустить планировщик задач."""
     scheduler = AsyncIOScheduler(timezone=KYIV_TZ)
 
-    # 1. Парсим время утреннего дайджеста из конфига (HH:MM)
-    digest_hour, digest_minute = [int(x) for x in MORNING_DIGEST_TIME.split(":")]
+    # 1. Час ранкового дайджесту для навчальних будніх днів (09:00)
+    # Навчальні дні групи ІП-66: понеділок, вівторок, четвер, п'ятниця, субота
+    raw_time = (MORNING_DIGEST_TIME or "09:00").strip()
+    if raw_time == "08:00":
+        raw_time = "09:00"
+    digest_hour, digest_minute = [int(x) for x in raw_time.split(":")]
 
-    # Утренний дайджест с понедельника по субботу
+    # Ранковий дайджест пар у будні навчальні дні (пн, вт, чт, пт, сб) о 09:00
     scheduler.add_job(
         send_morning_digest,
-        trigger=CronTrigger(day_of_week="mon-sat", hour=digest_hour, minute=digest_minute, timezone=KYIV_TZ),
+        trigger=CronTrigger(day_of_week="mon,tue,thu,fri,sat", hour=digest_hour, minute=digest_minute, timezone=KYIV_TZ),
         args=[bot],
         name="morning_digest",
     )
@@ -316,7 +320,15 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         name="evening_digest",
     )
 
-    # 5. Автоматична перевірка нових лекцій на YouTube кожні 10 хвилин
+    # 5. Утренний дайджест дедлайнов выходного дня в 10:00 (среда и воскресенье — дни без пар)
+    scheduler.add_job(
+        send_evening_digest,
+        trigger=CronTrigger(day_of_week="wed,sun", hour=10, minute=0, timezone=KYIV_TZ),
+        args=[bot],
+        name="weekend_morning_digest",
+    )
+
+    # 6. Автоматична перевірка нових лекцій на YouTube кожні 10 хвилин
     scheduler.add_job(
         check_new_youtube_videos,
         trigger=IntervalTrigger(minutes=10, timezone=KYIV_TZ),

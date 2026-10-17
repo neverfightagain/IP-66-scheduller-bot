@@ -28,7 +28,7 @@ KPI_GROUP_ID = int(os.getenv("KPI_GROUP_ID", "6084"))
 TIMEZONE_NAME = os.getenv("TIMEZONE", "Europe/Kyiv")
 KYIV_TZ = ZoneInfo(TIMEZONE_NAME)
 
-MORNING_DIGEST_TIME = os.getenv("MORNING_DIGEST_TIME", "08:00")
+MORNING_DIGEST_TIME = os.getenv("MORNING_DIGEST_TIME", "09:00")
 NOTIFY_MINUTES_BEFORE = int(os.getenv("NOTIFY_MINUTES_BEFORE", "5"))
 
 # YouTube & AI Config

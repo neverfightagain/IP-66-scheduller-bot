@@ -296,7 +296,7 @@ def format_daily_summary(lessons: list[dict] | None = None, assignments: list[di
     next_week_end = this_week_end + timedelta(days=7)
 
     has_lessons = bool(lessons)
-    is_weekend_day = now.weekday() in (5, 6)
+    is_weekend_day = now.weekday() in (2, 6)
 
     tomorrow_assignments = []
     this_week_assignments = []
