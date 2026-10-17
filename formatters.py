@@ -63,6 +63,23 @@ def clean_markdown(text: str | None) -> str:
     )
 
 
+def clean_course_name(course_name: str | None) -> str:
+    """Очистити назву дисципліни від номерів груп, років та технічного сміття (наприклад '2026/27 КДМ ІП-6Х' -> 'КДМ')."""
+    if not course_name:
+        return "Предмет"
+    name = str(course_name).strip()
+    # 1. Видаляємо академічні роки на початку або в середині (наприклад '2026/27 ', '2025/2026 ')
+    name = re.sub(r'^(20\d\d/\d{2,4}\s*|20\d\d[-_]\d{2,4}\s*)', '', name)
+    # 2. Видаляємо суфікси років на кшталт '_26_27_ІПІ' або '_2026_2027'
+    name = re.sub(r'[_]?\d{2}[_-]\d{2}(?:_[a-zA-Zа-яА-ЯёЁіІїЇєЄ]+)?', '', name)
+    # 3. Видаляємо позначення груп на кшталт '(ІП-66)', 'IP-65, 66', 'ІП-6Х', 'ІП-65'
+    name = re.sub(r'[\(\[\{]?\s*(?:ІП|IP)[-_\s]?[0-9xXхХ]*(?:\s*[,/]\s*[0-9xXхХ]+)*\s*[\)\]\}]?', '', name, flags=re.IGNORECASE)
+    # 4. Прибираємо зайві підкреслення, дефіси та пробіли
+    name = re.sub(r'[_]+', ' ', name)
+    name = re.sub(r'\s+', ' ', name).strip(' -_,./')
+    return name or str(course_name).strip()
+
+
 def format_latex_to_unicode(text: str | None) -> str:
     """Конвертує базовий LaTeX, формули та математичні вирази у красивий Unicode для Telegram."""
     if not text:
@@ -324,36 +341,42 @@ def format_deadlines_radar(assignments: list[dict] | None) -> str:
     lines = ["📋 <b>РАДАР ДЕДЛАЙНІВ (ІП-66):</b>\n"]
 
     def _render_item(a: dict, due_f: str, rem: str, emoji_sign: str, bullet: bool = False) -> str:
-        cname = escape_html_text(a.get("course_id") or "Предмет")
+        raw_cname = a.get("course_id") or "Предмет"
+        cname = escape_html_text(clean_course_name(raw_cname))
         title = escape_html_text(a.get("title") or "Завдання")
-        raw_desc = a.get("description", "")
+        
+        # Пріоритет: спочатку стисла AI-вижимка, якщо немає - оригінальний опис
+        summary = a.get("ai_summary") or a.get("description") or ""
         prefix = f"{emoji_sign} " if not bullet else "• "
         item_str = f"{prefix}<b>{cname}</b> — {title}\n   ⏳ <b>Дедлайн:</b> {due_f} <i>({rem})</i>"
-        if raw_desc and raw_desc.strip():
-            clean_desc = format_latex_to_unicode(raw_desc.strip())
-            if len(clean_desc) > 500:
-                clean_desc = clean_desc[:490].rstrip() + "..."
-            item_str += f"\n   <blockquote expandable>📝 <b>Вимоги:</b>\n{clean_desc}</blockquote>"
+        if summary and summary.strip():
+            clean_desc = format_latex_to_unicode(summary.strip())
+            if len(clean_desc) > 350:
+                clean_desc = clean_desc[:340].rstrip() + "..."
+            item_str += f"<blockquote expandable>📝 <b>Суть:</b> {clean_desc}</blockquote>"
         return item_str
 
     if this_week:
         lines.append("🔥 <b>ГОРИТЬ НА ЦЬОМУ ТИЖНІ:</b>")
-        for a, due_f, rem, emoji in this_week:
-            lines.append(_render_item(a, due_f, rem, emoji))
+        rendered_week = [_render_item(a, due_f, rem, emoji) for a, due_f, rem, emoji in this_week]
+        lines.append("\n\n".join(rendered_week))
         lines.append("")
 
     if next_week:
         lines.append("🟡 <b>НА НАСТУПНИЙ ТИЖДЕНЬ:</b>")
-        for a, due_f, rem, emoji in next_week:
-            lines.append(_render_item(a, due_f, rem, emoji, bullet=True))
+        rendered_next = [_render_item(a, due_f, rem, emoji, bullet=True) for a, due_f, rem, emoji in next_week]
+        lines.append("\n\n".join(rendered_next))
         lines.append("")
 
     if later:
         lines.append("🟢 <b>ПІЗНІШЕ:</b>")
+        rendered_later = []
         for a, due_f, rem, emoji in later:
-            cname = escape_html_text(a.get("course_id") or "Предмет")
+            raw_cname = a.get("course_id") or "Предмет"
+            cname = escape_html_text(clean_course_name(raw_cname))
             title = escape_html_text(a.get("title") or "Завдання")
-            lines.append(f"• <b>{cname}</b> — {title} (до {due_f})")
+            rendered_later.append(f"• <b>{cname}</b> — {title} (до {due_f})")
+        lines.append("\n".join(rendered_later))
         lines.append("")
 
     if no_deadline_count > 0:
@@ -441,13 +464,14 @@ def format_daily_summary(lessons: list[dict] | None = None, assignments: list[di
             for a, due_f, rem in upcoming:
                 cname = escape_html_text(a.get("course_id") or "Предмет")
                 title = escape_html_text(a.get("title") or "Завдання")
-                raw_desc = a.get("description", "")
+                summary = a.get("ai_summary") or a.get("description") or ""
                 desc_str = ""
-                if raw_desc and raw_desc.strip():
-                    clean_desc = format_latex_to_unicode(raw_desc.strip())
-                    if len(clean_desc) > 300:
-                        clean_desc = clean_desc[:290].rstrip() + "..."
-                    desc_str = f"\n   <blockquote expandable>📝 <b>Вимоги:</b>\n{clean_desc}</blockquote>"
+                if summary and summary.strip():
+                    clean_desc = format_latex_to_unicode(summary.strip())
+                    if len(clean_desc) > 250:
+                        clean_desc = clean_desc[:240].rstrip() + "..."
+                    desc_str = f"<blockquote expandable>📝 <b>Суть:</b> {clean_desc}</blockquote>"
+                cname = escape_html_text(clean_course_name(a.get("course_id") or "Предмет"))
                 lines.append(f"• 🟡 <b>{cname}</b> — {title} (до {due_f}, <i>{rem}</i>){desc_str}")
         else:
             lines.append("✅ <b>Гарячих дедлайнів немає, можна спокійно відпочивати перед новим навчальним тижнем!</b>")
@@ -460,7 +484,7 @@ def format_daily_summary(lessons: list[dict] | None = None, assignments: list[di
             for idx, l in enumerate(lessons, 1):
                 if not isinstance(l, dict):
                     continue
-                lname = escape_html_text(l.get("name", "Пара"))
+                lname = escape_html_text(clean_course_name(l.get("name", "Пара")))
                 ltype = escape_html_text(l.get("type", ""))
                 ltime = escape_html_text(l.get("time", ""))
                 type_str = f" ({ltype})" if ltype else ""
@@ -479,15 +503,15 @@ def format_daily_summary(lessons: list[dict] | None = None, assignments: list[di
         if tomorrow_assignments:
             lines.append(f"🔴 <b>Увага! На завтра горить ({len(tomorrow_assignments)}):</b>")
             for a, due_f, rem in tomorrow_assignments:
-                cname = escape_html_text(a.get("course_id") or "Предмет")
+                cname = escape_html_text(clean_course_name(a.get("course_id") or "Предмет"))
                 title = escape_html_text(a.get("title") or "Завдання")
-                raw_desc = a.get("description", "")
+                summary = a.get("ai_summary") or a.get("description") or ""
                 desc_str = ""
-                if raw_desc and raw_desc.strip():
-                    clean_desc = format_latex_to_unicode(raw_desc.strip())
-                    if len(clean_desc) > 300:
-                        clean_desc = clean_desc[:290].rstrip() + "..."
-                    desc_str = f"\n   <blockquote expandable>📝 <b>Вимоги:</b>\n{clean_desc}</blockquote>"
+                if summary and summary.strip():
+                    clean_desc = format_latex_to_unicode(summary.strip())
+                    if len(clean_desc) > 250:
+                        clean_desc = clean_desc[:240].rstrip() + "..."
+                    desc_str = f"<blockquote expandable>📝 <b>Суть:</b> {clean_desc}</blockquote>"
                 lines.append(f"• <b>{cname}</b> — {title} (до {due_f}){desc_str}")
         else:
             lines.append("✅ На завтра дедлайнів немає, можна спокійно виспатися!")

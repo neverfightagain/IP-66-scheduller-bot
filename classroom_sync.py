@@ -12,10 +12,17 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from config import BASE_DIR, KYIV_TZ
-from database import add_assignment_db, get_active_assignments_db, get_subscribed_chats_db, add_announcement_db
+from database import (
+    add_assignment_db,
+    get_active_assignments_db,
+    get_subscribed_chats_db,
+    add_announcement_db,
+    update_assignment_ai_summary_db,
+)
 import html
 import re
-from formatters import clean_markdown, format_latex_to_unicode
+from formatters import clean_markdown, format_latex_to_unicode, clean_course_name
+from llm_agent import summarize_assignment_requirements
 
 logger = logging.getLogger(__name__)
 
@@ -181,12 +188,24 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
 
                 # Якщо завдання ще немає в базі — додаємо
                 if cw_id not in existing_ids:
+                    ai_sum = ""
+                    if desc and desc.strip():
+                        try:
+                            ai_sum = await summarize_assignment_requirements(
+                                title=title,
+                                description=desc,
+                                course_name=clean_course_name(cname)
+                            )
+                        except Exception as e_sum:
+                            logger.warning(f"Не вдалося згенерувати AI-вижимку для '{title}': {e_sum}")
+
                     await add_assignment_db(
                         assignment_id=cw_id,
                         course_name=cname,
                         title=title,
                         due_date=due_date_str,
-                        description=desc[:150],
+                        description=desc,
+                        ai_summary=ai_sum,
                         status=status
                     )
 
@@ -207,27 +226,29 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                             "title": title,
                             "due": due_date_str,
                             "link": alt_link,
-                            "desc": desc
+                            "desc": desc,
+                            "ai_summary": ai_sum
                         })
                         logger.info(f"Знайдено нове актуальне завдання Classroom: {cname} — {title} (до {due_date_str})")
 
                         # Миттєвий пуш у чати
                         if bot:
                             chats = await get_subscribed_chats_db()
-                            clean_c = html.escape(cname)
+                            clean_c = html.escape(clean_course_name(cname))
                             clean_t = html.escape(title)
                             due_esc = html.escape(due_date_str)
                             text = (
                                 f"📌 <b>Нове завдання в Google Classroom!</b>\n\n"
                                 f"📚 <b>Дисципліна:</b> <b>{clean_c}</b>\n"
                                 f"📝 <b>Завдання:</b> {clean_t}\n"
-                                f"⏳ <b>Дедлайн:</b> <code>{due_esc}</code>\n"
+                                f"⏳ <b>Дедлайн:</b> <code>{due_esc}</code>"
                             )
-                            if desc and desc.strip():
-                                clean_desc = format_latex_to_unicode(desc.strip())
-                                if len(clean_desc) > 500:
-                                    clean_desc = clean_desc[:490].rstrip() + "..."
-                                text += f"\n<blockquote expandable>📝 <b>Вимоги:</b>\n{clean_desc}</blockquote>\n"
+                            summary_to_show = ai_sum if (ai_sum and ai_sum.strip()) else desc.strip()
+                            if summary_to_show:
+                                clean_desc = format_latex_to_unicode(summary_to_show)
+                                if len(clean_desc) > 350:
+                                    clean_desc = clean_desc[:340].rstrip() + "..."
+                                text += f"<blockquote expandable>📝 <b>Суть:</b> {clean_desc}</blockquote>\n"
                             if alt_link:
                                 text += f'\n🔗 <a href="{html.escape(alt_link)}">Відкрити в Google Classroom</a>'
 
@@ -252,7 +273,42 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
             await delete_assignment_db("kdm_calc1")
             await cleanup_past_assignments_db()
 
+        # Фоновий backfill для завдань, у яких ще немає ai_summary
+        await backfill_assignment_summaries()
+
         return {"success": True, "courses_count": len(courses), "new_items": new_items, "error": None}
     except Exception as e:
         logger.error(f"Помилка синхронізації Google Classroom: {e}")
         return {"success": False, "courses_count": 0, "new_items": [], "error": str(e)}
+
+
+async def backfill_assignment_summaries() -> int:
+    """
+    Фонова генерація AI-вижимок для існуючих завдань у базі, якщо вони ще не мають ai_summary.
+    Дозволяє миттєво оновити старі записи без блокування інтерфейсу.
+    """
+    updated_count = 0
+    try:
+        assignments = await get_active_assignments_db()
+        for a in assignments:
+            aid = a["id"]
+            curr_sum = a.get("ai_summary")
+            raw_desc = a.get("description", "")
+            if (not curr_sum or not str(curr_sum).strip()) and raw_desc and len(raw_desc.strip()) > 20:
+                cname = clean_course_name(a.get("course_id", ""))
+                title = a.get("title", "")
+                try:
+                    summary = await summarize_assignment_requirements(
+                        title=title,
+                        description=raw_desc,
+                        course_name=cname
+                    )
+                    if summary and summary.strip():
+                        await update_assignment_ai_summary_db(aid, summary.strip())
+                        updated_count += 1
+                        logger.info(f"Створено AI-вижимку для '{title}' ({aid}): {summary[:60]}...")
+                except Exception as e:
+                    logger.warning(f"Не вдалося оновити AI-вижимку для {aid}: {e}")
+    except Exception as e:
+        logger.error(f"Помилка під час backfill_assignment_summaries: {e}")
+    return updated_count

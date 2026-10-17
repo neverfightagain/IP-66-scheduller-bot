@@ -126,8 +126,9 @@ async def main():
     async def run_startup_syncs():
         await asyncio.sleep(2)  # Даємо боту запустити polling
         try:
-            from classroom_sync import sync_classroom_tasks
+            from classroom_sync import sync_classroom_tasks, backfill_assignment_summaries
             await sync_classroom_tasks(bot)
+            await backfill_assignment_summaries()
         except Exception as e_cr:
             logger.warning(f"Classroom sync on startup: {e_cr}")
 

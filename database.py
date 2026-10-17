@@ -58,12 +58,17 @@ async def init_db():
                 course_id TEXT,
                 title TEXT NOT NULL,
                 description TEXT,
+                ai_summary TEXT,
                 due_date TIMESTAMP,
                 status TEXT DEFAULT 'active',
                 raw_json TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        try:
+            await db.execute("ALTER TABLE assignments ADD COLUMN ai_summary TEXT;")
+        except Exception:
+            pass
 
         # 4. Таблица обработанных видео с лекциями (YouTube)
         await db.execute("""
@@ -304,13 +309,29 @@ async def get_today_announcements_db(today_date: str | None = None) -> list[dict
             return [dict(row) for row in rows]
 
 
-async def add_assignment_db(assignment_id: str, course_name: str, title: str, due_date: str, description: str = "", status: str = "active") -> bool:
-    """Добавить или обновить дедлайн задания."""
+async def add_assignment_db(
+    assignment_id: str,
+    course_name: str,
+    title: str,
+    due_date: str,
+    description: str = "",
+    ai_summary: str = "",
+    status: str = "active"
+) -> bool:
+    """Додати або оновити дедлайн завдання (з підтримкою AI-вижимки)."""
     async with get_db() as db:
         await db.execute("""
-            INSERT OR REPLACE INTO assignments (id, course_id, title, due_date, description, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (assignment_id, course_name, title, due_date, description, status))
+            INSERT OR REPLACE INTO assignments (id, course_id, title, due_date, description, ai_summary, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (assignment_id, course_name, title, due_date, description, ai_summary, status))
+        await db.commit()
+        return True
+
+
+async def update_assignment_ai_summary_db(assignment_id: str, ai_summary: str) -> bool:
+    """Оновити AI-вижимку для існуючого завдання."""
+    async with get_db() as db:
+        await db.execute("UPDATE assignments SET ai_summary = ? WHERE id = ?", (ai_summary, assignment_id))
         await db.commit()
         return True
 
@@ -335,7 +356,7 @@ async def get_active_assignments_db() -> list[dict]:
     """Получить все активные задания, отсортированные по дедлайну."""
     async with get_db() as db:
         async with db.execute("""
-            SELECT id, course_id, title, description, due_date, status
+            SELECT id, course_id, title, description, ai_summary, due_date, status
             FROM assignments
             WHERE status = 'active'
             ORDER BY due_date ASC

@@ -323,3 +323,74 @@ async def analyze_lecture_with_schedule_context(video_title: str, video_url: str
     }
 
 
+ASSIGNMENT_SUMMARY_INSTRUCTION = """
+Ти — академічний аналітичний AI-помічник для студентів КПІ.
+Твоє завдання — стисло і чітко сформулювати СУТЬ завдання з опису викладача для компактної картки дедлайну в Telegram.
+
+Критичні правила:
+1. Максимум 1-2 короткі, місткі речення (до 150-200 символів).
+2. Чітко виділи:
+   - Що конкретно треба зробити (наприклад: "Опрацювати Past Tenses за відео та пройти квіз на сайті" або "Реалізувати алгоритм Дейкстри для вагового графа").
+   - Формат / місце здачі (якщо згадано: "Звіт у PDF в Classroom" або "В Classroom не здавати, захист на парі").
+3. ПОВНІСТЮ ВИДАЛИ: вітання ("Шановні студенти"), воду, повтори назви курсу, довгі посилання URL (заміни просто на "за посиланням"), інструкції як встановити софт, якщо це не суть завдання.
+4. Якщо в тексті є формули — запиши їх у простому вигляді.
+5. Відповідай українською мовою, без лапок і без вступних слів на зразок "Суть завдання:" або "Вимоги:".
+"""
+
+
+async def summarize_assignment_requirements(title: str, description: str, course_name: str = "") -> str:
+    """
+    Аналізує довгий сирий опис викладача з Classroom та формує лаконічну вижимку вимог у 1-2 речення.
+    Працює через Gemini Flash, практично без витрат квот.
+    """
+    if not description or len(description.strip()) < 35:
+        return description.strip() if description else ""
+
+    client, key = get_gemini_client()
+    if not client:
+        # Швидкий локальний фолбек без API
+        clean = re.sub(r'https?://\S+', '', description.strip())
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        first_part = clean.split('\n')[0].strip()
+        return first_part[:180] + ("..." if len(first_part) > 180 else "")
+
+    prompt = f"Предмет: {course_name}\nНазва завдання: {title}\n\nОпис від викладача:\n{description.strip()}"
+
+    candidate_models = [
+        os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip(),
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+    ]
+    seen = set()
+    models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
+
+    for m in models:
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=m,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=ASSIGNMENT_SUMMARY_INSTRUCTION,
+                        temperature=0.2,
+                        max_output_tokens=150,
+                    ),
+                ),
+                timeout=12.0,
+            )
+            if response and response.text:
+                summary = response.text.strip().replace('"', '')
+                summary = re.sub(r'^(Суть(:|\s)|Вимоги(:|\s)|Завдання(:|\s))\s*', '', summary, flags=re.IGNORECASE)
+                return summary.strip()
+        except Exception as e:
+            logger.debug(f"Помилка створення AI-вижимки завдання ({m}): {e}")
+            continue
+
+    # Резервний локальний варіант при недоступності API
+    clean = re.sub(r'https?://\S+', '', description.strip())
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    first_part = clean.split('\n')[0].strip()
+    return first_part[:180] + ("..." if len(first_part) > 180 else "")
+
+
+
