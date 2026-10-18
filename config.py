@@ -41,9 +41,27 @@ WEBSHARE_USERNAME = os.getenv("WEBSHARE_USERNAME", "").strip()
 WEBSHARE_PASSWORD = os.getenv("WEBSHARE_PASSWORD", "").strip()
 
 # Cloud SQLite Config (Turso or SQLite Cloud)
-TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "").strip()
-TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "").strip()
-SQLITE_CLOUD_URL = os.getenv("SQLITE_CLOUD_URL", os.getenv("SQLITECLOUD_URL", "")).strip()
+def _sanitize_env(val: str, key_prefix: str = "") -> str:
+    val = (val or "").strip()
+    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        val = val[1:-1].strip()
+    if key_prefix and f"{key_prefix}=" in val:
+        val = val.split(f"{key_prefix}=", 1)[1].strip().strip('"').strip("'")
+    return val
+
+raw_turso_url = os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or ""
+TURSO_DATABASE_URL = _sanitize_env(raw_turso_url, "TURSO_DATABASE_URL")
+
+raw_turso_token = (
+    os.getenv("TURSO_AUTH_TOKEN")
+    or os.getenv("TURSO_TOKEN")
+    or os.getenv("TURSO_DATABASE_TOKEN")
+    or os.getenv("TURSO_KEY")
+    or ""
+)
+TURSO_AUTH_TOKEN = _sanitize_env(raw_turso_token, "TURSO_AUTH_TOKEN")
+
+SQLITE_CLOUD_URL = _sanitize_env(os.getenv("SQLITE_CLOUD_URL") or os.getenv("SQLITECLOUD_URL") or "", "SQLITE_CLOUD_URL")
 
 # Файлы данных
 CHATS_FILE = BASE_DIR / "chats.json"

@@ -194,9 +194,17 @@ async def _get_turso_client():
     global _turso_client
     import libsql_client
     if _turso_client is None or getattr(_turso_client, "closed", False):
+        url = TURSO_DATABASE_URL
+        if url.startswith("libsql://"):
+            url = "https://" + url[len("libsql://"):]
+
+        token = TURSO_AUTH_TOKEN or None
+        if not token:
+            logger.error("❌ УВАГА: Задано TURSO_DATABASE_URL, але відсутній TURSO_AUTH_TOKEN в Environment Variables!")
+
         _turso_client = libsql_client.create_client(
-            url=TURSO_DATABASE_URL,
-            auth_token=TURSO_AUTH_TOKEN or None
+            url=url,
+            auth_token=token
         )
     return _turso_client
 
