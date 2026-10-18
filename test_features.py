@@ -113,6 +113,41 @@ class TestDatabaseAISummary(unittest.IsolatedAsyncioTestCase):
         await delete_assignment_db(test_id)
 
 
+class TestTursoDualEngine(unittest.IsolatedAsyncioTestCase):
+    async def test_turso_client_compatibility(self):
+        import database
+        import os
+
+        test_db_file = "test_turso_unit.db"
+        orig_url = database.TURSO_DATABASE_URL
+        database.TURSO_DATABASE_URL = f"file:{test_db_file}"
+        try:
+            await database.init_db()
+            test_id = "turso_unit_1"
+            await database.add_assignment_db(
+                assignment_id=test_id,
+                course_name="Turso Test Course",
+                title="Lab Turso",
+                due_date="2026-11-01 12:00",
+                description="Testing Turso adapter",
+                ai_summary="Turso works!"
+            )
+            assignments = await database.get_active_assignments_db()
+            item = next((a for a in assignments if a["id"] == test_id), None)
+            self.assertIsNotNone(item)
+            self.assertEqual(item["ai_summary"], "Turso works!")
+            self.assertEqual(item["course_id"], "Turso Test Course")
+
+            await database.delete_assignment_db(test_id)
+            assignments_after = await database.get_active_assignments_db()
+            self.assertIsNone(next((a for a in assignments_after if a["id"] == test_id), None))
+        finally:
+            await database.close_db()
+            database.TURSO_DATABASE_URL = orig_url
+            if os.path.exists(test_db_file):
+                os.remove(test_db_file)
+
+
 class TestLLMAgentSummarizer(unittest.IsolatedAsyncioTestCase):
     async def test_short_description_fast_return(self):
         short_desc = "Здати лабораторну 1."

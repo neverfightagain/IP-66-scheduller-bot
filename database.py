@@ -1,23 +1,150 @@
+from typing import Any, Optional
 import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 import aiosqlite
-from config import BASE_DIR, CHATS_FILE, LINKS_FILE, ENV_CHAT_ID, ENV_THREAD_ID
+from config import (
+    BASE_DIR,
+    CHATS_FILE,
+    LINKS_FILE,
+    ENV_CHAT_ID,
+    ENV_THREAD_ID,
+    TURSO_DATABASE_URL,
+    TURSO_AUTH_TOKEN,
+)
 
 logger = logging.getLogger(__name__)
 
 DB_PATH = BASE_DIR / "kpi_bot.db"
 
 
+class TursoRow:
+    """Обгортка над libsql_client.Row для повної сумісності з aiosqlite.Row."""
+    def __init__(self, row):
+        self._row = row
+        self._dict = row.asdict()
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return self._dict[key]
+        return self._row[key]
+
+    def __iter__(self):
+        return iter(self._dict.items())
+
+    def __contains__(self, key):
+        return key in self._dict
+
+    def __repr__(self):
+        return f"<TursoRow {self._dict}>"
+
+    def get(self, key, default=None):
+        return self._dict.get(key, default)
+
+    def keys(self):
+        return self._dict.keys()
+
+    def values(self):
+        return self._dict.values()
+
+    def items(self):
+        return self._dict.items()
+
+
+class TursoCursor:
+    """Емулятор aiosqlite.Cursor для результатів Turso libSQL."""
+    def __init__(self, result_set):
+        self._result = result_set
+        self.rows = [TursoRow(r) for r in result_set.rows]
+        self.lastrowid = result_set.last_insert_rowid
+        self.rowcount = result_set.rows_affected
+
+    async def fetchall(self):
+        return self.rows
+
+    async def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+
+class TursoCursorContext:
+    """Дозволяє використовувати як `await db.execute(...)`, так і `async with db.execute(...) as cur:`."""
+    def __init__(self, coro):
+        self._coro = coro
+        self._cursor = None
+
+    def __await__(self):
+        return self._coro.__await__()
+
+    async def __aenter__(self):
+        self._cursor = await self._coro
+        return self._cursor
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+
+class TursoConnectionWrapper:
+    """Обгортка над клієнтом libsql_client.Client з API, ідентичним aiosqlite."""
+    def __init__(self, client):
+        self._client = client
+
+    def execute(self, sql: str, params=None):
+        async def _run():
+            if params is None:
+                res = await self._client.execute(sql)
+            else:
+                p = list(params) if isinstance(params, tuple) else params
+                res = await self._client.execute(sql, p)
+            return TursoCursor(res)
+        return TursoCursorContext(_run())
+
+    async def commit(self):
+        # У libSQL (Turso) запити атомарно фіксуються сервером
+        pass
+
+    async def close(self):
+        await self._client.close()
+
+
+_turso_client: Optional[Any] = None
+
+
+async def _get_turso_client():
+    global _turso_client
+    import libsql_client
+    if _turso_client is None or getattr(_turso_client, "closed", False):
+        _turso_client = libsql_client.create_client(
+            url=TURSO_DATABASE_URL,
+            auth_token=TURSO_AUTH_TOKEN or None
+        )
+    return _turso_client
+
+
 @asynccontextmanager
 async def get_db():
-    """Контекстный менеджер подключения к SQLite базе данных."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA journal_mode = WAL;")
-        await db.execute("PRAGMA foreign_keys = ON;")
-        db.row_factory = aiosqlite.Row
-        yield db
+    """
+    Контекстний менеджер підключення до бази даних.
+    Якщо задано TURSO_DATABASE_URL — використовує Turso Cloud SQLite / libSQL.
+    Інакше — локальну базу даних SQLite через aiosqlite.
+    """
+    if TURSO_DATABASE_URL:
+        client = await _get_turso_client()
+        yield TursoConnectionWrapper(client)
+    else:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("PRAGMA journal_mode = WAL;")
+            await db.execute("PRAGMA foreign_keys = ON;")
+            db.row_factory = aiosqlite.Row
+            yield db
+
+
+async def close_db():
+    """Закрити активні з'єднання з базою даних."""
+    global _turso_client
+    if _turso_client is not None and not getattr(_turso_client, "closed", False):
+        await _turso_client.close()
+        _turso_client = None
 
 
 async def init_db():
@@ -108,7 +235,11 @@ async def init_db():
         """)
 
         await db.commit()
-        logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
+        if TURSO_DATABASE_URL:
+            db_target = TURSO_DATABASE_URL.split("@")[-1]
+            logger.info(f"База даних Turso Cloud libSQL ({db_target}) успішно ініціалізована.")
+        else:
+            logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
         # Автоматическая миграция из старых JSON-файлов
         await _migrate_legacy_data(db)
@@ -117,7 +248,7 @@ async def init_db():
         await cleanup_past_assignments_db()
 
 
-async def _migrate_legacy_data(db: aiosqlite.Connection):
+async def _migrate_legacy_data(db):
     """Миграция данных из старых таблиц, chats.json и links.json в SQLite."""
     # 1. Миграция из старой таблицы chat_settings, если она существовала
     try:
