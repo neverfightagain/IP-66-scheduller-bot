@@ -583,3 +583,53 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# ДИНАМІЧНИЙ ЛІЧИЛЬНИК ДЗВІНКІВ (/bell /time)
+# ==========================================
+
+@router.message(Command("bell"))
+@router.message(Command("time"))
+async def cmd_bell(message: Message):
+    from bell_tracker import get_current_bell_status, format_bell_status_card
+    from kpi_api import get_schedule_for_date
+
+    now_dt = datetime.now(KYIV_TZ)
+    status = get_current_bell_status(now_dt)
+
+    # Шукаємо активний предмет на сьогодні
+    active_lesson = None
+    try:
+        today_date = now_dt.strftime("%Y-%m-%d")
+        lessons = await get_schedule_for_date(today_date)
+        if status.get("pair_num") and lessons:
+            p_num = status["pair_num"]
+            if p_num <= len(lessons):
+                active_lesson = lessons[p_num - 1]
+    except Exception:
+        pass
+
+    text, kb = format_bell_status_card(status, active_lesson)
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("bell:"))
+async def cb_bell_actions(callback: CallbackQuery):
+    from bell_tracker import get_current_bell_status, format_bell_status_card, format_bell_table_text
+    action = callback.data.split(":")[1]
+
+    if action == "table":
+        table_text = format_bell_table_text()
+        await callback.answer()
+        await callback.message.answer(table_text, parse_mode="HTML")
+    elif action == "refresh":
+        now_dt = datetime.now(KYIV_TZ)
+        status = get_current_bell_status(now_dt)
+        text, kb = format_bell_status_card(status)
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            await callback.answer("Оновлено!", show_alert=False)
+        except Exception:
+            await callback.answer()
+
