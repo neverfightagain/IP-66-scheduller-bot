@@ -1,4 +1,5 @@
 from typing import Any, Optional
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ from config import (
     ENV_THREAD_ID,
     TURSO_DATABASE_URL,
     TURSO_AUTH_TOKEN,
+    SQLITE_CLOUD_URL,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,7 +109,85 @@ class TursoConnectionWrapper:
         await self._client.close()
 
 
+class SQLiteCloudRow:
+    """Обгортка над sqlitecloud.Row для повної сумісності з aiosqlite.Row."""
+    def __init__(self, row):
+        self._row = row
+        if hasattr(row, "keys"):
+            self._dict = {k: row[k] for k in row.keys()}
+        elif isinstance(row, dict):
+            self._dict = row
+        else:
+            self._dict = {}
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return self._dict[key]
+        return self._row[key]
+
+    def __iter__(self):
+        return iter(self._dict.items())
+
+    def __contains__(self, key):
+        return key in self._dict
+
+    def __repr__(self):
+        return f"<SQLiteCloudRow {self._dict}>"
+
+    def get(self, key, default=None):
+        return self._dict.get(key, default)
+
+    def keys(self):
+        return self._dict.keys()
+
+    def values(self):
+        return self._dict.values()
+
+    def items(self):
+        return self._dict.items()
+
+
+class SQLiteCloudCursor:
+    """Емулятор aiosqlite.Cursor для sqlitecloud."""
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.lastrowid = getattr(cursor, "lastrowid", None)
+        self.rowcount = getattr(cursor, "rowcount", 0)
+
+    async def fetchall(self):
+        rows = await asyncio.to_thread(self._cursor.fetchall)
+        return [SQLiteCloudRow(r) for r in rows]
+
+    async def fetchone(self):
+        row = await asyncio.to_thread(self._cursor.fetchone)
+        return SQLiteCloudRow(row) if row is not None else None
+
+
+class SQLiteCloudConnectionWrapper:
+    """Обгортка над sqlitecloud.Connection з API, ідентичним aiosqlite."""
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql: str, params=None):
+        async def _run():
+            cursor = self._conn.cursor()
+            if params is None:
+                await asyncio.to_thread(cursor.execute, sql)
+            else:
+                p = tuple(params) if isinstance(params, list) else params
+                await asyncio.to_thread(cursor.execute, sql, p)
+            return SQLiteCloudCursor(cursor)
+        return TursoCursorContext(_run())
+
+    async def commit(self):
+        await asyncio.to_thread(self._conn.commit)
+
+    async def close(self):
+        await asyncio.to_thread(self._conn.close)
+
+
 _turso_client: Optional[Any] = None
+_sqlitecloud_conn: Optional[Any] = None
 
 
 async def _get_turso_client():
@@ -121,14 +201,27 @@ async def _get_turso_client():
     return _turso_client
 
 
+async def _get_sqlitecloud_conn():
+    global _sqlitecloud_conn
+    import sqlitecloud
+    if _sqlitecloud_conn is None or not getattr(_sqlitecloud_conn, "is_connected", lambda: True)():
+        _sqlitecloud_conn = await asyncio.to_thread(sqlitecloud.connect, SQLITE_CLOUD_URL)
+    return _sqlitecloud_conn
+
+
 @asynccontextmanager
 async def get_db():
     """
     Контекстний менеджер підключення до бази даних.
-    Якщо задано TURSO_DATABASE_URL — використовує Turso Cloud SQLite / libSQL.
-    Інакше — локальну базу даних SQLite через aiosqlite.
+    Підтримує:
+    1. SQLite Cloud (якщо задано SQLITE_CLOUD_URL)
+    2. Turso Cloud libSQL (якщо задано TURSO_DATABASE_URL)
+    3. Локальну SQLite через aiosqlite (за замовчуванням)
     """
-    if TURSO_DATABASE_URL:
+    if SQLITE_CLOUD_URL:
+        conn = await _get_sqlitecloud_conn()
+        yield SQLiteCloudConnectionWrapper(conn)
+    elif TURSO_DATABASE_URL:
         client = await _get_turso_client()
         yield TursoConnectionWrapper(client)
     else:
@@ -141,10 +234,16 @@ async def get_db():
 
 async def close_db():
     """Закрити активні з'єднання з базою даних."""
-    global _turso_client
+    global _turso_client, _sqlitecloud_conn
     if _turso_client is not None and not getattr(_turso_client, "closed", False):
         await _turso_client.close()
         _turso_client = None
+    if _sqlitecloud_conn is not None:
+        try:
+            await asyncio.to_thread(_sqlitecloud_conn.close)
+        except Exception:
+            pass
+        _sqlitecloud_conn = None
 
 
 async def init_db():
@@ -235,7 +334,10 @@ async def init_db():
         """)
 
         await db.commit()
-        if TURSO_DATABASE_URL:
+        if SQLITE_CLOUD_URL:
+            host = SQLITE_CLOUD_URL.split("@")[-1].split("?")[0]
+            logger.info(f"База даних SQLite Cloud ({host}) успішно ініціалізована.")
+        elif TURSO_DATABASE_URL:
             db_target = TURSO_DATABASE_URL.split("@")[-1]
             logger.info(f"База даних Turso Cloud libSQL ({db_target}) успішно ініціалізована.")
         else:

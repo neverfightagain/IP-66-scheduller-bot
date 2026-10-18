@@ -40,9 +40,10 @@ YOUTUBE_PROXY = os.getenv("YOUTUBE_PROXY", "").strip()
 WEBSHARE_USERNAME = os.getenv("WEBSHARE_USERNAME", "").strip()
 WEBSHARE_PASSWORD = os.getenv("WEBSHARE_PASSWORD", "").strip()
 
-# Turso Cloud SQLite / libSQL Config
+# Cloud SQLite Config (Turso or SQLite Cloud)
 TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "").strip()
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "").strip()
+SQLITE_CLOUD_URL = os.getenv("SQLITE_CLOUD_URL", os.getenv("SQLITECLOUD_URL", "")).strip()
 
 # Файлы данных
 CHATS_FILE = BASE_DIR / "chats.json"

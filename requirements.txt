@@ -6,6 +6,7 @@ tzdata>=2024.1
 youtube-transcript-api>=1.2.0
 aiosqlite>=0.20.0
 libsql-client>=0.3.0
+sqlitecloud>=0.0.84
 google-genai>=2.0.0
 google-api-python-client>=2.100.0
 google-auth-httplib2>=0.2.0
