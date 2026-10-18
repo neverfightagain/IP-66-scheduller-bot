@@ -107,6 +107,24 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця скасованих пар старостою
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS cancelled_pairs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                pair_number INTEGER NOT NULL,
+                subject TEXT DEFAULT '',
+                reason TEXT DEFAULT '',
+                cancelled_by TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (date, pair_number)
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cancelled_pairs_date
+            ON cancelled_pairs (date);
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +423,71 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# СКАСУВАННЯ ПАР СТАРОСТОЮ (/cancel_pair)
+# ==========================================
+
+async def cancel_pair_db(
+    date_str: str,
+    pair_number: int,
+    subject: str = "",
+    reason: str = "",
+    cancelled_by: str = "Староста"
+) -> bool:
+    """Зафіксувати скасування пари на вказану дату."""
+    clean_date = date_str.strip()
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO cancelled_pairs (date, pair_number, subject, reason, cancelled_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(date, pair_number) DO UPDATE SET
+                subject = excluded.subject,
+                reason = excluded.reason,
+                cancelled_by = excluded.cancelled_by,
+                created_at = CURRENT_TIMESTAMP
+        """, (clean_date, pair_number, subject.strip(), reason.strip(), cancelled_by.strip()))
+        await db.commit()
+        return True
+
+
+async def uncancel_pair_db(date_str: str, pair_number: int) -> bool:
+    """Відновити скасовану пару (зняти скасування)."""
+    clean_date = date_str.strip()
+    async with get_db() as db:
+        cursor = await db.execute("""
+            DELETE FROM cancelled_pairs
+            WHERE date = ? AND pair_number = ?
+        """, (clean_date, pair_number))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_cancelled_pairs_for_date_db(date_str: str) -> dict[int, dict]:
+    """Отримати словник усіх скасованих пар на дату {номер_пари: {інформація}}."""
+    clean_date = date_str.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, date, pair_number, subject, reason, cancelled_by, created_at
+            FROM cancelled_pairs
+            WHERE date = ?
+        """, (clean_date,)) as cursor:
+            rows = await cursor.fetchall()
+            return {row["pair_number"]: dict(row) for row in rows}
+
+
+async def is_pair_cancelled_db(date_str: str, pair_number: int) -> tuple[bool, str]:
+    """Перевірити, чи скасована пара. Повертає (скасовано: bool, причина: str)."""
+    clean_date = date_str.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT reason FROM cancelled_pairs
+            WHERE date = ? AND pair_number = ?
+        """, (clean_date, pair_number)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return True, row["reason"] or "Причину не вказано"
+            return False, ""
+
 

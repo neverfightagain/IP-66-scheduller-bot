@@ -209,7 +209,7 @@ async def cmd_today(message: Message):
         is_group = message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
 
         from scheduler import calculate_lessons_end_datetime, update_today_cache
-        from database import add_scheduled_deletion_db
+        from database import add_scheduled_deletion_db, get_cancelled_pairs_for_date_db
         update_today_cache(week, day_name, lessons, today)
 
         now_dt = datetime.now(KYIV_TZ)
@@ -217,11 +217,13 @@ async def cmd_today(message: Message):
         delete_time_str = end_dt.strftime("%H:%M")
         show_delete = is_group and lessons and end_dt > now_dt
 
+        cancelled_map = await get_cancelled_pairs_for_date_db(today.isoformat())
         text, kb = format_morning_digest(
             week,
             day_name,
             lessons,
-            auto_delete_time=delete_time_str if show_delete else None
+            auto_delete_time=delete_time_str if show_delete else None,
+            cancelled_pairs=cancelled_map
         )
         sent = await safe_answer(message, text, reply_markup=kb)
         if sent and show_delete:
@@ -583,3 +585,93 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# СКАСУВАННЯ ПАР СТАРОСТОЮ (/cancel_pair)
+# ==========================================
+
+@router.message(Command("cancel_pair"))
+async def cmd_cancel_pair(message: Message):
+    from database import cancel_pair_db, get_cancelled_pairs_for_date_db
+    raw = message.text.replace("/cancel_pair", "", 1).strip()
+    if not raw:
+        await safe_answer(
+            message,
+            "ℹ️ <b>Формат скасування пари:</b>\n"
+            "<code>/cancel_pair &lt;номер_пари: 1-6&gt; [причина]</code>\n"
+            "<code>/cancel_pair &lt;номер_пари&gt; &lt;РРРР-ММ-ДД&gt; | [причина]</code>\n\n"
+            "Приклади:\n"
+            "• <code>/cancel_pair 2 Хворіє викладач</code> (скасувати 2-гу пару на сьогодні)\n"
+            "• <code>/cancel_pair 1 2026-10-25 | Пари не буде</code>"
+        )
+        return
+
+    tokens = raw.split(maxsplit=2)
+    if not tokens[0].isdigit():
+        await safe_answer(message, "❌ Першим параметром має бути номер пари (1-6)!")
+        return
+
+    pair_num = int(tokens[0])
+    target_date = datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+    reason = "Скасовано викладачем/старостою"
+
+    if len(tokens) > 1:
+        # Перевірка чи другий токен є датою
+        from handlers import normalize_due_date
+        norm_date = normalize_due_date(tokens[1])
+        if norm_date:
+            target_date = norm_date.split()[0]
+            reason = tokens[2].strip(" |") if len(tokens) > 2 else reason
+        else:
+            reason = " ".join(tokens[1:]).strip(" |")
+
+    who = message.from_user.full_name
+    await cancel_pair_db(target_date, pair_num, subject="", reason=reason, cancelled_by=who)
+
+    await safe_answer(
+        message,
+        f"🚫 <b>Пару №{pair_num} успішно скасовано!</b>\n"
+        f"📅 <b>Дата:</b> <code>{target_date}</code>\n"
+        f"📝 <b>Причина:</b> {escape_html_text(reason)}\n"
+        f"👤 <b>Зафіксував:</b> {escape_html_text(who)}\n\n"
+        f"<i>💡 Нагадування перед цією парою вимкнено, а в розкладі вона відображатиметься як перекреслена.</i>"
+    )
+
+
+@router.message(Command("uncancel_pair"))
+async def cmd_uncancel_pair(message: Message):
+    from database import uncancel_pair_db
+    raw = message.text.replace("/uncancel_pair", "", 1).strip().split()
+    if not raw or not raw[0].isdigit():
+        await safe_answer(message, "ℹ️ Вкажіть номер пари для відновлення:\n<code>/uncancel_pair &lt;номер_пари&gt; [РРРР-ММ-ДД]</code>")
+        return
+
+    pair_num = int(raw[0])
+    target_date = raw[1] if len(raw) > 1 else datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+
+    ok = await uncancel_pair_db(target_date, pair_num)
+    if ok:
+        await safe_answer(message, f"✅ Скасування пари №{pair_num} на <code>{target_date}</code> знято! Вона знову активна в розкладі.")
+    else:
+        await safe_answer(message, f"ℹ️ Пара №{pair_num} на <code>{target_date}</code> не була скасована.")
+
+
+@router.message(Command("cancelled_pairs"))
+async def cmd_cancelled_pairs(message: Message):
+    from database import get_cancelled_pairs_for_date_db
+    parts = message.text.split(maxsplit=1)
+    target_date = parts[1].strip() if len(parts) > 1 else datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+
+    canc_map = await get_cancelled_pairs_for_date_db(target_date)
+    if not canc_map:
+        await safe_answer(message, f"🏖 На дату <code>{target_date}</code> немає скасованих пар.")
+        return
+
+    lines = [f"🚫 <b>Скасовані пари на {target_date}:</b>\n"]
+    for p_num in sorted(canc_map.keys()):
+        info = canc_map[p_num]
+        lines.append(f"• <b>Пара №{p_num}:</b> <i>{escape_html_text(info['reason'])}</i> (від {escape_html_text(info['cancelled_by'])})")
+
+    await safe_answer(message, "\n".join(lines))
+

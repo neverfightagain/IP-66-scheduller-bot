@@ -118,7 +118,13 @@ def format_latex_to_unicode(text: str | None) -> str:
     return text.strip()
 
 
-def format_morning_digest(week: int | str | None, day_name: str | None, lessons: list[dict] | None, auto_delete_time: str | None = None) -> tuple[str, InlineKeyboardMarkup | None]:
+def format_morning_digest(
+    week: int | str | None,
+    day_name: str | None,
+    lessons: list[dict] | None,
+    auto_delete_time: str | None = None,
+    cancelled_pairs: dict[int, dict] | None = None
+) -> tuple[str, InlineKeyboardMarkup | None]:
     """Форматування ранкового дайджесту розкладу пар (HTML)."""
     lessons = lessons or []
     w_str = escape_html_text(str(week) if week is not None else "1")
@@ -145,6 +151,16 @@ def format_morning_digest(week: int | str | None, day_name: str | None, lessons:
         url = link_info.get("url", "").strip()
         comment = escape_html_text(link_info.get("comment", "").strip())
 
+        type_str = f" ({ltype})" if ltype else ""
+
+        if cancelled_pairs and idx in cancelled_pairs:
+            reason = cancelled_pairs[idx].get("reason", "Причину не вказано")
+            lines.append(
+                f"<s><b>{idx}.</b> <code>{ltime}</code> — <b>{lname}</b>{type_str}</s> 🚫 <b>СКАСОВАНО!</b>\n"
+                f"   ⚠️ <i>Причина: {escape_html_text(reason)}</i>"
+            )
+            continue
+
         link_str = ""
         if url:
             link_str = f'\n   🔗 <a href="{html.escape(url)}">Zoom / Meet</a>'
@@ -153,7 +169,6 @@ def format_morning_digest(week: int | str | None, day_name: str | None, lessons:
         elif comment:
             link_str = f"\n   ℹ️ <i>{comment}</i>"
 
-        type_str = f" ({ltype})" if ltype else ""
         lines.append(
             f"<b>{idx}.</b> <code>{ltime}</code> — <b>{lname}</b>{type_str}\n"
             f"   👤 {llect}{link_str}"
