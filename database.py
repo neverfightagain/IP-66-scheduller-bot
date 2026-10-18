@@ -107,6 +107,25 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця розподілу варіантів та тем робіт
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS topic_claims (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                subject TEXT NOT NULL,
+                variant_or_topic TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                user_name TEXT NOT NULL,
+                username TEXT,
+                claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (chat_id, subject, variant_or_topic)
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_topic_claims_chat_subj
+            ON topic_claims (chat_id, subject);
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +424,104 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# РОЗПОДІЛ ВАРІАНТІВ ТА ТЕМ (/claim)
+# ==========================================
+
+async def claim_topic_db(
+    chat_id: int,
+    subject: str,
+    variant_or_topic: str,
+    user_id: int,
+    user_name: str,
+    username: str = None
+) -> tuple[bool, str, dict | None]:
+    """
+    Зайняти варіант або тему.
+    Запобігає колізіям (коли двоє хочуть один варіант).
+    Якщо студент вже мав інший варіант у цьому предметі — змінює на новий.
+    Повертає: (успіх: bool, повідомлення: str, попередній_власник: dict|None).
+    """
+    clean_subj = subject.strip()
+    clean_var = variant_or_topic.strip()
+
+    async with get_db() as db:
+        # 1. Перевірка: чи не зайнятий цей варіант іншим користувачем
+        async with db.execute("""
+            SELECT id, user_id, user_name, username, claimed_at
+            FROM topic_claims
+            WHERE chat_id = ? AND subject = ? AND variant_or_topic = ?
+        """, (chat_id, clean_subj, clean_var)) as cursor:
+            existing = await cursor.fetchone()
+            if existing:
+                row = dict(existing)
+                if row["user_id"] == user_id:
+                    return True, f"Ви вже закріпили за собою варіант/тему «{clean_var}».", row
+                holder = row["user_name"]
+                if row.get("username"):
+                    holder += f" (@{row['username']})"
+                return False, f"Варіант/тема «{clean_var}» вже зайнятий(а) студентом {holder}!", row
+
+        # 2. Якщо користувач вже займав інший варіант у цьому предметі, звільняємо старий
+        await db.execute("""
+            DELETE FROM topic_claims
+            WHERE chat_id = ? AND subject = ? AND user_id = ?
+        """, (chat_id, clean_subj, user_id))
+
+        # 3. Закріплюємо новий варіант
+        await db.execute("""
+            INSERT INTO topic_claims (chat_id, subject, variant_or_topic, user_id, user_name, username)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (chat_id, clean_subj, clean_var, user_id, user_name, username))
+        await db.commit()
+
+        return True, f"Успішно закріплено варіант/тему «{clean_var}» з предмету «{clean_subj}»!", None
+
+
+async def unclaim_topic_db(chat_id: int, subject: str, user_id: int) -> bool:
+    """Звільнити закріплений варіант/тему користувача."""
+    clean_subj = subject.strip()
+    async with get_db() as db:
+        cursor = await db.execute("""
+            DELETE FROM topic_claims
+            WHERE chat_id = ? AND subject = ? AND user_id = ?
+        """, (chat_id, clean_subj, user_id))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_claims_by_subject_db(chat_id: int, subject: str) -> list[dict]:
+    """Отримати всі зайняті варіанти/теми з даного предмету."""
+    clean_subj = subject.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, subject, variant_or_topic, user_id, user_name, username, claimed_at
+            FROM topic_claims
+            WHERE chat_id = ? AND subject = ?
+            ORDER BY variant_or_topic ASC
+        """, (chat_id, clean_subj)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_free_variants_db(chat_id: int, subject: str, max_variants: int = 30) -> list[int]:
+    """Знайти вільні числові варіанти (наприклад від 1 до 30) з предмету."""
+    claims = await get_claims_by_subject_db(chat_id, subject)
+    taken_numbers = set()
+    for c in claims:
+        var_str = c["variant_or_topic"].strip()
+        if var_str.isdigit():
+            taken_numbers.add(int(var_str))
+        else:
+            # Спроба витягти число з рядків типу "Варіант 5" чи "№5"
+            import re
+            m = re.search(r'\b\d+\b', var_str)
+            if m:
+                taken_numbers.add(int(m.group(0)))
+
+    free_list = [i for i in range(1, max_variants + 1) if i not in taken_numbers]
+    return free_list
+
 
