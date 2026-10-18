@@ -107,6 +107,19 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця рейтингової системи оцінювання (РСО) та калькулятора автоматів
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS rso_grading (
+                subject TEXT PRIMARY KEY,
+                total_labs INTEGER DEFAULT 4,
+                points_per_lab REAL DEFAULT 15.0,
+                mkr_points REAL DEFAULT 20.0,
+                exam_points REAL DEFAULT 20.0,
+                auto_pass_threshold REAL DEFAULT 60.0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +418,59 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# КАЛЬКУЛЯТОР АВТОМАТІВ ТА РСО (/grade)
+# ==========================================
+
+async def set_rso_config_db(
+    subject: str,
+    total_labs: int = 4,
+    points_per_lab: float = 15.0,
+    mkr_points: float = 20.0,
+    exam_points: float = 20.0,
+    auto_pass_threshold: float = 60.0
+) -> bool:
+    """Зберегти або оновити конфігурацію РСО для дисципліни."""
+    clean_subj = subject.strip()
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO rso_grading (subject, total_labs, points_per_lab, mkr_points, exam_points, auto_pass_threshold, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(subject) DO UPDATE SET
+                total_labs = excluded.total_labs,
+                points_per_lab = excluded.points_per_lab,
+                mkr_points = excluded.mkr_points,
+                exam_points = excluded.exam_points,
+                auto_pass_threshold = excluded.auto_pass_threshold,
+                created_at = CURRENT_TIMESTAMP
+        """, (clean_subj, total_labs, points_per_lab, mkr_points, exam_points, auto_pass_threshold))
+        await db.commit()
+        return True
+
+
+async def get_rso_config_db(subject: str) -> dict:
+    """Отримати налаштування РСО для дисципліни або повернути дефолтні КПІ."""
+    clean_subj = subject.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT subject, total_labs, points_per_lab, mkr_points, exam_points, auto_pass_threshold
+            FROM rso_grading
+            WHERE LOWER(subject) = LOWER(?)
+        """, (clean_subj,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+
+    # Дефолтний шаблон РСО КПІ (100-бальна шкала)
+    return {
+        "subject": clean_subj,
+        "total_labs": 4,
+        "points_per_lab": 15.0,
+        "mkr_points": 20.0,
+        "exam_points": 20.0,
+        "auto_pass_threshold": 60.0
+    }
+
 

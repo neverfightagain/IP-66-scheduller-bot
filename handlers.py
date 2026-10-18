@@ -583,3 +583,93 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# КАЛЬКУЛЯТОР АВТОМАТІВ ТА БАЛІВ (/grade)
+# ==========================================
+
+@router.message(Command("grade"))
+@router.message(Command("points"))
+async def cmd_grade(message: Message):
+    from database import get_rso_config_db
+    from grade_calculator import calculate_grade_projection, format_grade_report
+
+    raw = message.text.replace("/grade", "").replace("/points", "").strip()
+    if not raw:
+        await safe_answer(
+            message,
+            "ℹ️ <b>Формат розрахунку балів та автомату:</b>\n"
+            "<code>/grade [Предмет] &lt;поточні_бали&gt;</code>\n\n"
+            "Приклади:\n"
+            "• <code>/grade 52</code>\n"
+            "• <code>/grade АСД 48.5</code>"
+        )
+        return
+
+    tokens = raw.split()
+    subject = "Дисципліна"
+    points = 0.0
+
+    if len(tokens) == 1:
+        try:
+            points = float(tokens[0].replace(",", "."))
+        except ValueError:
+            await safe_answer(message, "❌ Вкажіть числову кількість балів (наприклад <code>/grade 48</code>).")
+            return
+    else:
+        try:
+            points = float(tokens[-1].replace(",", "."))
+            subject = " ".join(tokens[:-1])
+        except ValueError:
+            await safe_answer(message, "❌ Останнім параметром мають бути числові бали: <code>/grade АСД 48</code>")
+            return
+
+    rso = await get_rso_config_db(subject)
+    proj = calculate_grade_projection(points, rso)
+    text, kb = format_grade_report(subject, points, proj)
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.message(Command("set_rso"))
+async def cmd_set_rso(message: Message):
+    from database import set_rso_config_db
+
+    raw = message.text.replace("/set_rso", "", 1).strip()
+    parts = [p.strip() for p in raw.split("|")]
+    if len(parts) < 3:
+        await safe_answer(
+            message,
+            "ℹ️ <b>Формат налаштування критеріїв РСО:</b>\n"
+            "<code>/set_rso Предмет | Кількість лаб | Балів за лабу | [Балів МКР]</code>\n\n"
+            "Приклад:\n"
+            "<code>/set_rso Комп'ютерні мережі | 5 | 12 | 20</code>"
+        )
+        return
+
+    subject = parts[0]
+    try:
+        labs_cnt = int(parts[1])
+        pts_lab = float(parts[2].replace(",", "."))
+        mkr = float(parts[3].replace(",", ".")) if len(parts) > 3 else 20.0
+    except ValueError:
+        await safe_answer(message, "❌ Помилка в числових значеннях критеріїв.")
+        return
+
+    await set_rso_config_db(subject, total_labs=labs_cnt, points_per_lab=pts_lab, mkr_points=mkr)
+    await safe_answer(
+        message,
+        f"✅ <b>Критерії РСО для «{subject}» збережено!</b>\n"
+        f"• Лабораторних робіт: {labs_cnt}\n"
+        f"• Балів за кожну лабу: {pts_lab} б.\n"
+        f"• Вага МКР: {mkr} б.\n"
+        f"• Поріг автомату: 60 б."
+    )
+
+
+@router.callback_query(F.data == "grade:scale")
+async def cb_grade_scale(callback: CallbackQuery):
+    from grade_calculator import format_ects_scale_text
+    await callback.answer()
+    await callback.message.answer(format_ects_scale_text(), parse_mode="HTML")
+
