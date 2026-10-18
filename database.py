@@ -107,6 +107,26 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця графіка МКР, колоквіумів та іспитів
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS exams (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                event_date TIMESTAMP NOT NULL,
+                location TEXT DEFAULT '',
+                format TEXT DEFAULT 'Очно',
+                required_labs TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                created_by TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_exams_date
+            ON exams (event_date);
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +425,49 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# ГРАФІК МКР, КОЛОКВІУМІВ ТА ІСПИТІВ (/exams)
+# ==========================================
+
+async def add_exam_db(
+    subject: str,
+    event_type: str,
+    event_date: str,
+    location: str = "",
+    format_type: str = "Очно",
+    required_labs: str = "",
+    notes: str = "",
+    created_by: str = "Староста"
+) -> int:
+    """Додати контрольну роботу, екзамен або колоквіум."""
+    async with get_db() as db:
+        cursor = await db.execute("""
+            INSERT INTO exams (subject, event_type, event_date, location, format, required_labs, notes, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (subject.strip(), event_type.strip(), event_date.strip(), location.strip(), format_type.strip(), required_labs.strip(), notes.strip(), created_by.strip()))
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_upcoming_exams_db() -> list[dict]:
+    """Отримати всі майбутні іспити та МКР."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, subject, event_type, event_date, location, format, required_labs, notes, created_by, created_at
+            FROM exams
+            ORDER BY event_date ASC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def delete_exam_db(exam_id: int) -> bool:
+    """Видалити іспит або МКР за ID."""
+    async with get_db() as db:
+        cursor = await db.execute("DELETE FROM exams WHERE id = ?", (exam_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
 

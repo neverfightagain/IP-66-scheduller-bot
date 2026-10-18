@@ -583,3 +583,107 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# ГРАФІК МКР, КОЛОКВІУМІВ ТА ІСПИТІВ (/exams)
+# ==========================================
+
+@router.message(Command("exams"))
+@router.message(Command("mkr"))
+async def cmd_exams(message: Message):
+    from database import get_upcoming_exams_db
+    from exams_tracker import format_exams_dashboard
+
+    exams = await get_upcoming_exams_db()
+    text, kb = format_exams_dashboard(exams)
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.message(Command("add_exam"))
+async def cmd_add_exam(message: Message):
+    from database import add_exam_db
+    from handlers import normalize_due_date
+
+    raw = message.text.replace("/add_exam", "", 1).strip()
+    parts = [p.strip() for p in raw.split("|")]
+    if len(parts) < 3:
+        await safe_answer(
+            message,
+            "ℹ️ <b>Формат додавання контрольної/іспиту:</b>\n"
+            "<code>/add_exam Предмет | Тип (МКР/Колоквіум/Екзамен/Залік) | РРРР-ММ-ДД HH:MM | [Ауд/Zoom] | [Вимоги допуску] | [Примітки]</code>\n\n"
+            "Приклад:\n"
+            "<code>/add_exam АСД | МКР | 2026-10-30 14:15 | ауд. 315 | Лаби 1-3 | Розрахункова робота обов'язкова</code>"
+        )
+        return
+
+    subject = parts[0]
+    event_type = parts[1]
+    raw_date = parts[2]
+    norm_date = normalize_due_date(raw_date)
+    if not norm_date:
+        await safe_answer(message, "❌ Невірний формат дати! Використовуйте <code>РРРР-ММ-ДД HH:MM</code> або <code>ДД.ММ.РРРР HH:MM</code>.")
+        return
+
+    location = parts[3] if len(parts) > 3 else "Аудиторія уточнюється"
+    req_labs = parts[4] if len(parts) > 4 else ""
+    notes = parts[5] if len(parts) > 5 else ""
+    who = message.from_user.full_name
+
+    eid = await add_exam_db(
+        subject=subject,
+        event_type=event_type,
+        event_date=norm_date,
+        location=location,
+        required_labs=req_labs,
+        notes=notes,
+        created_by=who
+    )
+
+    await safe_answer(
+        message,
+        f"✅ <b>{event_type} успішно внесено до графіку!</b>\n"
+        f"🆔 ID: <code>{eid}</code>\n"
+        f"📚 <b>{subject}</b>\n"
+        f"📅 <b>Дата:</b> <code>{norm_date}</code>\n"
+        f"📍 <b>Місце:</b> {location}\n"
+        f"🔒 <b>Допуск:</b> {req_labs or 'Вільний'}"
+    )
+
+
+@router.message(Command("del_exam"))
+async def cmd_del_exam(message: Message):
+    from database import delete_exam_db
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip().isdigit():
+        await safe_answer(message, "ℹ️ Вкажіть числовий ID іспиту/МКР для видалення:\n<code>/del_exam &lt;id&gt;</code>")
+        return
+
+    eid = int(parts[1].strip())
+    ok = await delete_exam_db(eid)
+    if ok:
+        await safe_answer(message, f"🗑 Подію #{eid} успішно видалено з графіка.")
+    else:
+        await safe_answer(message, f"ℹ️ Подію #{eid} не знайдено.")
+
+
+@router.callback_query(F.data == "exam:refresh")
+async def cb_exam_refresh(callback: CallbackQuery):
+    from database import get_upcoming_exams_db
+    from exams_tracker import format_exams_dashboard
+
+    exams = await get_upcoming_exams_db()
+    text, kb = format_exams_dashboard(exams)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await callback.answer("Графік оновлено!", show_alert=False)
+    except Exception:
+        await callback.answer()
+
+
+@router.callback_query(F.data == "exam:deadlines")
+async def cb_exam_deadlines(callback: CallbackQuery):
+    from handlers import cmd_deadlines
+    await callback.answer()
+    await cmd_deadlines(callback.message)
+
