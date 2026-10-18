@@ -107,6 +107,16 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця трекінгу попереджень про палаючі дедлайни (24г пінг)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS urgent_deadline_pings (
+                assignment_id TEXT PRIMARY KEY,
+                pinged_24h INTEGER DEFAULT 0,
+                pinged_6h INTEGER DEFAULT 0,
+                last_pinged_at TIMESTAMP
+            );
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +415,37 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# ПІНГ БОРЖНИКІВ ТА ПАЛАЮЧІ ДЕДЛАЙНИ
+# ==========================================
+
+async def is_deadline_pinged_db(assignment_id: str, ping_type: str = "24h") -> bool:
+    """Перевірити, чи надсилалося вже нагадування про палаючий дедлайн."""
+    col = "pinged_24h" if ping_type == "24h" else "pinged_6h"
+    async with get_db() as db:
+        async with db.execute(f"""
+            SELECT {col} FROM urgent_deadline_pings
+            WHERE assignment_id = ?
+        """, (assignment_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row and row[col]:
+                return True
+            return False
+
+
+async def mark_deadline_pinged_db(assignment_id: str, ping_type: str = "24h"):
+    """Позначити дедлайн як сповіщений."""
+    col = "pinged_24h" if ping_type == "24h" else "pinged_6h"
+    async with get_db() as db:
+        await db.execute(f"""
+            INSERT INTO urgent_deadline_pings (assignment_id, {col}, last_pinged_at)
+            VALUES (?, 1, CURRENT_TIMESTAMP)
+            ON CONFLICT(assignment_id) DO UPDATE SET
+                {col} = 1,
+                last_pinged_at = CURRENT_TIMESTAMP
+        """, (assignment_id,))
+        await db.commit()
+
 

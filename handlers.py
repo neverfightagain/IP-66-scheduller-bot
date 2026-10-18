@@ -583,3 +583,49 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# ПІНГ БОРЖНИКІВ ЗА 24г ДО ДЕДЛАЙНУ (/ping_debtors)
+# ==========================================
+
+@router.message(Command("ping_debtors"))
+async def cmd_ping_debtors(message: Message):
+    from database import get_active_assignments_db
+    from debtor_pinger import get_urgent_assignments_for_ping, format_urgent_ping_message
+
+    assignments = await get_active_assignments_db()
+    urgent = get_urgent_assignments_for_ping(assignments)
+
+    if not urgent:
+        await safe_answer(message, "✅ <b>Немає палаючих дедлайнів на найближчі 24 години!</b>\nВсі завдання мають запас часу.")
+        return
+
+    for a in urgent:
+        text, kb = format_urgent_ping_message(a, hours_left=a["hours_left"])
+        await safe_answer(message, text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("ping_done:"))
+async def cb_ping_done(callback: CallbackQuery):
+    from database import record_student_submission_db
+    aid = callback.data.split(":")[1]
+    user_name = callback.from_user.full_name
+
+    await callback.answer(f"✅ Дякуємо, {user_name}! Вашу здачу зафіксовано.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("ping_info:"))
+async def cb_ping_info(callback: CallbackQuery):
+    from database import get_active_assignments_db
+    aid = callback.data.split(":")[1]
+    assignments = await get_active_assignments_db()
+    found = next((a for a in assignments if a["id"] == aid), None)
+
+    if found and (found.get("ai_summary") or found.get("description")):
+        desc = found.get("ai_summary") or found.get("description")
+        await callback.answer()
+        await callback.message.answer(f"📋 <b>Вимоги до завдання {found.get('title')}:</b>\n\n{desc}", parse_mode="HTML")
+    else:
+        await callback.answer("Детальний опис відсутній.", show_alert=True)
+
