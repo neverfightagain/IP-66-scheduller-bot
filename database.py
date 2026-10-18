@@ -107,6 +107,15 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця автономного офлайн-кешу Campus API (Resilience Cache)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS campus_schedule_cache (
+                group_id TEXT PRIMARY KEY,
+                schedule_json TEXT NOT NULL,
+                cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +414,43 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# АВТОНОМНИЙ ОФЛАЙН-КЕШ CAMPUS API
+# ==========================================
+
+async def save_campus_schedule_cache_db(group_id: str | int, schedule_data: dict):
+    """Зберегти знімок розкладу в офлайн-кеш SQLite."""
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO campus_schedule_cache (group_id, schedule_json, cached_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(group_id) DO UPDATE SET
+                schedule_json = excluded.schedule_json,
+                cached_at = CURRENT_TIMESTAMP
+        """, (str(group_id), json.dumps(schedule_data, ensure_ascii=False)))
+        await db.commit()
+
+
+async def get_campus_schedule_cache_db(group_id: str | int) -> tuple[dict | None, str | None]:
+    """
+    Отримати останній збережений кеш розкладу для групи.
+    Повертає: (дані_розкладу: dict | None, дата_кешування: str | None).
+    """
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT schedule_json, cached_at
+            FROM campus_schedule_cache
+            WHERE group_id = ?
+        """, (str(group_id),)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                try:
+                    data = json.loads(row["schedule_json"])
+                    return data, str(row["cached_at"])
+                except Exception:
+                    return None, None
+            return None, None
+
 

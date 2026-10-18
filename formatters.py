@@ -159,6 +159,9 @@ def format_morning_digest(week: int | str | None, day_name: str | None, lessons:
             f"   👤 {llect}{link_str}"
         )
 
+    if any(isinstance(l, dict) and l.get("is_offline_cache") for l in lessons):
+        lines.append("⚠️ <i>Сервер розкладу КПІ (Campus API) тимчасово недоступний. Дані надано з автономного офлайн-кешу бота.</i>")
+
     if auto_delete_time:
         lines.append(f"🧹 <i>Повідомлення буде автоматично видалено після завершення пар (о {escape_html_text(auto_delete_time)})</i>")
 
