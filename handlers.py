@@ -583,3 +583,75 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# ЗВЕДЕННЯ ЗАБОРГОВАНОСТЕЙ ТА БОРЖНИКІВ (/debts)
+# ==========================================
+
+@router.message(Command("debts"))
+async def cmd_debts(message: Message):
+    from database import get_active_assignments_db
+    from debts_tracker import calculate_group_debts, format_group_debts_report
+
+    assignments = await get_active_assignments_db()
+    summary = calculate_group_debts(assignments)
+    text, kb = format_group_debts_report(summary)
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.message(Command("mydebts"))
+async def cmd_mydebts(message: Message):
+    from database import get_student_debts_db
+    from debts_tracker import format_student_debts_report
+
+    parts = message.text.split(maxsplit=1)
+    name = parts[1].strip() if len(parts) > 1 else message.from_user.full_name
+
+    debts = await get_student_debts_db(name)
+    text = format_student_debts_report(name, debts)
+    await safe_answer(message, text)
+
+
+@router.message(Command("mark_done"))
+async def cmd_mark_done(message: Message):
+    from database import record_student_submission_db
+    raw = message.text.replace("/mark_done", "", 1).strip()
+    parts = [p.strip() for p in raw.split("|")]
+    if len(parts) < 2:
+        await safe_answer(
+            message,
+            "ℹ️ <b>Формат фіксації здачі:</b>\n"
+            "<code>/mark_done &lt;assignment_id&gt; | &lt;Прізвище Ім'я&gt;</code>\n\n"
+            "Приклад:\n"
+            "<code>/mark_done asd_lab1 | Шевченко Тарас</code>"
+        )
+        return
+
+    aid = parts[0]
+    sname = parts[1]
+    await record_student_submission_db(aid, sname, status="submitted")
+    await safe_answer(message, f"✅ Здачу завдання <code>{aid}</code> для студента <b>{sname}</b> успішно зафіксовано!")
+
+
+@router.callback_query(F.data == "debts:refresh")
+async def cb_debts_refresh(callback: CallbackQuery):
+    from database import get_active_assignments_db
+    from debts_tracker import calculate_group_debts, format_group_debts_report
+
+    assignments = await get_active_assignments_db()
+    summary = calculate_group_debts(assignments)
+    text, kb = format_group_debts_report(summary)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await callback.answer("Дані оновлено!", show_alert=False)
+    except Exception:
+        await callback.answer()
+
+
+@router.callback_query(F.data == "debts:deadlines")
+async def cb_debts_deadlines(callback: CallbackQuery):
+    from handlers import cmd_deadlines
+    await callback.answer()
+    await cmd_deadlines(callback.message)
+

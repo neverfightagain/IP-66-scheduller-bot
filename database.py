@@ -107,6 +107,24 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця обліку здачі робіт та пошуку боржників
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS student_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id TEXT NOT NULL,
+                student_name TEXT NOT NULL,
+                student_id INTEGER,
+                status TEXT DEFAULT 'pending',
+                grade REAL,
+                submitted_at TIMESTAMP,
+                UNIQUE (assignment_id, student_name)
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_student_submissions_assign
+            ON student_submissions (assignment_id);
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +423,63 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# ОБЛІК ЗДАЧІ РОБІТ ТА БОРЖНИКІВ
+# ==========================================
+
+async def record_student_submission_db(
+    assignment_id: str,
+    student_name: str,
+    status: str = "submitted",
+    grade: float | None = None,
+    student_id: int | None = None
+) -> bool:
+    """Зафіксувати статус здачі роботи студентом."""
+    clean_aid = assignment_id.strip()
+    clean_name = student_name.strip()
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO student_submissions (assignment_id, student_name, student_id, status, grade, submitted_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(assignment_id, student_name) DO UPDATE SET
+                status = excluded.status,
+                grade = excluded.grade,
+                student_id = COALESCE(excluded.student_id, student_submissions.student_id),
+                submitted_at = CURRENT_TIMESTAMP
+        """, (clean_aid, clean_name, student_id, status, grade))
+        await db.commit()
+        return True
+
+
+async def get_assignment_submissions_db(assignment_id: str) -> list[dict]:
+    """Отримати статус здачі завдання всіма студентами."""
+    clean_aid = assignment_id.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, assignment_id, student_name, student_id, status, grade, submitted_at
+            FROM student_submissions
+            WHERE assignment_id = ?
+        """, (clean_aid,)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_student_debts_db(student_name: str) -> list[dict]:
+    """Отримати список незданих прострочених завдань для конкретного студента."""
+    clean_name = student_name.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT a.id, a.course_id, a.title, a.due_date, s.status as sub_status
+            FROM assignments a
+            LEFT JOIN student_submissions s
+              ON a.id = s.assignment_id AND LOWER(s.student_name) = LOWER(?)
+            WHERE a.status = 'active'
+              AND (s.status IS NULL OR s.status != 'submitted')
+            ORDER BY a.due_date ASC
+        """, (clean_name,)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
 
