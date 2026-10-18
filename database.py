@@ -107,6 +107,16 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця знімків розкладу для відстеження змін деканату (Diff Watcher)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS schedule_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +415,38 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# ДЕТЕКТОР ТИХИХ ЗМІН РОЗКЛАДУ (DIFF WATCHER)
+# ==========================================
+
+async def save_schedule_snapshot_db(group_id: str | int, schedule_data: dict):
+    """Зберегти новий знімок розкладу."""
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO schedule_snapshots (group_id, snapshot_json, created_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        """, (str(group_id), json.dumps(schedule_data, ensure_ascii=False)))
+        await db.commit()
+
+
+async def get_latest_schedule_snapshot_db(group_id: str | int) -> dict | None:
+    """Отримати останній збережений знімок розкладу для порівняння."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT snapshot_json
+            FROM schedule_snapshots
+            WHERE group_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+        """, (str(group_id),)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                try:
+                    return json.loads(row["snapshot_json"])
+                except Exception:
+                    return None
+            return None
+
 

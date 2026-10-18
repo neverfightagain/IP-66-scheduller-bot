@@ -583,3 +583,36 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# ДЕТЕКТОР ТИХИХ ЗМІН РОЗКЛАДУ (/check_diff)
+# ==========================================
+
+@router.message(Command("check_diff"))
+async def cmd_check_diff(message: Message, bot: Bot):
+    from diff_watcher import calculate_schedule_diff, format_schedule_diff_alert
+    from database import get_latest_schedule_snapshot_db, save_schedule_snapshot_db
+    from kpi_api import get_raw_schedule
+    from config import KPI_GROUP_ID
+
+    wait_msg = await safe_answer(message, "🔍 <i>Звіряю розклад із базою Campus API на наявність змін...</i>")
+    try:
+        current_schedule, _, _ = await get_raw_schedule(KPI_GROUP_ID)
+        old_snapshot = await get_latest_schedule_snapshot_db(KPI_GROUP_ID)
+
+        if not old_snapshot:
+            await save_schedule_snapshot_db(KPI_GROUP_ID, current_schedule)
+            await safe_answer(message, "ℹ️ <b>Еталонний знімок розкладу збережено.</b>\nПри наступних змінах деканату бот надішле сповіщення.")
+            return
+
+        diffs = calculate_schedule_diff(old_snapshot, current_schedule)
+        if not diffs:
+            await safe_answer(message, "✅ <b>Розклад без змін!</b>\nДеканат не змінював аудиторії, пари чи викладачів.")
+        else:
+            await save_schedule_snapshot_db(KPI_GROUP_ID, current_schedule)
+            text = format_schedule_diff_alert(diffs)
+            await safe_answer(message, text)
+    except Exception as e:
+        await safe_answer(message, f"⚠️ Не вдалося перевірити зміни: {escape_html_text(str(e))}")
+
