@@ -583,3 +583,69 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# ХАБ МЕТОДИЧОК ТА МАТЕРІАЛІВ (/labs)
+# ==========================================
+
+@router.message(Command("labs"))
+async def cmd_labs(message: Message):
+    from database import get_lab_materials_by_subject_db
+    from labs_hub import format_labs_hub_message
+
+    parts = message.text.split(maxsplit=1)
+    subject = parts[1].strip() if len(parts) > 1 else ""
+
+    materials = await get_lab_materials_by_subject_db(subject if subject else None)
+    text, kb = format_labs_hub_message(subject, materials)
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.message(Command("add_lab"))
+async def cmd_add_lab(message: Message):
+    from database import add_lab_material_db
+
+    raw = message.text.replace("/add_lab", "", 1).strip()
+    parts = [p.strip() for p in raw.split("|")]
+    if len(parts) < 3:
+        await safe_answer(
+            message,
+            "ℹ️ <b>Формат додавання матеріалу:</b>\n"
+            "<code>/add_lab Предмет | Назва матеріалу | Посилання | [Опис]</code>\n\n"
+            "Приклад:\n"
+            "<code>/add_lab АСД | Методичка до Лаби 1-3 | https://drive.google.com/... | Основний посібник</code>"
+        )
+        return
+
+    subject = parts[0]
+    title = parts[1]
+    url = parts[2]
+    desc = parts[3] if len(parts) > 3 else ""
+    who = message.from_user.full_name
+
+    mid = await add_lab_material_db(subject, title, url, description=desc, added_by=who)
+    await safe_answer(
+        message,
+        f"✅ <b>Матеріал успішно додано до хабу!</b>\n"
+        f"🆔 ID: <code>{mid}</code>\n"
+        f"📚 <b>{subject}</b> — {title}\n"
+        f"🔗 <a href='{url}'>Перейти за посиланням</a>"
+    )
+
+
+@router.message(Command("del_lab"))
+async def cmd_del_lab(message: Message):
+    from database import delete_lab_material_db
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip().isdigit():
+        await safe_answer(message, "ℹ️ Вкажіть ID матеріалу для видалення:\n<code>/del_lab &lt;id&gt;</code>")
+        return
+
+    mid = int(parts[1].strip())
+    ok = await delete_lab_material_db(mid)
+    if ok:
+        await safe_answer(message, f"🗑 Матеріал #{mid} успішно видалено з хабу.")
+    else:
+        await safe_answer(message, f"ℹ️ Матеріал #{mid} не знайдено.")
+

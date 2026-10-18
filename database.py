@@ -107,6 +107,24 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця хабу методичок та матеріалів лабораторних
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS lab_materials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                lab_title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                material_type TEXT DEFAULT 'link',
+                description TEXT DEFAULT '',
+                added_by TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_lab_materials_subj
+            ON lab_materials (subject);
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +423,57 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# ХАБ МЕТОДИЧОК ТА МАТЕРІАЛІВ (/labs)
+# ==========================================
+
+async def add_lab_material_db(
+    subject: str,
+    lab_title: str,
+    url: str,
+    material_type: str = "link",
+    description: str = "",
+    added_by: str = "Староста"
+) -> int:
+    """Додати посилання на методичку або умову лабораторної."""
+    async with get_db() as db:
+        cursor = await db.execute("""
+            INSERT INTO lab_materials (subject, lab_title, url, material_type, description, added_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (subject.strip(), lab_title.strip(), url.strip(), material_type.strip(), description.strip(), added_by.strip()))
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_lab_materials_by_subject_db(subject: str = None) -> list[dict]:
+    """Отримати всі збережені матеріали лабораторних з предмету."""
+    async with get_db() as db:
+        if subject:
+            async with db.execute("""
+                SELECT id, subject, lab_title, url, material_type, description, added_by, created_at
+                FROM lab_materials
+                WHERE LOWER(subject) = LOWER(?)
+                ORDER BY lab_title ASC
+            """, (subject.strip(),)) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+        else:
+            async with db.execute("""
+                SELECT id, subject, lab_title, url, material_type, description, added_by, created_at
+                FROM lab_materials
+                ORDER BY subject ASC, lab_title ASC
+            """) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+
+async def delete_lab_material_db(material_id: int) -> bool:
+    """Видалити матеріал за ID."""
+    async with get_db() as db:
+        cursor = await db.execute("DELETE FROM lab_materials WHERE id = ?", (material_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
 
