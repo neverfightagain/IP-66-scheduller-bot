@@ -583,3 +583,49 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# АТЕСТАЦІЙНИЙ РАДАР ГРУПИ (/attestation)
+# ==========================================
+
+@router.message(Command("attestation"))
+async def cmd_attestation(message: Message):
+    from database import get_active_assignments_db
+    from attestation_radar import calculate_semester_week, analyze_attestation_status, format_attestation_report
+
+    parts = message.text.split(maxsplit=1)
+    att_num = 1
+    if len(parts) > 1 and parts[1].strip() in ("1", "2"):
+        att_num = int(parts[1].strip())
+    else:
+        sem = calculate_semester_week()
+        att_num = sem["target_attestation"]
+
+    assignments = await get_active_assignments_db()
+    analysis = analyze_attestation_status(assignments, attestation_num=att_num)
+    text, kb = format_attestation_report(analysis)
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("att:"))
+async def cb_attestation_actions(callback: CallbackQuery):
+    from database import get_active_assignments_db
+    from attestation_radar import analyze_attestation_status, format_attestation_report
+
+    data = callback.data.split(":")
+    att_num = 1
+    if len(data) == 2:
+        att_num = int(data[1])
+    elif len(data) >= 3 and data[1] == "refresh":
+        att_num = int(data[2])
+
+    assignments = await get_active_assignments_db()
+    analysis = analyze_attestation_status(assignments, attestation_num=att_num)
+    text, kb = format_attestation_report(analysis)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await callback.answer(f"Атестація #{att_num} завантажена", show_alert=False)
+    except Exception:
+        await callback.answer()
+
