@@ -583,3 +583,53 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+# ==========================================
+# AI-СИНХРОНІЗАЦІЯ ОГОЛОШЕНЬ З ЛЕКЦІЙ (/proposals)
+# ==========================================
+
+@router.message(Command("proposals"))
+async def cmd_proposals(message: Message):
+    from database import get_pending_proposals_db
+    from announcements_sync import format_proposal_card
+
+    props = await get_pending_proposals_db()
+    if not props:
+        await safe_answer(message, "✅ <b>Немає очікуючих пропозицій змін розкладу.</b>\nВсі оголошення викладачів розглянуто або розклад актуальний.")
+        return
+
+    await safe_answer(message, f"📋 <b>Знайдено {len(props)} нерозглянутих AI-пропозицій змін розкладу:</b>")
+    for p in props:
+        text, kb = format_proposal_card(p)
+        await safe_answer(message, text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("prop:"))
+async def cb_proposal_actions(callback: CallbackQuery):
+    from announcements_sync import apply_proposal
+    from database import update_proposal_status_db
+
+    parts = callback.data.split(":")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+
+    action = parts[1]
+    pid = int(parts[2])
+
+    if action == "approve":
+        ok, msg = await apply_proposal(pid)
+        await callback.answer(msg, show_alert=True)
+        try:
+            await callback.message.edit_text(f"{callback.message.text}\n\n<b>[✅ СХВАЛЕНО СТАРОСТОЮ]</b>", parse_mode="HTML")
+        except Exception:
+            pass
+    elif action == "reject":
+        await update_proposal_status_db(pid, "rejected")
+        await callback.answer("Пропозицію відхилено", show_alert=False)
+        try:
+            await callback.message.edit_text(f"{callback.message.text}\n\n<b>[❌ ВІДХИЛЕНО СТАРОСТОЮ]</b>", parse_mode="HTML")
+        except Exception:
+            pass
+

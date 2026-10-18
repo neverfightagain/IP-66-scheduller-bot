@@ -107,6 +107,40 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця пропозицій зміни розкладу з лекцій YouTube (AI-синхронізація)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS schedule_proposals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_video_id TEXT,
+                course_name TEXT,
+                raw_announcement TEXT NOT NULL,
+                change_type TEXT NOT NULL,
+                target_date TEXT,
+                pair_number INTEGER,
+                details TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_schedule_proposals_status
+            ON schedule_proposals (status);
+        """)
+
+        # 8. Таблиця скасованих пар
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS cancelled_pairs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                pair_number INTEGER NOT NULL,
+                subject TEXT DEFAULT '',
+                reason TEXT DEFAULT '',
+                cancelled_by TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (date, pair_number)
+            );
+        """)
+
         await db.commit()
         logger.info("База даних SQLite (kpi_bot.db) успішно ініціалізована.")
 
@@ -405,4 +439,106 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# АВТОМАТИЧНА AI-СИНХРОНІЗАЦІЯ ОГОЛОШЕНЬ
+# ==========================================
+
+async def add_schedule_proposal_db(
+    source_video_id: str | None,
+    course_name: str,
+    raw_announcement: str,
+    change_type: str,
+    target_date: str | None = None,
+    pair_number: int | None = None,
+    details: str = ""
+) -> int:
+    """Зберегти нову виявлену AI-пропозицію зміни розкладу."""
+    async with get_db() as db:
+        cursor = await db.execute("""
+            INSERT INTO schedule_proposals (
+                source_video_id, course_name, raw_announcement, change_type,
+                target_date, pair_number, details, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+        """, (source_video_id, course_name.strip(), raw_announcement.strip(), change_type, target_date, pair_number, details.strip()))
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_pending_proposals_db() -> list[dict]:
+    """Отримати список нерозглянутих AI-пропозицій зміни розкладу."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, source_video_id, course_name, raw_announcement, change_type,
+                   target_date, pair_number, details, status, created_at
+            FROM schedule_proposals
+            WHERE status = 'pending'
+            ORDER BY id ASC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def update_proposal_status_db(proposal_id: int, status: str) -> bool:
+    """Оновити статус пропозиції ('approved' або 'rejected')."""
+    async with get_db() as db:
+        cursor = await db.execute("""
+            UPDATE schedule_proposals
+            SET status = ?
+            WHERE id = ?
+        """, (status, proposal_id))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_proposal_by_id_db(proposal_id: int) -> dict | None:
+    """Отримати дані конкретної пропозиції."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, source_video_id, course_name, raw_announcement, change_type,
+                   target_date, pair_number, details, status, created_at
+            FROM schedule_proposals
+            WHERE id = ?
+        """, (proposal_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def cancel_pair_db(
+    date_str: str,
+    pair_number: int,
+    subject: str = "",
+    reason: str = "",
+    cancelled_by: str = "Староста"
+) -> bool:
+    """Зафіксувати скасування пари на вказану дату."""
+    clean_date = date_str.strip()
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO cancelled_pairs (date, pair_number, subject, reason, cancelled_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(date, pair_number) DO UPDATE SET
+                subject = excluded.subject,
+                reason = excluded.reason,
+                cancelled_by = excluded.cancelled_by,
+                created_at = CURRENT_TIMESTAMP
+        """, (clean_date, pair_number, subject.strip(), reason.strip(), cancelled_by.strip()))
+        await db.commit()
+        return True
+
+
+async def get_cancelled_pairs_for_date_db(date_str: str) -> dict[int, dict]:
+    """Отримати словник усіх скасованих пар на дату."""
+    clean_date = date_str.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, date, pair_number, subject, reason, cancelled_by, created_at
+            FROM cancelled_pairs
+            WHERE date = ?
+        """, (clean_date,)) as cursor:
+            rows = await cursor.fetchall()
+            return {row["pair_number"]: dict(row) for row in rows}
+
+
 
