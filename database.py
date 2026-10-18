@@ -606,6 +606,17 @@ async def get_active_assignments_db() -> list[dict]:
             return [dict(row) for row in rows]
 
 
+async def get_all_assignments_map_db() -> dict[str, dict]:
+    """Отримати мапу ВСІХ завдань (активних і архівованих) для запобігання повторних викликів AI."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, course_id, title, description, ai_summary, due_date, status
+            FROM assignments
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return {row["id"]: dict(row) for row in rows}
+
+
 async def delete_assignment_db(assignment_id: str) -> bool:
     """Удалить задание по id."""
     async with get_db() as db:

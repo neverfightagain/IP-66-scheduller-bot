@@ -15,6 +15,7 @@ from config import BASE_DIR, KYIV_TZ
 from database import (
     add_assignment_db,
     get_active_assignments_db,
+    get_all_assignments_map_db,
     get_subscribed_chats_db,
     add_announcement_db,
     update_assignment_ai_summary_db,
@@ -128,12 +129,12 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
         now = datetime.datetime.now(KYIV_TZ)
         start_of_current_week = (now - datetime.timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Отримуємо вже збережені завдання
-        existing_assignments = await get_active_assignments_db()
-        existing_ids = {a["id"] for a in existing_assignments}
+        # Отримуємо мапу ВСІХ завдань (активних і архівованих), щоб ніколи не спалювати AI-запити повторно
+        existing_assignments_map = await get_all_assignments_map_db()
+        existing_ids = set(existing_assignments_map.keys())
 
         # Якщо в базі ще не було завдань Classroom — це первинне завантаження, спамити в чат суворо заборонено!
-        is_initial_import = not any(a["id"].startswith("gc_") for a in existing_assignments)
+        is_initial_import = not any(k.startswith("gc_") for k in existing_ids)
 
         for course in courses:
             cid = course["id"]
@@ -186,8 +187,24 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                 if due_dt_kyiv and due_dt_kyiv < start_of_current_week:
                     status = "archived"
 
-                # Якщо завдання ще немає в базі — додаємо
-                if cw_id not in existing_ids:
+                # Перевіряємо наявність завдання у базі:
+                if cw_id in existing_assignments_map:
+                    # Завдання ВЖЕ було збережено раніше: зберігаємо готову AI-вижимку, жодних викликів до Gemini!
+                    cached_data = existing_assignments_map[cw_id]
+                    ai_sum = cached_data.get("ai_summary") or ""
+
+                    # Оновлюємо статус або дедлайн, якщо вони змінились, без виклику нейромережі
+                    await add_assignment_db(
+                        assignment_id=cw_id,
+                        course_name=cname,
+                        title=title,
+                        due_date=due_date_str,
+                        description=desc,
+                        ai_summary=ai_sum,
+                        status=status
+                    )
+                else:
+                    # АБСОЛЮТНО НОВЕ ЗАВДАННЯ: викликаємо Gemini рівно 1 раз
                     ai_sum = ""
                     if desc and desc.strip():
                         try:
@@ -208,6 +225,7 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                         ai_summary=ai_sum,
                         status=status
                     )
+                    existing_assignments_map[cw_id] = {"ai_summary": ai_sum, "status": status}
 
                     # УМОВИ ДЛЯ СПОВІЩЕННЯ У ЧАТ:
                     # 1. Ніколи не спамити під час первинного імпорту бази!
