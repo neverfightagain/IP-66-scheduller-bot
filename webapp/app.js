@@ -46,6 +46,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return name || surname || fullName.trim() || 'Студент';
     }
 
+    function formatLocation(loc) {
+        if (!loc) return 'Онлайн';
+        if (typeof loc === 'object') {
+            return loc.title || loc.name || 'Онлайн';
+        }
+        const s = String(loc).trim();
+        return s || 'Онлайн';
+    }
+
     // Параметри URL від бота (chat_id, subject)
     const urlParams = new URLSearchParams(window.location.search);
     const chatId = parseInt(urlParams.get('chat_id')) || 0;
@@ -219,8 +228,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Modal Sheet Functions
+    let isClosingModal = false;
+
     function openModal({ tag, title, time, body, linkUrl, linkText }) {
         if (!modalBackdrop) return;
+        const modalSheet = document.getElementById('modal-sheet');
+        if (modalSheet) modalSheet.classList.remove('closing');
+        modalBackdrop.classList.remove('closing');
+        isClosingModal = false;
+
         if (modalTag) modalTag.textContent = tag || 'Деталі';
         if (modalTitle) modalTitle.textContent = title || '';
         if (modalTime) modalTime.textContent = time || '';
@@ -247,7 +263,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function closeModal() {
-        if (modalBackdrop) modalBackdrop.classList.add('hidden');
+        if (!modalBackdrop || modalBackdrop.classList.contains('hidden') || isClosingModal) return;
+        const modalSheet = document.getElementById('modal-sheet');
+        if (!modalSheet) {
+            modalBackdrop.classList.add('hidden');
+            return;
+        }
+
+        isClosingModal = true;
+        modalSheet.classList.add('closing');
+        modalBackdrop.classList.add('closing');
+
+        setTimeout(() => {
+            modalBackdrop.classList.add('hidden');
+            modalSheet.classList.remove('closing');
+            modalBackdrop.classList.remove('closing');
+            isClosingModal = false;
+        }, 220);
     }
 
     if (btnCloseModal) btnCloseModal.addEventListener('click', closeModal);
@@ -328,7 +360,7 @@ document.addEventListener('DOMContentLoaded', () => {
         openModal({
             tag: `Пара ${lesson.pair_number || 1} (${lesson.time || '10:15'})`,
             title: lesson.name,
-            time: `${lesson.type || 'Пара'} • ${lesson.location || 'Онлайн'}`,
+            time: `${lesson.type || 'Пара'} • ${formatLocation(lesson.location)}`,
             body: `
                 <div style="margin-bottom:8px;"><b>👤 Викладач:</b> ${escapeHtml(lesson.lecturer || 'Не вказано')}</div>
                 ${lesson.link_comment ? `<div style="font-size:12.5px; color:#6D28D9; background:#F3E8FF; padding:8px 12px; border-radius:12px; margin-bottom:8px;">📝 ${escapeHtml(lesson.link_comment)}</div>` : ''}
@@ -833,7 +865,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                             ${linkBadge}
                                         </div>
                                         <span class="task-title">${escapeHtml(l.name)}</span>
-                                        <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')} • ${escapeHtml(l.location || 'Онлайн')}</span>
+                                        <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')} • ${escapeHtml(formatLocation(l.location))}</span>
                                     </div>
                                 </div>
                             `;
@@ -878,7 +910,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     ${linkBadge}
                                 </div>
                                 <span class="task-title">${escapeHtml(l.name)}</span>
-                                <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')} • ${escapeHtml(l.location || 'Онлайн')}</span>
+                                <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')} • ${escapeHtml(formatLocation(l.location))}</span>
                             </div>
                         </div>
                     `;

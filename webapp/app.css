@@ -890,16 +890,29 @@ body {
     transition: opacity 0.25s ease;
 }
 
+.modal-backdrop.closing {
+    animation: backdropFadeOut 0.22s ease forwards;
+}
+
+@keyframes backdropFadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
 .modal-sheet {
     background: #FFFFFF;
     width: 100%;
     max-width: 460px;
     border-radius: 28px 28px 0 0;
-    padding: 16px 22px 34px 22px;
+    padding: 20px 22px 34px 22px;
     box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.15);
     animation: sheetSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     max-height: 85vh;
     overflow-y: auto;
+}
+
+.modal-sheet.closing {
+    animation: sheetSlideDown 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes sheetSlideUp {
@@ -907,12 +920,13 @@ body {
     to { transform: translateY(0); }
 }
 
+@keyframes sheetSlideDown {
+    from { transform: translateY(0); }
+    to { transform: translateY(100%); }
+}
+
 .modal-drag-handle {
-    width: 42px;
-    height: 4.5px;
-    border-radius: 3px;
-    background: #E2E8F0;
-    margin: 0 auto 14px auto;
+    display: none;
 }
 
 .modal-header {

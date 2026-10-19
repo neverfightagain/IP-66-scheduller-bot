@@ -112,6 +112,14 @@ async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple
             if today_str not in dates:
                 continue
 
+        loc_raw = p.get("location")
+        if isinstance(loc_raw, dict):
+            loc_val = loc_raw.get("title") or loc_raw.get("name") or "Онлайн"
+        elif isinstance(loc_raw, str):
+            loc_val = loc_raw.strip() or "Онлайн"
+        else:
+            loc_val = "Онлайн"
+
         lecturer_obj = p.get("lecturer") or {}
         lesson_dict = {
             "name": p.get("name") or "Пара",
@@ -119,7 +127,7 @@ async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple
             "time": (p.get("time") or "")[:5],  # "HH:MM"
             "lecturer": lecturer_obj.get("name") or "Не вказано",
             "tag": p.get("tag") or "",
-            "location": p.get("location") or "Онлайн",
+            "location": loc_val,
             "is_offline_cache": is_cached,
             "cached_at": cached_at,
         }
