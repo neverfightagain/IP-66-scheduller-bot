@@ -876,3 +876,54 @@ async def cmd_cancelled_pairs(message: Message):
         lines.append(f"• <b>Пара №{p_num}:</b> <i>{escape_html_text(info['reason'])}</i> (від {escape_html_text(info['cancelled_by'])})")
 
     await safe_answer(message, "\n".join(lines))
+
+
+# ==========================================
+# ОФЛАЙН-КЕШ CAMPUS API (/cache_status)
+# ==========================================
+
+@router.message(Command("cache_status"))
+async def cmd_cache_status(message: Message):
+    from database import get_campus_schedule_cache_db
+    from config import KPI_GROUP_ID
+
+    data, cached_at = await get_campus_schedule_cache_db(KPI_GROUP_ID)
+    if not data:
+        await safe_answer(
+            message,
+            "ℹ️ <b>Офлайн-кеш розкладу наразі порожній.</b>\n"
+            "Він автоматично заповниться при наступному зверненні до Campus API або натисніть кнопку нижче.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🔄 Оновити кеш зараз", callback_data="cache:refresh")]]
+            )
+        )
+        return
+
+    w1_count = sum(len(d.get("pairs", [])) for d in data.get("scheduleFirstWeek", []))
+    w2_count = sum(len(d.get("pairs", [])) for d in data.get("scheduleSecondWeek", []))
+
+    text = (
+        "🛡 <b>Статус автономного кешу Campus API (Resilience Cache):</b>\n\n"
+        f"✅ <b>Стан:</b> Активний\n"
+        f"📅 <b>Останній знімок:</b> <code>{cached_at}</code>\n"
+        f"📚 <b>Збережено пар (1-й тиждень):</b> {w1_count}\n"
+        f"📚 <b>Збережено пар (2-й тиждень):</b> {w2_count}\n\n"
+        f"<i>💡 Якщо сервери КПІ 'впадуть', бот продовжить видавати розклад без збоїв.</i>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🔄 Примусово оновити кеш", callback_data="cache:refresh")]]
+    )
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "cache:refresh")
+async def cb_cache_refresh(callback: CallbackQuery):
+    from kpi_api import get_raw_schedule
+    from config import KPI_GROUP_ID
+
+    try:
+        _, is_cached, _ = await get_raw_schedule(KPI_GROUP_ID, use_cache_on_fail=False)
+        await callback.answer("✅ Кеш успішно оновлено напряму з Campus API!", show_alert=True)
+    except Exception as e:
+        await callback.answer(f"⚠️ Campus API недоступний: {e}. Використовується старий кеш.", show_alert=True)
+

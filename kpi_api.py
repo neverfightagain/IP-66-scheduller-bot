@@ -29,18 +29,49 @@ WEEKDAY_FULL_NAMES = {
 
 async def get_current_time_info() -> dict:
     url = f"{BASE_API_URL}/time/current"
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        # Fallback розрахунок академічного тижня при падінні API
+        today = datetime.now(KYIV_TZ).date()
+        semester_start = date(today.year if today.month >= 8 else today.year - 1, 9, 1)
+        sem_monday = semester_start - timedelta(days=semester_start.weekday())
+        cur_monday = today - timedelta(days=today.weekday())
+        weeks_passed = (cur_monday - sem_monday).days // 7
+        calculated_week = 1 if (weeks_passed % 2 == 0) else 2
+        return {"currentWeek": calculated_week, "currentDay": today.strftime("%Y-%m-%d")}
 
 
-async def get_raw_schedule(group_id: int) -> dict:
+async def get_raw_schedule(group_id: int, use_cache_on_fail: bool = True) -> tuple[dict, bool, str | None]:
+    """
+    Отримати сирий розклад з Campus API.
+    При збої або таймауті перемикається на автономний SQLite-кеш.
+    Повертає: (дані: dict, з_кешу: bool, дата_кешу: str | None).
+    """
+    from database import save_campus_schedule_cache_db, get_campus_schedule_cache_db
     url = f"{BASE_API_URL}/schedule/lessons?groupId={group_id}"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            # Зберігаємо свіжі дані в офлайн-кеш
+            try:
+                await save_campus_schedule_cache_db(group_id, data)
+            except Exception:
+                pass
+            return data, False, None
+    except Exception as e:
+        if not use_cache_on_fail:
+            raise e
+        # Шукаємо збережений знімок в базі даних
+        cached_data, cached_at = await get_campus_schedule_cache_db(group_id)
+        if cached_data:
+            return cached_data, True, cached_at
+        raise e
 
 
 async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple[int, str, list[dict]]:
@@ -56,7 +87,7 @@ async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple
     week_diff = (target_monday - today_monday).days // 7
     target_week = 2 if (current_week + week_diff) % 2 == 0 else 1
 
-    schedule_data = await get_raw_schedule(group_id)
+    schedule_data, is_cached, cached_at = await get_raw_schedule(group_id)
     week_key = "scheduleFirstWeek" if target_week == 1 else "scheduleSecondWeek"
     days_list = schedule_data.get(week_key, [])
 
@@ -82,14 +113,17 @@ async def get_lessons_for_date(group_id: int, target_date: date = None) -> tuple
                 continue
 
         lecturer_obj = p.get("lecturer") or {}
-        valid_lessons.append({
+        lesson_dict = {
             "name": p.get("name") or "Пара",
             "type": p.get("type") or "",
             "time": (p.get("time") or "")[:5],  # "HH:MM"
             "lecturer": lecturer_obj.get("name") or "Не вказано",
             "tag": p.get("tag") or "",
             "location": p.get("location") or "Онлайн",
-        })
+            "is_offline_cache": is_cached,
+            "cached_at": cached_at,
+        }
+        valid_lessons.append(lesson_dict)
 
     valid_lessons.sort(key=lambda x: x["time"])
     return target_week, day_name_full, valid_lessons
