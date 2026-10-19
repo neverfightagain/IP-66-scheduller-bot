@@ -1017,10 +1017,7 @@ def format_queue_view(subject: str, queue_items: list[dict], chat_id: int = 0) -
             InlineKeyboardButton(text="🚪 Вийти", callback_data=f"q:leave:{clean_subj}"),
         ],
         [
-            InlineKeyboardButton(text="➡️ Наступний", callback_data=f"q:next:{clean_subj}"),
             InlineKeyboardButton(text="🔄 Оновити", callback_data=f"q:refresh:{clean_subj}"),
-        ],
-        [
             InlineKeyboardButton(text="🧹 Очистити чергу", callback_data=f"q:clear:{clean_subj}"),
         ]
     ]
