@@ -401,11 +401,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             btnPrimaryAction.disabled = false;
         } else if (currentTab === 'tab-deadlines') {
-            btnPrimaryActionText.textContent = `🔄 Оновити дедлайни з Classroom`;
+            btnPrimaryActionText.textContent = `🔄 Оновити дедлайни`;
             btnPrimaryAction.disabled = false;
         } else if (currentTab === 'tab-subjects') {
-            const termLabel = activeSubjectsSubj === 'ОП' ? 'Практикуми' : 'Практичні';
-            btnPrimaryActionText.textContent = `🔄 Оновити ${activeSubjectsSubj} (${termLabel})`;
+            btnPrimaryActionText.textContent = `🔄 Оновити прогрес`;
             btnPrimaryAction.disabled = false;
         }
     }
@@ -1038,7 +1037,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return {
                 code: 'АСД',
                 title: 'Алгоритми та структури даних',
-                termSingular: 'Практична робота',
+                termSingular: 'Практична',
                 termPlural: 'Практичні роботи',
                 totalWorks: 8,
                 emoji: '🧮',
@@ -1180,7 +1179,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="work-meta-block">
                         <div class="work-title-row">
                             <div class="work-title-badge-wrap">
-                                <span>${escapeHtml(meta.termSingular)}</span>
+                                <span class="work-term-title">${escapeHtml(meta.termSingular)}</span>
                                 <span class="work-num-pill">№ ${i}</span>
                             </div>
                             ${badgeHtml}
