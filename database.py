@@ -377,6 +377,16 @@ async def init_db():
         except Exception:
             pass
 
+        # 7.1. Таблиця зв'язку чату та ID останнього повідомлення черги (для live-sync з Mini App)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS queue_chat_messages (
+                chat_id INTEGER PRIMARY KEY,
+                message_id INTEGER NOT NULL,
+                subject TEXT DEFAULT 'ОП',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         # 8. Таблиця скасованих пар старостою
         await db.execute("""
             CREATE TABLE IF NOT EXISTS cancelled_pairs (
@@ -919,6 +929,33 @@ async def clear_queue_db(chat_id: int, subject: str = None) -> int:
         """, (chat_id, subject_clean))
         await db.commit()
         return cursor.rowcount
+
+
+async def set_queue_message_id_db(chat_id: int, message_id: int, subject: str = "ОП") -> None:
+    """Зберегти або оновити ID останнього активного повідомлення черги в чаті."""
+    clean_subj = (subject or "ОП").strip()
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO queue_chat_messages (chat_id, message_id, subject, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                message_id = excluded.message_id,
+                subject = excluded.subject,
+                updated_at = CURRENT_TIMESTAMP;
+        """, (chat_id, message_id, clean_subj))
+        await db.commit()
+
+
+async def get_queue_message_id_db(chat_id: int) -> dict | None:
+    """Отримати ID останнього повідомлення черги для чату."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT chat_id, message_id, subject, updated_at
+            FROM queue_chat_messages
+            WHERE chat_id = ?
+        """, (chat_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 # ==========================================

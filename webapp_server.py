@@ -1,0 +1,275 @@
+import os
+import json
+import logging
+from datetime import datetime, date, timedelta
+from pathlib import Path
+from aiohttp import web
+from aiogram import Bot
+
+from config import (
+    BASE_DIR,
+    KYIV_TZ,
+    KPI_GROUP_ID,
+    TURSO_DATABASE_URL,
+    SQLITE_CLOUD_URL,
+    WEBAPP_URL,
+)
+from database import (
+    get_subscribed_chats_db,
+    get_active_queue_db,
+    join_queue_db,
+    leave_queue_db,
+    next_in_queue_db,
+    clear_queue_db,
+    get_queue_message_id_db,
+    get_active_assignments_db,
+)
+from kpi_api import get_lessons_for_date
+from links_manager import load_links
+
+logger = logging.getLogger("WebAppServer")
+
+WEBAPP_DIR = BASE_DIR / "webapp"
+
+
+def cors_headers() -> dict:
+    return {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Telegram-Init-Data",
+    }
+
+
+def json_response_cors(data: dict, status: int = 200) -> web.Response:
+    return web.json_response(data, status=status, headers=cors_headers())
+
+
+async def sync_queue_message_in_chat(bot: Bot | None, chat_id: int, subject: str = None) -> bool:
+    """Оновити повідомлення черги в груповому чаті Telegram у реальному часі."""
+    if not bot or not chat_id:
+        return False
+    try:
+        from handlers import format_queue_view
+        record = await get_queue_message_id_db(chat_id)
+        if not record:
+            return False
+        msg_id = record["message_id"]
+        saved_subj = record.get("subject") or "ОП"
+        target_subj = subject or saved_subj
+
+        items = await get_active_queue_db(chat_id, target_subj)
+        text, kb = format_queue_view(target_subj, items, chat_id=chat_id)
+        await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, parse_mode="HTML", reply_markup=kb)
+        return True
+    except Exception as e:
+        logger.debug(f"Не вдалося оновити повідомлення черги в чаті {chat_id}: {e}")
+        return False
+
+
+def create_webapp_app(bot: Bot | None = None) -> web.Application:
+    """Створює веб-додаток aiohttp для Telegram Mini App, REST API та health-check."""
+    app = web.Application()
+
+    # OPTIONS preflight handler for CORS
+    async def handle_options(request):
+        return web.Response(status=200, headers=cors_headers())
+
+    # --- Health & Status ---
+    async def handle_ping(request):
+        return web.Response(text="KPI Schedule Bot is OK")
+
+    async def handle_status(request):
+        from scheduler import _today_cached_lessons, _today_cached_week, _today_cached_day_name
+        try:
+            targets = await get_subscribed_chats_db()
+            return json_response_cors({
+                "status": "online",
+                "time_kyiv": datetime.now(KYIV_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                "database_target": "turso" if TURSO_DATABASE_URL else ("sqlitecloud" if SQLITE_CLOUD_URL else "local_sqlite"),
+                "subscribed_chats": targets,
+                "subscribed_count": len(targets),
+                "cached_lessons_count": len(_today_cached_lessons),
+                "week": _today_cached_week,
+                "day": _today_cached_day_name,
+                "webapp_url": WEBAPP_URL,
+            })
+        except Exception as e:
+            return json_response_cors({"status": "error", "error": str(e)}, status=500)
+
+    # --- WebApp HTML Index ---
+    async def handle_app_index(request):
+        index_file = WEBAPP_DIR / "index.html"
+        if not index_file.exists():
+            return web.Response(text="Telegram Mini App is compiling...", content_type="text/html")
+        return web.FileResponse(index_file)
+
+    # --- REST API: Queue ---
+    async def handle_api_queue_get(request):
+        try:
+            subject = request.query.get("subject", "ОП").strip()
+            chat_id_str = request.query.get("chat_id", "0").strip()
+            chat_id = int(chat_id_str) if chat_id_str.lstrip("-").isdigit() else 0
+
+            items = await get_active_queue_db(chat_id, subject)
+            return json_response_cors({
+                "success": True,
+                "subject": subject,
+                "chat_id": chat_id,
+                "items": items,
+                "total": len(items)
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_queue_join(request):
+        try:
+            data = await request.json()
+            chat_id = int(data.get("chat_id", 0))
+            subject = str(data.get("subject", "ОП")).strip()
+            user_id = int(data.get("user_id", 0))
+            user_name = str(data.get("user_name", "Студент")).strip()
+            username = str(data.get("username", "")).strip() or None
+            lab_number = str(data.get("lab_number", "")).strip()
+
+            if not user_id:
+                return json_response_cors({"success": False, "error": "user_id is required"}, status=400)
+
+            ok, msg, pos = await join_queue_db(chat_id, subject, user_id, user_name, username, lab_number)
+            # Синхронізуємо повідомлення в групі Telegram
+            if chat_id != 0 and bot:
+                await sync_queue_message_in_chat(bot, chat_id, subject)
+
+            return json_response_cors({
+                "success": ok,
+                "message": msg,
+                "position": pos,
+                "subject": subject,
+                "lab_number": lab_number
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_queue_leave(request):
+        try:
+            data = await request.json()
+            chat_id = int(data.get("chat_id", 0))
+            subject = str(data.get("subject", "ОП")).strip()
+            user_id = int(data.get("user_id", 0))
+
+            if not user_id:
+                return json_response_cors({"success": False, "error": "user_id is required"}, status=400)
+
+            ok = await leave_queue_db(chat_id, subject, user_id)
+            if chat_id != 0 and bot:
+                await sync_queue_message_in_chat(bot, chat_id, subject)
+
+            return json_response_cors({
+                "success": ok,
+                "message": f"Ви вийшли з черги {subject}." if ok else "Вас не було в черзі."
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_queue_next(request):
+        try:
+            data = await request.json()
+            chat_id = int(data.get("chat_id", 0))
+            subject = str(data.get("subject", "ОП")).strip()
+
+            student = await next_in_queue_db(chat_id, subject)
+            if chat_id != 0 and bot:
+                await sync_queue_message_in_chat(bot, chat_id, subject)
+
+            return json_response_cors({
+                "success": True,
+                "student": student,
+                "has_next": student is not None
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    # --- REST API: Schedule ---
+    async def handle_api_schedule(request):
+        try:
+            day_param = request.query.get("day", "today").strip().lower()
+            now_kyiv = datetime.now(KYIV_TZ)
+
+            if day_param == "tomorrow":
+                target_date = (now_kyiv + timedelta(days=1)).date()
+            else:
+                target_date = now_kyiv.date()
+
+            week_num, day_name, lessons = await get_lessons_for_date(KPI_GROUP_ID, target_date)
+            links = load_links()
+
+            # Додаємо прямі посилання до кожної пари
+            enriched_lessons = []
+            for l in lessons:
+                subj = l.get("subject", "")
+                link_info = links.get(subj, {})
+                enriched_lessons.append({
+                    **l,
+                    "link_url": link_info.get("url", ""),
+                    "link_comment": link_info.get("comment", "")
+                })
+
+            return json_response_cors({
+                "success": True,
+                "date": target_date.strftime("%Y-%m-%d"),
+                "day_name": day_name,
+                "week": week_num,
+                "lessons": enriched_lessons,
+                "total": len(enriched_lessons)
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    # --- REST API: Deadlines ---
+    async def handle_api_deadlines(request):
+        try:
+            assignments = await get_active_assignments_db()
+            return json_response_cors({
+                "success": True,
+                "deadlines": assignments,
+                "total": len(assignments)
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    # Реєстрація роутів
+    app.router.add_get("/", handle_ping)
+    app.router.add_get("/health", handle_ping)
+    app.router.add_get("/status", handle_status)
+    app.router.add_get("/app", handle_app_index)
+
+    # API
+    app.router.add_route("OPTIONS", "/api/{tail:.*}", handle_options)
+    app.router.add_get("/api/queue", handle_api_queue_get)
+    app.router.add_post("/api/queue/join", handle_api_queue_join)
+    app.router.add_post("/api/queue/leave", handle_api_queue_leave)
+    app.router.add_post("/api/queue/next", handle_api_queue_next)
+    app.router.add_get("/api/schedule", handle_api_schedule)
+    app.router.add_get("/api/deadlines", handle_api_deadlines)
+
+    # Static files
+    if WEBAPP_DIR.exists():
+        app.router.add_static("/webapp/", WEBAPP_DIR, name="webapp")
+
+    return app
+
+
+async def start_webapp_server(bot: Bot | None = None) -> web.AppRunner | None:
+    """Запуск сервера aiohttp."""
+    port_str = os.getenv("PORT") or "8080"
+    try:
+        port = int(port_str)
+        app = create_webapp_app(bot)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logger.info(f"🚀 Telegram Mini App & API сервер успішно запущено на порті {port}")
+        return runner
+    except Exception as e:
+        logger.warning(f"Не вдалося запустити WebApp сервер: {e}")
+        return None

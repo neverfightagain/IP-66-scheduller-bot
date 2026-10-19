@@ -150,3 +150,8 @@ def remove_subscribed_chat(chat_id: int, thread_id: int | None = None) -> bool:
         except Exception:
             pass
     return False
+
+
+# Telegram Mini App (TMA) URL
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://ip-66-scheduller-bot.onrender.com").strip().rstrip("/")
+

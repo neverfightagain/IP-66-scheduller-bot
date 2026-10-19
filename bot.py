@@ -14,10 +14,12 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
 
-from config import BOT_TOKEN, BASE_DIR
+from config import BOT_TOKEN, BASE_DIR, WEBAPP_URL
 from handlers import router
 from scheduler import setup_scheduler, refresh_today_cache
+from webapp_server import start_webapp_server
 
 log_file = BASE_DIR / "bot.log"
 
@@ -34,56 +36,6 @@ logger = logging.getLogger("KPIScheduleBot")
 logging.getLogger("aiogram.event").setLevel(logging.WARNING)
 
 
-async def start_health_check_server():
-    """
-    Легковесный HTTP health-check сервер для облачных хостингов (Render, Koyeb, Railway).
-    """
-    port_str = os.getenv("PORT")
-    if not port_str:
-        return None
-
-    try:
-        port = int(port_str)
-        app = web.Application()
-
-        async def handle_ping(request):
-            return web.Response(text="KPI Schedule Bot is OK")
-
-        async def handle_status(request):
-            from datetime import datetime
-            from config import KYIV_TZ, TURSO_DATABASE_URL, SQLITE_CLOUD_URL
-            from database import get_subscribed_chats_db
-            from scheduler import _today_cached_lessons, _today_cached_week, _today_cached_day_name
-            try:
-                targets = await get_subscribed_chats_db()
-                return web.json_response({
-                    "status": "online",
-                    "time_kyiv": datetime.now(KYIV_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-                    "database_target": "turso" if TURSO_DATABASE_URL else ("sqlitecloud" if SQLITE_CLOUD_URL else "local_sqlite"),
-                    "subscribed_chats": targets,
-                    "subscribed_count": len(targets),
-                    "cached_lessons_count": len(_today_cached_lessons),
-                    "week": _today_cached_week,
-                    "day": _today_cached_day_name,
-                })
-            except Exception as e:
-                return web.json_response({"status": "error", "error": str(e)}, status=500)
-
-        app.router.add_get("/", handle_ping)
-        app.router.add_get("/health", handle_ping)
-        app.router.add_get("/status", handle_status)
-
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
-        await site.start()
-        logger.info(f"Health-check HTTP сервер запущено на порті {port}")
-        return runner
-    except Exception as e:
-        logger.warning(f"Не вдалося запустити health-check сервер: {e}")
-        return None
-
-
 async def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
         logger.error(
@@ -91,9 +43,6 @@ async def main():
             "Будь ласка, отримайте токен у @BotFather та впишіть його в .env файл."
         )
         return
-
-    # Запуск опционального health-check сервера (для облака)
-    http_runner = await start_health_check_server()
 
     masked = f"{BOT_TOKEN[:6]}...{BOT_TOKEN[-4:]}" if len(BOT_TOKEN) > 10 else "EMPTY/TOO_SHORT"
     logger.info(f"Завантажено BOT_TOKEN: {masked} (довжина: {len(BOT_TOKEN)})")
@@ -110,8 +59,22 @@ async def main():
     me = await bot.get_me()
     logger.info(f"Успішна авторизація: бот @{me.username} ({me.first_name})")
 
+    # Запуск сервера Telegram Mini App & REST API & Health-check
+    http_runner = await start_webapp_server(bot)
+
+    # Встановлення кнопки меню Mini App (Швидкий доступ до веб-порталу)
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="📱 ІП-66 Портал",
+                web_app=WebAppInfo(url=f"{WEBAPP_URL}/app")
+            )
+        )
+        logger.info(f"Встановлено MenuButtonWebApp: {WEBAPP_URL}/app")
+    except Exception as e:
+        logger.warning(f"Не вдалося встановити MenuButtonWebApp: {e}")
+
     # Встановлення списку команд у меню Telegram
-    from aiogram.types import BotCommand
     try:
         await bot.set_my_commands([
             BotCommand(command="today", description="Розклад пар на сьогодні"),

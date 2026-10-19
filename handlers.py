@@ -7,13 +7,14 @@ import uuid
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest
 
 from config import (
     KYIV_TZ,
     KPI_GROUP_ID,
+    WEBAPP_URL,
     add_subscribed_chat,
     remove_subscribed_chat,
     get_subscribed_chats,
@@ -662,7 +663,7 @@ def normalize_queue_subject(subject_raw: str | None) -> str:
     return clean
 
 
-def format_queues_hub_view(op_items: list[dict], asd_items: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
+def format_queues_hub_view(op_items: list[dict], asd_items: list[dict], chat_id: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     """Форматування головного меню з оглядом обох черг (ОП та АСД)."""
     text = "📋 <b>ЖИВІ ЧЕРГИ НА ЗАХИСТ ЛАБОРАТОРНИХ (ІП-66)</b>\n\n"
 
@@ -698,10 +699,13 @@ def format_queues_hub_view(op_items: list[dict], asd_items: list[dict]) -> tuple
             text += f"<i>...та ще {len(asd_items) - 5} студентів у черзі</i>\n"
         text += "\n"
 
-    text += "👇 <i>Оберіть чергу для перегляду або займіть місце в один клік:</i>"
+    text += "👇 <i>Оберіть чергу або відкрийте персональний Mini App:</i>"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📱 Відкрити в Telegram Mini App", web_app=WebAppInfo(url=f"{WEBAPP_URL}/app?chat_id={chat_id}")),
+            ],
             [
                 InlineKeyboardButton(text=f"💻 Черга ОП ({len(op_items)})", callback_data="q:view:ОП"),
                 InlineKeyboardButton(text=f"🧮 Черга АСД ({len(asd_items)})", callback_data="q:view:АСД"),
@@ -790,7 +794,7 @@ def format_lab_picker_view(
     return text, kb
 
 
-def format_queue_view(subject: str, queue_items: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
+def format_queue_view(subject: str, queue_items: list[dict], chat_id: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     """Форматування тексту окремої черги та інлайн-кнопок управління."""
     clean_subj = normalize_queue_subject(subject) or "Загальна"
     emoji = "💻" if clean_subj == "ОП" else ("🧮" if clean_subj == "АСД" else "📋")
@@ -812,6 +816,12 @@ def format_queue_view(subject: str, queue_items: list[dict]) -> tuple[str, Inlin
     other_icon = "🧮" if clean_subj == "ОП" else "💻"
 
     kb_rows = [
+        [
+            InlineKeyboardButton(
+                text="📱 Відкрити в Telegram Mini App",
+                web_app=WebAppInfo(url=f"{WEBAPP_URL}/app?chat_id={chat_id}&subject={clean_subj}")
+            ),
+        ],
         [
             InlineKeyboardButton(text="✋ Зайняти чергу", callback_data=f"q:pick:{clean_subj}"),
             InlineKeyboardButton(text="🚪 Вийти", callback_data=f"q:leave:{clean_subj}"),
@@ -841,36 +851,44 @@ def format_queue_view(subject: str, queue_items: list[dict]) -> tuple[str, Inlin
 
 @router.message(Command("queue", "queues"))
 async def cmd_queue(message: Message):
-    from database import get_active_queue_db
+    from database import get_active_queue_db, set_queue_message_id_db
     raw = message.text.replace("/queues", "", 1).replace("/queue", "", 1).strip()
     if not raw:
         # Показуємо загальний хаб обох черг ОП та АСД
         op_items = await get_active_queue_db(message.chat.id, "ОП")
         asd_items = await get_active_queue_db(message.chat.id, "АСД")
-        text, kb = format_queues_hub_view(op_items, asd_items)
-        await safe_answer(message, text, reply_markup=kb)
+        text, kb = format_queues_hub_view(op_items, asd_items, chat_id=message.chat.id)
+        msg = await safe_answer(message, text, reply_markup=kb)
+        if msg:
+            await set_queue_message_id_db(message.chat.id, msg.message_id, "ОП")
         return
 
     subject = normalize_queue_subject(raw)
     items = await get_active_queue_db(message.chat.id, subject)
-    text, kb = format_queue_view(subject, items)
-    await safe_answer(message, text, reply_markup=kb)
+    text, kb = format_queue_view(subject, items, chat_id=message.chat.id)
+    msg = await safe_answer(message, text, reply_markup=kb)
+    if msg:
+        await set_queue_message_id_db(message.chat.id, msg.message_id, subject)
 
 
 @router.message(Command("queue_op", "op"))
 async def cmd_queue_op(message: Message):
-    from database import get_active_queue_db
+    from database import get_active_queue_db, set_queue_message_id_db
     items = await get_active_queue_db(message.chat.id, "ОП")
-    text, kb = format_queue_view("ОП", items)
-    await safe_answer(message, text, reply_markup=kb)
+    text, kb = format_queue_view("ОП", items, chat_id=message.chat.id)
+    msg = await safe_answer(message, text, reply_markup=kb)
+    if msg:
+        await set_queue_message_id_db(message.chat.id, msg.message_id, "ОП")
 
 
 @router.message(Command("queue_asd", "asd"))
 async def cmd_queue_asd(message: Message):
-    from database import get_active_queue_db
+    from database import get_active_queue_db, set_queue_message_id_db
     items = await get_active_queue_db(message.chat.id, "АСД")
-    text, kb = format_queue_view("АСД", items)
-    await safe_answer(message, text, reply_markup=kb)
+    text, kb = format_queue_view("АСД", items, chat_id=message.chat.id)
+    msg = await safe_answer(message, text, reply_markup=kb)
+    if msg:
+        await set_queue_message_id_db(message.chat.id, msg.message_id, "АСД")
 
 
 @router.message(Command("join_op"))
@@ -890,7 +908,7 @@ async def cmd_join_op(message: Message):
     user = message.from_user
     ok, msg, pos = await join_queue_db(message.chat.id, "ОП", user.id, user.full_name, user.username, lab_number)
     items = await get_active_queue_db(message.chat.id, "ОП")
-    text, kb = format_queue_view("ОП", items)
+    text, kb = format_queue_view("ОП", items, chat_id=message.chat.id)
     await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
 
 
@@ -911,7 +929,7 @@ async def cmd_join_asd(message: Message):
     user = message.from_user
     ok, msg, pos = await join_queue_db(message.chat.id, "АСД", user.id, user.full_name, user.username, lab_number)
     items = await get_active_queue_db(message.chat.id, "АСД")
-    text, kb = format_queue_view("АСД", items)
+    text, kb = format_queue_view("АСД", items, chat_id=message.chat.id)
     await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
 
 
@@ -936,7 +954,7 @@ async def cmd_join_queue(message: Message):
     user = message.from_user
     ok, msg, pos = await join_queue_db(message.chat.id, subject, user.id, user.full_name, user.username, lab_number)
     items = await get_active_queue_db(message.chat.id, subject)
-    text, kb = format_queue_view(subject, items)
+    text, kb = format_queue_view(subject, items, chat_id=message.chat.id)
     await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
 
 
@@ -955,7 +973,7 @@ async def cmd_leave_queue(message: Message):
     ok = await leave_queue_db(message.chat.id, subject, message.from_user.id)
     msg = f"✅ Ви вийшли з черги {subject}." if ok else f"ℹ️ Вас не було в черзі {subject}."
     items = await get_active_queue_db(message.chat.id, subject)
-    text, kb = format_queue_view(subject, items)
+    text, kb = format_queue_view(subject, items, chat_id=message.chat.id)
     await safe_answer(message, f"{msg}\n\n" + text, reply_markup=kb)
 
 
@@ -980,7 +998,7 @@ async def cmd_next_in_queue(message: Message):
     un = f" (@{student['username']})" if student.get("username") else ""
     lab_str = f" <b>[{student['lab_number']}]</b>" if student.get("lab_number") else ""
     items = await get_active_queue_db(message.chat.id, subject)
-    text, kb = format_queue_view(subject, items)
+    text, kb = format_queue_view(subject, items, chat_id=message.chat.id)
     await safe_answer(message, f"🎯 <b>Зараз захищає ({subject}):</b> {name}{un}{lab_str}\n\n" + text, reply_markup=kb)
 
 
@@ -1002,7 +1020,7 @@ async def cmd_clear_queue(message: Message):
 
 @router.callback_query(F.data.startswith("q:"))
 async def cb_queue_actions(callback: CallbackQuery):
-    from database import join_queue_db, leave_queue_db, next_in_queue_db, clear_queue_db, get_active_queue_db
+    from database import join_queue_db, leave_queue_db, next_in_queue_db, clear_queue_db, get_active_queue_db, set_queue_message_id_db
     data = callback.data.split(":")
     action = data[1] if len(data) > 1 else ""
     chat_id = callback.message.chat.id
@@ -1012,13 +1030,14 @@ async def cb_queue_actions(callback: CallbackQuery):
     if action in ("hub", "hub_refresh"):
         op_items = await get_active_queue_db(chat_id, "ОП")
         asd_items = await get_active_queue_db(chat_id, "АСД")
-        text, kb = format_queues_hub_view(op_items, asd_items)
+        text, kb = format_queues_hub_view(op_items, asd_items, chat_id=chat_id)
         if action == "hub_refresh":
             await callback.answer("Обидві черги оновлено", show_alert=False)
         else:
             await callback.answer()
         try:
             await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            await set_queue_message_id_db(chat_id, callback.message.message_id, "ОП")
         except Exception:
             pass
         return
@@ -1084,9 +1103,10 @@ async def cb_queue_actions(callback: CallbackQuery):
         alert_msg = f"✅ Ви #{pos} у черзі {subject}!\nЗдаєте: {lab_label}\nПріоритет: Лаба {min_p}" if ok else msg
         await callback.answer(alert_msg, show_alert=True)
         items = await get_active_queue_db(chat_id, subject)
-        text, kb = format_queue_view(subject, items)
+        text, kb = format_queue_view(subject, items, chat_id=chat_id)
         try:
             await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            await set_queue_message_id_db(chat_id, callback.message.message_id, subject)
         except Exception:
             pass
         return
@@ -1098,9 +1118,10 @@ async def cb_queue_actions(callback: CallbackQuery):
         alert_msg = f"✅ Ви #{pos} у черзі {subject} ({lab_label})!" if ok else msg
         await callback.answer(alert_msg, show_alert=True)
         items = await get_active_queue_db(chat_id, subject)
-        text, kb = format_queue_view(subject, items)
+        text, kb = format_queue_view(subject, items, chat_id=chat_id)
         try:
             await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            await set_queue_message_id_db(chat_id, callback.message.message_id, subject)
         except Exception:
             pass
         return
@@ -1125,10 +1146,11 @@ async def cb_queue_actions(callback: CallbackQuery):
 
     # Оновлення виду черги
     items = await get_active_queue_db(chat_id, subject)
-    text, kb = format_queue_view(subject, items)
+    text, kb = format_queue_view(subject, items, chat_id=chat_id)
 
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await set_queue_message_id_db(chat_id, callback.message.message_id, subject)
     except Exception:
         pass
 

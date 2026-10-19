@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>ІП-66 Студентський Портал</title>
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/webapp/app.css">
+    <!-- Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app" class="app-container">
+        <!-- Top App Header -->
+        <header class="app-header">
+            <div class="user-profile">
+                <div class="user-avatar" id="user-avatar">?</div>
+                <div class="user-info">
+                    <span class="user-greeting" id="user-greeting">Привіт, студент!</span>
+                    <span class="user-group">Група ІП-66 • ФІОТ</span>
+                </div>
+            </div>
+            <button class="icon-btn" id="btn-sync" title="Оновити дані">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                </svg>
+            </button>
+        </header>
+
+        <!-- Main Content Area with Dynamic Tabs -->
+        <main class="content-container">
+            <!-- TAB 1: ЖИВІ ЧЕРГИ -->
+            <section id="tab-queue" class="tab-content active">
+                <!-- Subject Switcher Pills -->
+                <div class="subject-switcher">
+                    <button class="subj-btn active" data-subject="ОП">
+                        <span class="subj-icon">💻</span>
+                        <span class="subj-name">Основи програмування</span>
+                        <span class="badge" id="badge-op-count">0</span>
+                    </button>
+                    <button class="subj-btn" data-subject="АСД">
+                        <span class="subj-icon">🧮</span>
+                        <span class="subj-name">АСД</span>
+                        <span class="badge" id="badge-asd-count">0</span>
+                    </button>
+                </div>
+
+                <!-- My Status Card (If user in queue) -->
+                <div id="my-status-card" class="card my-status-card hidden">
+                    <div class="status-header">
+                        <span class="status-label">Ваша позиція:</span>
+                        <span class="status-pos" id="my-pos-badge">#1</span>
+                    </div>
+                    <div class="status-details">
+                        <span class="status-labs" id="my-labs-label">Лаби 1, 4</span>
+                        <span class="status-prio" id="my-prio-label">⭐ Пріоритет: Лаба 1</span>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="btn-leave-queue">🚪 Вийти з черги</button>
+                </div>
+
+                <!-- Lab Picker Section -->
+                <div class="card lab-picker-card">
+                    <div class="card-title">
+                        <span>🔬 Оберіть практичні/лабораторні для здачі</span>
+                    </div>
+                    <p class="card-subtitle">
+                        ⚡ <i>Можна обрати декілька лаб. Пріоритет рахується за <b>найстарішою (найменшою)</b> роботою!</i>
+                    </p>
+
+                    <!-- Multi-select buttons grid 1..9 -->
+                    <div class="labs-grid" id="labs-grid">
+                        <!-- Generated via JS -->
+                    </div>
+
+                    <!-- Priority preview -->
+                    <div id="priority-preview" class="priority-preview hidden">
+                        <span id="preview-text">🎯 Обрано: Лаби 1, 4 • ⭐ Пріоритет: Лаба 1</span>
+                    </div>
+
+                    <!-- Submit action button -->
+                    <button class="btn btn-primary btn-block" id="btn-submit-queue" disabled>
+                        <span>✋ Зайняти чергу</span>
+                    </button>
+                </div>
+
+                <!-- Live Queue List -->
+                <div class="queue-list-section">
+                    <div class="section-header">
+                        <h3>📋 Поточна черга на захист</h3>
+                        <div class="queue-actions">
+                            <button class="btn-text" id="btn-next-student" title="Перевести наступного (староста)">➡️ Наступний</button>
+                        </div>
+                    </div>
+
+                    <div id="queue-empty" class="empty-state">
+                        <div class="empty-icon">☕</div>
+                        <p>Черга порожня. Будьте першим!</p>
+                    </div>
+
+                    <div class="queue-list" id="queue-items-container">
+                        <!-- Queue items injected via JS -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 2: РОЗКЛАД ПАР -->
+            <section id="tab-schedule" class="tab-content">
+                <div class="schedule-controls">
+                    <div class="day-toggle">
+                        <button class="toggle-btn active" data-day="today">Сьогодні</button>
+                        <button class="toggle-btn" data-day="tomorrow">Завтра</button>
+                    </div>
+                    <div class="week-info" id="schedule-week-badge">Тиждень 1</div>
+                </div>
+
+                <div id="schedule-loading" class="loading-state">
+                    <div class="spinner"></div>
+                    <p>Завантаження розкладу...</p>
+                </div>
+
+                <div id="schedule-list" class="schedule-list">
+                    <!-- Schedule items injected via JS -->
+                </div>
+            </section>
+
+            <!-- TAB 3: ДЕДЛАЙНИ CLASSROOM -->
+            <section id="tab-deadlines" class="tab-content">
+                <div class="section-header">
+                    <h3>⏳ Активні завдання Google Classroom</h3>
+                    <span class="badge" id="deadlines-count">0</span>
+                </div>
+
+                <div id="deadlines-list" class="deadlines-list">
+                    <!-- Deadlines injected via JS -->
+                </div>
+            </section>
+        </main>
+
+        <!-- Bottom Tab Navigation Bar -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-tab="tab-queue">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+                <span>Черга</span>
+            </button>
+            <button class="nav-item" data-tab="tab-schedule">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                <span>Розклад</span>
+            </button>
+            <button class="nav-item" data-tab="tab-deadlines">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                <span>Дедлайни</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="/webapp/app.js"></script>
+</body>
+</html>
