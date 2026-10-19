@@ -14,3 +14,7 @@ bot.log
 auth_*.py
 auth_url.txt
 links.json
+students_roster.json
+roster_*.txt
+parsed_*.json
+scratch_*

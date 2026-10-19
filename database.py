@@ -469,6 +469,39 @@ async def init_db():
         await db.commit()
         await cleanup_past_assignments_db()
 
+        # Автоматичний первинний імпорт списку групи з STUDENTS_ROSTER_JSON або students_roster.json
+        from config import STUDENTS_ROSTER_JSON
+        roster_data = None
+        if STUDENTS_ROSTER_JSON:
+            try:
+                roster_data = json.loads(STUDENTS_ROSTER_JSON)
+            except Exception as e_json:
+                logger.warning(f"Не вдалося розпарсити STUDENTS_ROSTER_JSON з env: {e_json}")
+
+        if not roster_data:
+            roster_file = BASE_DIR / "students_roster.json"
+            if roster_file.exists():
+                try:
+                    with open(roster_file, encoding="utf-8") as rf:
+                        roster_data = json.load(rf)
+                except Exception:
+                    pass
+
+        if roster_data:
+            try:
+                async with db.execute("SELECT COUNT(*) as cnt FROM students") as cur:
+                    row = await cur.fetchone()
+                    if row and row["cnt"] == 0:
+                        for item in roster_data:
+                            await db.execute("""
+                                INSERT INTO students (real_name, telegram_username, subgroup, notes)
+                                VALUES (?, ?, ?, ?)
+                            """, (item["real_name"], item.get("telegram_username"), item.get("subgroup", 1), item.get("notes", "")))
+                        await db.commit()
+                        logger.info(f"Успішно імпортовано {len(roster_data)} студентів з реєстру.")
+            except Exception as e_rost:
+                logger.warning(f"Не вдалося імпортувати студентів: {e_rost}")
+
 
 async def _migrate_legacy_data(db):
     """Миграция данных из старых таблиц, chats.json и links.json в SQLite."""

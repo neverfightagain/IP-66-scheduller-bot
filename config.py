@@ -49,6 +49,9 @@ def _sanitize_env(val: str, key_prefix: str = "") -> str:
         val = val.split(f"{key_prefix}=", 1)[1].strip().strip('"').strip("'")
     return val
 
+raw_roster = os.getenv("STUDENTS_ROSTER_JSON", "").strip()
+STUDENTS_ROSTER_JSON = _sanitize_env(raw_roster, "STUDENTS_ROSTER_JSON")
+
 raw_turso_url = os.getenv("TURSO_DATABASE_URL") or os.getenv("TURSO_URL") or ""
 TURSO_DATABASE_URL = _sanitize_env(raw_turso_url, "TURSO_DATABASE_URL")
 
