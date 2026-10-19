@@ -192,6 +192,19 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
 
+    async def handle_api_queue_sync_sheet(request):
+        try:
+            from sync_queue_sheet import sync_queue
+            count = await sync_queue(bot=bot)
+            return json_response_cors({
+                "success": True,
+                "message": f"Синхронізовано {count} студентів з Google Таблиці",
+                "count": count
+            })
+        except Exception as e:
+            logger.error(f"Error syncing queue from sheet via API: {e}")
+            return json_response_cors({"success": False, "error": str(e)}, status=500)
+
     # --- REST API: Schedule ---
     async def handle_api_schedule(request):
         try:
@@ -464,6 +477,8 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     app.router.add_post("/api/queue/join", handle_api_queue_join)
     app.router.add_post("/api/queue/leave", handle_api_queue_leave)
     app.router.add_post("/api/queue/next", handle_api_queue_next)
+    app.router.add_get("/api/queue/sync_sheet", handle_api_queue_sync_sheet)
+    app.router.add_post("/api/queue/sync_sheet", handle_api_queue_sync_sheet)
     app.router.add_get("/api/schedule", handle_api_schedule)
     app.router.add_get("/api/deadlines", handle_api_deadlines)
     app.router.add_get("/api/students", handle_api_students_get)

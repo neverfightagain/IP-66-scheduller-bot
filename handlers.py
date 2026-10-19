@@ -1078,6 +1078,37 @@ async def cmd_queue_asd(message: Message):
         await set_queue_message_id_db(message.chat.id, msg.message_id, "АСД")
 
 
+@router.message(Command("sync_queue", "sync_queues"))
+async def cmd_sync_queue(message: Message, bot: Bot):
+    """Синхронізація живої черги з Google Таблицею."""
+    status_msg = await safe_answer(message, "⏳ Синхронізація черги з Google Таблицею...")
+    try:
+        from sync_queue_sheet import sync_queue
+        cnt = await sync_queue(bot=bot)
+        res_text = (
+            f"✅ <b>Чергу успішно синхронізовано з Google Таблицею!</b>\n\n"
+            f"📋 Занесено студентів: <b>{cnt}</b>\n"
+            f"💻 Дисципліна: <b>ОП (Комп'ютерний практикум)</b>\n\n"
+            f"Введіть /queue або відкрийте Mini App, щоб переглянути оновлений список."
+        )
+        if status_msg:
+            try:
+                await status_msg.edit_text(res_text, parse_mode="HTML")
+                return
+            except Exception:
+                pass
+        await safe_answer(message, res_text)
+    except Exception as e:
+        err_text = f"❌ Помилка синхронізації: {escape_html_text(str(e))}"
+        if status_msg:
+            try:
+                await status_msg.edit_text(err_text, parse_mode="HTML")
+                return
+            except Exception:
+                pass
+        await safe_answer(message, err_text)
+
+
 @router.message(Command("join_op"))
 async def cmd_join_op(message: Message):
     from database import join_queue_db, get_active_queue_db

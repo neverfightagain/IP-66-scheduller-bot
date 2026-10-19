@@ -99,6 +99,13 @@ async def main():
     from database import init_db
     await init_db()
 
+    # Одноразова автоматична міграція черги з Google Таблиці
+    try:
+        from sync_queue_sheet import auto_sync_on_startup
+        await auto_sync_on_startup(bot=bot)
+    except Exception as e_q:
+        logger.warning(f"Помилка при auto_sync_on_startup: {e_q}")
+
     # Первичная загрузка расписания на сегодня
     await refresh_today_cache()
 
