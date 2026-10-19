@@ -182,6 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
             switchQueueSubject('АСД');
             switchToTab('tab-queue');
+        });
     }
 
     function openLessonModal(lesson) {
