@@ -43,7 +43,7 @@ def strip_markdown(text: str) -> str:
 
 
 async def safe_answer(message: Message, text: str, reply_markup=None, disable_web_page_preview: bool = False):
-    """Безпечна відправка повідомлення з підтримкою HTML та резервним plain-text варіантом при збоях парсера."""
+    """Безпечна відправка повідомлення з підтримкою HTML та резервним plain-text варіантом при збоях парсера чи кнопок."""
     try:
         return await message.answer(
             text,
@@ -52,23 +52,38 @@ async def safe_answer(message: Message, text: str, reply_markup=None, disable_we
             disable_web_page_preview=disable_web_page_preview,
         )
     except TelegramBadRequest as e:
-        logger.warning(f"Помилка парсингу HTML: {e}. Відправляю простим текстом.")
+        logger.warning(f"Помилка відправки HTML ({e}). Спроба резервної відправки.")
         plain_text = strip_html_tags(text)
-        return await message.answer(
-            plain_text,
-            parse_mode=None,
-            reply_markup=reply_markup,
-            disable_web_page_preview=disable_web_page_preview,
-        )
+        try:
+            return await message.answer(
+                plain_text,
+                parse_mode=None,
+                reply_markup=reply_markup,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+        except Exception as e2:
+            logger.error(f"Помилка відправки з reply_markup ({e2}). Відправляю без кнопок.")
+            try:
+                return await message.answer(
+                    plain_text,
+                    parse_mode=None,
+                    reply_markup=None,
+                    disable_web_page_preview=disable_web_page_preview,
+                )
+            except Exception:
+                return None
     except Exception as e:
         logger.error(f"Непередбачена помилка в safe_answer: {e}")
         plain_text = strip_html_tags(text)
-        return await message.answer(
-            plain_text,
-            parse_mode=None,
-            reply_markup=reply_markup,
-            disable_web_page_preview=disable_web_page_preview,
-        )
+        try:
+            return await message.answer(
+                plain_text,
+                parse_mode=None,
+                reply_markup=None,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+        except Exception:
+            return None
 
 
 async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None):
@@ -85,7 +100,10 @@ async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None):
         try:
             return await callback.message.edit_text(plain_text, parse_mode=None, reply_markup=reply_markup)
         except Exception:
-            pass
+            try:
+                return await callback.message.edit_text(plain_text, parse_mode=None, reply_markup=None)
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"Помилка в safe_edit_text: {e}")
 
@@ -664,6 +682,34 @@ def normalize_queue_subject(subject_raw: str | None) -> str:
     return clean
 
 
+def make_webapp_button(text: str, url: str, chat_id: int = 0) -> InlineKeyboardButton:
+    """
+    Створює кнопку для відкриття Mini App.
+    У приватних чатах (chat_id > 0) використовує WebAppInfo для нативного відкриття в модальному вікні.
+    У групах, супергрупах та топіках (chat_id <= 0) Telegram API забороняє web_app інлайн-кнопки
+    (помилка BUTTON_TYPE_INVALID), тому там обов'язково використовується звичайне посилання url=.
+    """
+    if chat_id and chat_id > 0:
+        return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))
+    return InlineKeyboardButton(text=text, url=url)
+
+
+def extract_command_args(text: str) -> str:
+    """
+    Витягує аргументи команди, коректно очищаючи саму команду та @bot_username в групах.
+    Наприклад:
+    '/queue@kpi_shedule_ip_66_bot' -> ''
+    '/queue@kpi_shedule_ip_66_bot ОП' -> 'ОП'
+    '/join_op@kpi_shedule_ip_66_bot 1' -> '1'
+    """
+    if not text:
+        return ""
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) > 1:
+        return parts[1].strip()
+    return ""
+
+
 def format_queues_hub_view(op_items: list[dict], asd_items: list[dict], chat_id: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     """Форматування головного меню з оглядом обох черг (ОП та АСД)."""
     text = "📋 <b>ЖИВІ ЧЕРГИ НА ЗАХИСТ ЛАБОРАТОРНИХ (ІП-66)</b>\n\n"
@@ -702,10 +748,11 @@ def format_queues_hub_view(op_items: list[dict], asd_items: list[dict], chat_id:
 
     text += "👇 <i>Оберіть чергу або відкрийте персональний Mini App:</i>"
 
+    app_url = f"{WEBAPP_URL}/app?chat_id={chat_id}"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="📱 Відкрити в Telegram Mini App", web_app=WebAppInfo(url=f"{WEBAPP_URL}/app?chat_id={chat_id}")),
+                make_webapp_button("📱 Відкрити в Telegram Mini App", app_url, chat_id=chat_id),
             ],
             [
                 InlineKeyboardButton(text=f"💻 Черга ОП ({len(op_items)})", callback_data="q:view:ОП"),
@@ -816,12 +863,10 @@ def format_queue_view(subject: str, queue_items: list[dict], chat_id: int = 0) -
     other_subj = "АСД" if clean_subj == "ОП" else "ОП"
     other_icon = "🧮" if clean_subj == "ОП" else "💻"
 
+    app_url = f"{WEBAPP_URL}/app?chat_id={chat_id}&subject={clean_subj}"
     kb_rows = [
         [
-            InlineKeyboardButton(
-                text="📱 Відкрити в Telegram Mini App",
-                web_app=WebAppInfo(url=f"{WEBAPP_URL}/app?chat_id={chat_id}&subject={clean_subj}")
-            ),
+            make_webapp_button("📱 Відкрити в Telegram Mini App", app_url, chat_id=chat_id),
         ],
         [
             InlineKeyboardButton(text="✋ Зайняти чергу", callback_data=f"q:pick:{clean_subj}"),
@@ -853,7 +898,7 @@ def format_queue_view(subject: str, queue_items: list[dict], chat_id: int = 0) -
 @router.message(Command("queue", "queues"))
 async def cmd_queue(message: Message):
     from database import get_active_queue_db, set_queue_message_id_db
-    raw = message.text.replace("/queues", "", 1).replace("/queue", "", 1).strip()
+    raw = extract_command_args(message.text)
     if not raw:
         # Показуємо загальний хаб обох черг ОП та АСД
         op_items = await get_active_queue_db(message.chat.id, "ОП")
@@ -895,7 +940,7 @@ async def cmd_queue_asd(message: Message):
 @router.message(Command("join_op"))
 async def cmd_join_op(message: Message):
     from database import join_queue_db, get_active_queue_db
-    lab_number = message.text.replace("/join_op", "", 1).strip()
+    lab_number = extract_command_args(message.text)
     if not lab_number:
         items = await get_active_queue_db(message.chat.id, "ОП")
         user_item = next((it for it in items if it["user_id"] == message.from_user.id), None)
@@ -916,7 +961,7 @@ async def cmd_join_op(message: Message):
 @router.message(Command("join_asd"))
 async def cmd_join_asd(message: Message):
     from database import join_queue_db, get_active_queue_db
-    lab_number = message.text.replace("/join_asd", "", 1).strip()
+    lab_number = extract_command_args(message.text)
     if not lab_number:
         items = await get_active_queue_db(message.chat.id, "АСД")
         user_item = next((it for it in items if it["user_id"] == message.from_user.id), None)
@@ -937,7 +982,7 @@ async def cmd_join_asd(message: Message):
 @router.message(Command("join_queue"))
 async def cmd_join_queue(message: Message):
     from database import join_queue_db, get_active_queue_db
-    raw = message.text.replace("/join_queue", "", 1).strip()
+    raw = extract_command_args(message.text)
     parts = [p.strip() for p in raw.split("|")] if "|" in raw else raw.split(maxsplit=1)
     subject = normalize_queue_subject(parts[0]) if len(parts) > 0 and parts[0] else "ОП"
     lab_number = parts[1] if len(parts) > 1 else ""
@@ -968,8 +1013,8 @@ async def cmd_leave_queue(message: Message):
     elif "asd" in cmd:
         subject = "АСД"
     else:
-        parts = message.text.split(maxsplit=1)
-        subject = normalize_queue_subject(parts[1]) if len(parts) > 1 else "ОП"
+        arg = extract_command_args(message.text)
+        subject = normalize_queue_subject(arg) if arg else "ОП"
 
     ok = await leave_queue_db(message.chat.id, subject, message.from_user.id)
     msg = f"✅ Ви вийшли з черги {subject}." if ok else f"ℹ️ Вас не було в черзі {subject}."
@@ -987,8 +1032,8 @@ async def cmd_next_in_queue(message: Message):
     elif "asd" in cmd:
         subject = "АСД"
     else:
-        parts = message.text.split(maxsplit=1)
-        subject = normalize_queue_subject(parts[1]) if len(parts) > 1 else "ОП"
+        arg = extract_command_args(message.text)
+        subject = normalize_queue_subject(arg) if arg else "ОП"
 
     student = await next_in_queue_db(message.chat.id, subject)
     if not student:
@@ -1012,8 +1057,8 @@ async def cmd_clear_queue(message: Message):
     elif "asd" in cmd:
         subject = "АСД"
     else:
-        parts = message.text.split(maxsplit=1)
-        subject = normalize_queue_subject(parts[1]) if len(parts) > 1 else "ОП"
+        arg = extract_command_args(message.text)
+        subject = normalize_queue_subject(arg) if arg else "ОП"
 
     count = await clear_queue_db(message.chat.id, subject)
     await safe_answer(message, f"🧹 Чергу з предмету <b>{subject}</b> очищено! (Видалено записів: {count})")
