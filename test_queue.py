@@ -367,6 +367,51 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
 
         await clear_queue_db(self.chat_id, self.subject)
 
+    async def test_webapp_button_and_deep_link_redirect(self):
+        from handlers import make_webapp_button, extract_command_args, cmd_start
+        from config import BOT_USERNAME, WEBAPP_URL
+        from aiogram.types import Message, Chat, User
+        from unittest.mock import AsyncMock
+
+        # 1. Приватний чат (chat_id > 0) -> нативна web_app кнопка
+        btn_private = make_webapp_button("Відкрити", f"{WEBAPP_URL}/app?chat_id=123", chat_id=123)
+        self.assertIsNotNone(btn_private.web_app)
+        self.assertEqual(btn_private.web_app.url, f"{WEBAPP_URL}/app?chat_id=123")
+        self.assertIsNone(btn_private.url)
+
+        # 2. Груповий чат (chat_id < 0) -> перенаправлення через deep link у приватні повідомлення бота
+        btn_group = make_webapp_button("Відкрити", f"{WEBAPP_URL}/app?chat_id=-1004483900746", chat_id=-1004483900746, subject="ОП")
+        self.assertIsNone(btn_group.web_app)
+        self.assertIsNotNone(btn_group.url)
+        self.assertIn(f"t.me/{BOT_USERNAME}?start=app_m1004483900746_op", btn_group.url)
+
+        # 3. Перевірка для АСД
+        btn_asd = make_webapp_button("Відкрити", f"{WEBAPP_URL}/app?chat_id=-1004483900746", chat_id=-1004483900746, subject="АСД")
+        self.assertIn("start=app_m1004483900746_asd", btn_asd.url)
+
+        # 4. Перевірка extract_command_args
+        self.assertEqual(extract_command_args("/start app_m1004483900746_op"), "app_m1004483900746_op")
+        self.assertEqual(extract_command_args("/start"), "")
+
+        # 5. Тест cmd_start з параметром запуску TMA
+        mock_msg = AsyncMock(spec=Message)
+        mock_msg.chat = Chat(id=777111, type="private")
+        mock_msg.from_user = User(id=777111, is_bot=False, first_name="Максим", username="sinch")
+        mock_msg.text = "/start app_m1004483900746_op"
+        mock_msg.answer = AsyncMock()
+
+        await cmd_start(mock_msg)
+        mock_msg.answer.assert_called_once()
+        sent_text, kwargs = mock_msg.answer.call_args[0][0], mock_msg.answer.call_args[1]
+        self.assertIn("Привіт", sent_text)
+        self.assertIn("ІП-66 Портал", sent_text)
+        reply_markup = kwargs.get("reply_markup")
+        self.assertIsNotNone(reply_markup)
+        tma_btn = reply_markup.inline_keyboard[0][0]
+        self.assertIsNotNone(tma_btn.web_app)
+        self.assertIn("chat_id=-1004483900746", tma_btn.web_app.url)
+        self.assertIn("subject=ОП", tma_btn.web_app.url)
+
 
 if __name__ == "__main__":
     unittest.main()

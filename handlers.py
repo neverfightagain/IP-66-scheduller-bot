@@ -15,6 +15,7 @@ from config import (
     KYIV_TZ,
     KPI_GROUP_ID,
     WEBAPP_URL,
+    BOT_USERNAME,
     add_subscribed_chat,
     remove_subscribed_chat,
     get_subscribed_chats,
@@ -22,7 +23,7 @@ from config import (
 from kpi_api import get_lessons_for_date, get_current_time_info
 from links_manager import load_links
 from formatters import format_morning_digest, clean_markdown, escape_html_text
-from database import format_queue_name
+from database import format_queue_name, extract_first_name, find_student_real_name_db
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,54 @@ def normalize_due_date(due_str: str) -> str | None:
     return None
 
 
+def extract_command_args(text: str) -> str:
+    """
+    Витягує аргументи команди, коректно очищаючи саму команду та @bot_username в групах.
+    Наприклад:
+    '/queue@kpi_shedule_ip_66_bot' -> ''
+    '/queue@kpi_shedule_ip_66_bot ОП' -> 'ОП'
+    '/join_op@kpi_shedule_ip_66_bot 1' -> '1'
+    '/start app_m1004483900746_op' -> 'app_m1004483900746_op'
+    """
+    if not text:
+        return ""
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) > 1:
+        return parts[1].strip()
+    return ""
+
+
+def make_webapp_button(text: str, url: str, chat_id: int = 0, subject: str = "") -> InlineKeyboardButton:
+    """
+    Створює кнопку для відкриття Mini App.
+    У приватних чатах (chat_id > 0) використовує WebAppInfo для нативного відкриття в модальному вікні Telegram.
+    У групах, супергрупах та топіках (chat_id <= 0) Telegram API забороняє web_app інлайн-кнопки
+    (помилка BUTTON_TYPE_INVALID). Крім того, пряме відкриття web-посилань у зовнішньому браузері
+    позбавляє додаток Telegram-авторизації.
+    Тому для групових чатів генерується посилання переходу в приватні повідомлення бота (deep link),
+    де бот надає персональну нативну кнопку запуску Mini App.
+    """
+    if chat_id and chat_id > 0:
+        return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))
+
+    subj_code = ""
+    if subject:
+        s_lower = subject.strip().lower()
+        if s_lower in ("оп", "op"):
+            subj_code = "_op"
+        elif s_lower in ("асд", "asd"):
+            subj_code = "_asd"
+    elif "subject=" in url:
+        if "subject=%D0%9E%D0%9F" in url or "subject=ОП" in url or "subject=op" in url:
+            subj_code = "_op"
+        elif "subject=%D0%90%D0%A1%D0%94" in url or "subject=АСД" in url or "subject=asd" in url:
+            subj_code = "_asd"
+
+    safe_chat = str(chat_id).replace("-", "m") if chat_id else "0"
+    deep_link = f"https://t.me/{BOT_USERNAME}?start=app_{safe_chat}{subj_code}"
+    return InlineKeyboardButton(text=text, url=deep_link)
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     chat_id = message.chat.id
@@ -135,6 +184,74 @@ async def cmd_start(message: Message):
     from database import add_subscription_db
     is_new = await add_subscription_db(chat_id, thread_id)
     add_subscribed_chat(chat_id, thread_id)
+
+    # Обробка переходу з груп для запуску Telegram Mini App у приватних повідомленнях
+    start_arg = extract_command_args(message.text or "").strip().lower()
+    if start_arg.startswith("app") or start_arg.startswith("queue"):
+        target_chat_id = 0
+        target_subj = ""
+        parts = start_arg.split("_")
+        for part in parts[1:]:
+            if part in ("op", "оп"):
+                target_subj = "ОП"
+            elif part in ("asd", "асд"):
+                target_subj = "АСД"
+            elif part.startswith("m") and part[1:].isdigit():
+                target_chat_id = -int(part[1:])
+            elif part.lstrip("-").isdigit():
+                target_chat_id = int(part)
+
+        # Якщо chat_id не вказано в аргументах, беремо цільову групу
+        if not target_chat_id:
+            from config import ENV_CHAT_ID
+            if ENV_CHAT_ID:
+                try:
+                    target_chat_id = int(ENV_CHAT_ID)
+                except ValueError:
+                    pass
+            if not target_chat_id:
+                for c in get_subscribed_chats():
+                    if c["chat_id"] < 0:
+                        target_chat_id = c["chat_id"]
+                        break
+
+        app_params = []
+        if target_chat_id:
+            app_params.append(f"chat_id={target_chat_id}")
+        if target_subj:
+            app_params.append(f"subject={target_subj}")
+        query_str = ("?" + "&".join(app_params)) if app_params else ""
+        app_full_url = f"{WEBAPP_URL}/app{query_str}"
+
+        # Визначаємо реальне ім'я студента для персонального звернення
+        uname = message.from_user.username if message.from_user else ""
+        uid = message.from_user.id if message.from_user else None
+        user_first = message.from_user.first_name if message.from_user else "Студент"
+        real_name = await find_student_real_name_db(user_id=uid, telegram_username=uname)
+        if real_name:
+            display_first_name = extract_first_name(real_name)
+        else:
+            display_first_name = extract_first_name(user_first)
+
+        subj_suffix = f" ({target_subj})" if target_subj else ""
+        text = (
+            f"👋 Привіт, <b>{escape_html_text(display_first_name)}</b>!\n\n"
+            f"🚀 Твій персональний доступ до <b>ІП-66 Портал (Mini App)</b> готовий.\n"
+            f"У додатку доступні живі черги{subj_suffix}, швидкий запис на здачу лаб, розклад занять та актуальні дедлайни.\n\n"
+            f"👇 <b>Натисни кнопку нижче, щоб відкрити:</b>"
+        )
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🚀 Відкрити ІП-66 Портал (Mini App)",
+                        web_app=WebAppInfo(url=app_full_url)
+                    )
+                ]
+            ]
+        )
+        await safe_answer(message, text, reply_markup=kb)
+        return
 
     is_group = chat_type in (ChatType.GROUP, ChatType.SUPERGROUP)
     topic_desc = f" (топік ID: <code>{thread_id}</code>)" if thread_id else ""
@@ -172,12 +289,66 @@ async def cmd_start(message: Message):
         "/sync — Миттєва ручна синхронізація з Google Classroom\n"
         "/adddeadline — Додати завдання вручну (<code>/adddeadline Предмет | Назва | Дедлайн | Опис</code>)\n"
         "/deldeadline — Видалити завдання за ID (<code>/deldeadline &lt;id&gt;</code>)\n\n"
+        "📱 <b>Портал та черги:</b>\n"
+        "/app — Відкрити Telegram Mini App портал\n"
+        "/queue — Жива черга на захист лабораторних робіт\n\n"
         "⚙️ <b>Керування сповіщеннями:</b>\n"
         "/subscribe — Увімкнути сповіщення в цьому чаті / топіку\n"
         "/unsubscribe — Вимкнути сповіщення\n"
         "/help — Повна довідка з поясненням можливостей"
     )
     await safe_answer(message, text)
+
+
+@router.message(Command("app", "webapp", "portal"))
+async def cmd_app(message: Message):
+    chat_id = message.chat.id
+    chat_type = message.chat.type
+    is_group = chat_type in (ChatType.GROUP, ChatType.SUPERGROUP)
+
+    if is_group:
+        safe_chat = str(chat_id).replace("-", "m")
+        deep_link = f"https://t.me/{BOT_USERNAME}?start=app_{safe_chat}"
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🚀 Відкрити в Telegram Mini App", url=deep_link)
+                ]
+            ]
+        )
+        await safe_answer(
+            message,
+            "📱 <b>ІП-66 Портал & Жива Черга</b>\n\n"
+            "Щоб відкрити Mini App з повною синхронізацією твого Telegram-профілю, перейди в особисті повідомлення з ботом:",
+            reply_markup=kb
+        )
+    else:
+        from config import ENV_CHAT_ID
+        target_chat_id = 0
+        if ENV_CHAT_ID:
+            try:
+                target_chat_id = int(ENV_CHAT_ID)
+            except ValueError:
+                pass
+        if not target_chat_id:
+            for c in get_subscribed_chats():
+                if c["chat_id"] < 0:
+                    target_chat_id = c["chat_id"]
+                    break
+        app_url = f"{WEBAPP_URL}/app?chat_id={target_chat_id}" if target_chat_id else f"{WEBAPP_URL}/app"
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🚀 Відкрити ІП-66 Портал (Mini App)", web_app=WebAppInfo(url=app_url))
+                ]
+            ]
+        )
+        await safe_answer(
+            message,
+            "🚀 <b>ІП-66 Портал (Telegram Mini App)</b>\n\n"
+            "Натисни кнопку нижче для запуску персонального веб-порталу:",
+            reply_markup=kb
+        )
 
 
 @router.message(Command("subscribe"))
@@ -682,33 +853,6 @@ def normalize_queue_subject(subject_raw: str | None) -> str:
     return clean
 
 
-def make_webapp_button(text: str, url: str, chat_id: int = 0) -> InlineKeyboardButton:
-    """
-    Створює кнопку для відкриття Mini App.
-    У приватних чатах (chat_id > 0) використовує WebAppInfo для нативного відкриття в модальному вікні.
-    У групах, супергрупах та топіках (chat_id <= 0) Telegram API забороняє web_app інлайн-кнопки
-    (помилка BUTTON_TYPE_INVALID), тому там обов'язково використовується звичайне посилання url=.
-    """
-    if chat_id and chat_id > 0:
-        return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))
-    return InlineKeyboardButton(text=text, url=url)
-
-
-def extract_command_args(text: str) -> str:
-    """
-    Витягує аргументи команди, коректно очищаючи саму команду та @bot_username в групах.
-    Наприклад:
-    '/queue@kpi_shedule_ip_66_bot' -> ''
-    '/queue@kpi_shedule_ip_66_bot ОП' -> 'ОП'
-    '/join_op@kpi_shedule_ip_66_bot 1' -> '1'
-    """
-    if not text:
-        return ""
-    parts = text.strip().split(maxsplit=1)
-    if len(parts) > 1:
-        return parts[1].strip()
-    return ""
-
 
 def format_queues_hub_view(op_items: list[dict], asd_items: list[dict], chat_id: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     """Форматування головного меню з оглядом обох черг (ОП та АСД)."""
@@ -866,7 +1010,7 @@ def format_queue_view(subject: str, queue_items: list[dict], chat_id: int = 0) -
     app_url = f"{WEBAPP_URL}/app?chat_id={chat_id}&subject={clean_subj}"
     kb_rows = [
         [
-            make_webapp_button("📱 Відкрити в Telegram Mini App", app_url, chat_id=chat_id),
+            make_webapp_button("📱 Відкрити в Telegram Mini App", app_url, chat_id=chat_id, subject=clean_subj),
         ],
         [
             InlineKeyboardButton(text="✋ Зайняти чергу", callback_data=f"q:pick:{clean_subj}"),

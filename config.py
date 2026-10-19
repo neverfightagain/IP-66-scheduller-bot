@@ -155,6 +155,7 @@ def remove_subscribed_chat(chat_id: int, thread_id: int | None = None) -> bool:
     return False
 
 
-# Telegram Mini App (TMA) URL
+# Telegram Bot Username & Mini App (TMA) URL
+BOT_USERNAME = os.getenv("BOT_USERNAME", "kpi_shedule_ip_66_bot").strip().lstrip("@")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://ip-66-scheduller-bot.onrender.com").strip().rstrip("/")
 

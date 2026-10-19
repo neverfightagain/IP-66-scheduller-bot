@@ -46,8 +46,45 @@ document.addEventListener('DOMContentLoaded', () => {
         return name || surname || fullName.trim() || 'Студент';
     }
 
+    // Параметри URL від бота (chat_id, subject)
+    const urlParams = new URLSearchParams(window.location.search);
+    const chatId = parseInt(urlParams.get('chat_id')) || 0;
+    const initialSubject = (urlParams.get('subject') || 'ОП').toUpperCase();
+
     // Інформація про користувача з Telegram WebApp SDK
     const tgUser = tg?.initDataUnsafe?.user;
+
+    // Перевірка середовища запуску: якщо відкрито у звичайному браузері без Telegram WebApp
+    const BOT_USERNAME = 'kpi_shedule_ip_66_bot';
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const isDebug = urlParams.get('debug') === '1' || urlParams.get('test') === '1';
+
+    if ((!tgUser || !tgUser.id) && !isLocalhost && !isDebug) {
+        const safeChat = chatId ? String(chatId).replace('-', 'm') : '0';
+        const subjCode = initialSubject ? `_${initialSubject.toLowerCase()}` : '';
+        const botUrl = `https://t.me/${BOT_USERNAME}?start=app_${safeChat}${subjCode}`;
+
+        document.body.innerHTML = `
+            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:24px; text-align:center; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #fdfbf7; color: #1e293b;">
+                <div style="width: 76px; height: 76px; border-radius: 22px; background: linear-gradient(135deg, #6366f1, #4f46e5); display: flex; align-items: center; justify-content: center; font-size: 38px; color: #fff; margin-bottom: 20px; box-shadow: 0 10px 25px rgba(79, 70, 229, 0.35);">
+                    🤖
+                </div>
+                <h2 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 700; color: #0f172a;">Відкриття через Telegram</h2>
+                <p style="margin: 0 0 24px 0; font-size: 15px; color: #64748b; max-width: 340px; line-height: 1.5;">
+                    У звичайному браузері неможливо ідентифікувати ваш студентський акаунт. Відкрийте додаток через Telegram-бота для синхронізації черг та профілю.
+                </p>
+                <a href="${botUrl}" style="display:inline-flex; align-items:center; justify-content:center; gap: 8px; background: #4f46e5; color: #ffffff; padding: 14px 28px; border-radius: 14px; text-decoration: none; font-weight: 600; font-size: 16px; box-shadow: 0 6px 20px rgba(79, 70, 229, 0.3); transition: transform 0.15s ease;">
+                    <span>🚀</span> Відкрити в Telegram
+                </a>
+                <p style="margin-top: 18px; font-size: 13px; color: #94a3b8;">Автоматичне перенаправлення...</p>
+            </div>
+        `;
+        setTimeout(() => {
+            window.location.href = botUrl;
+        }, 300);
+        return;
+    }
+
     const initialRawName = tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : 'Студент';
     const initialFirstName = tgUser?.first_name ? extractFirstName(tgUser.first_name) : 'Студент';
     const currentUser = {
@@ -57,11 +94,6 @@ document.addEventListener('DOMContentLoaded', () => {
         username: tgUser?.username || 'student',
         photoUrl: tgUser?.photo_url || ''
     };
-
-    // Параметри URL від бота (chat_id, subject)
-    const urlParams = new URLSearchParams(window.location.search);
-    const chatId = parseInt(urlParams.get('chat_id')) || 0;
-    const initialSubject = (urlParams.get('subject') || 'ОП').toUpperCase();
 
     // Стан додатку
     let activeSubject = ['ОП', 'АСД'].includes(initialSubject) ? initialSubject : 'ОП';
