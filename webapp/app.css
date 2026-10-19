@@ -506,6 +506,11 @@ body {
     stroke-width: 3;
 }
 
+.task-item-card.is-checked {
+    opacity: 0.75;
+    background: #fbfbfd;
+}
+
 .task-item-card.is-checked .custom-checkbox {
     background: var(--checkbox-checked);
     border-color: var(--checkbox-checked);

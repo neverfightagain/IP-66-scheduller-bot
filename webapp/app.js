@@ -106,6 +106,31 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentTab = 'tab-queue';
     let pollInterval = null;
 
+    // Збереження виконаних дедлайнів у localStorage окремо для кожного студента
+    function getCompletedDeadlinesKey() {
+        return currentUser?.id ? `ip66_completed_deadlines_${currentUser.id}` : 'ip66_completed_deadlines';
+    }
+
+    function loadCompletedDeadlines() {
+        try {
+            const raw = localStorage.getItem(getCompletedDeadlinesKey());
+            if (!raw) return new Set();
+            const arr = JSON.parse(raw);
+            return new Set(Array.isArray(arr) ? arr : []);
+        } catch (e) {
+            return new Set();
+        }
+    }
+
+    function saveCompletedDeadlines(set) {
+        try {
+            const arr = Array.from(set);
+            localStorage.setItem(getCompletedDeadlinesKey(), JSON.stringify(arr));
+        } catch (e) {
+            console.error('Failed to save completed deadlines to localStorage', e);
+        }
+    }
+
     // DOM Elements
     const userGreetingEl = document.getElementById('user-greeting');
     const heroSubtitleEl = document.getElementById('hero-subtitle');
@@ -819,14 +844,26 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             deadlinesCache = data.deadlines;
-            if (deadlinesCountBadge) deadlinesCountBadge.textContent = data.total || deadlinesCache.length;
+            const completedSet = loadCompletedDeadlines();
+
+            // Рахуємо скільки дедлайнів залишилося виконати
+            const remainingCount = deadlinesCache.filter(d => {
+                const dlKey = String(d.id || `${d.course_id}_${d.title}`);
+                return !completedSet.has(dlKey);
+            }).length;
+
+            if (deadlinesCountBadge) {
+                deadlinesCountBadge.textContent = remainingCount;
+            }
 
             deadlinesItemsContainer.innerHTML = deadlinesCache.map((d, idx) => {
                 const dueText = d.due_formatted ? `⏰ Дедлайн: ${d.due_formatted}` : (d.due_time ? `⏰ ${d.due_time}` : 'Без дедлайну');
                 const classroomUrl = d.alternate_link || 'https://classroom.google.com';
+                const dlKey = String(d.id || `${d.course_id}_${d.title}`);
+                const isChecked = completedSet.has(dlKey);
 
                 return `
-                    <div class="task-item-card deadline-clickable-card" data-dl-idx="${idx}" style="cursor:pointer;">
+                    <div class="task-item-card deadline-clickable-card ${isChecked ? 'is-checked' : ''}" data-dl-key="${escapeHtml(dlKey)}" data-dl-idx="${idx}" style="cursor:pointer;">
                         <div class="custom-checkbox">
                             <svg viewBox="0 0 24 24" fill="none">
                                 <polyline points="20 6 9 17 4 12"></polyline>
@@ -863,13 +900,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             });
 
-            // Клік по чекбоксу відмічає виконання
+            // Клік по чекбоксу відмічає виконання та зберігає в localStorage
             deadlinesItemsContainer.querySelectorAll('.deadline-clickable-card').forEach(el => {
                 const checkbox = el.querySelector('.custom-checkbox');
                 if (checkbox) {
                     checkbox.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        el.classList.toggle('is-checked');
+                        const isNowChecked = el.classList.toggle('is-checked');
+                        const dlKey = el.getAttribute('data-dl-key');
+                        if (dlKey) {
+                            const set = loadCompletedDeadlines();
+                            if (isNowChecked) {
+                                set.add(dlKey);
+                                showToast('Дедлайн позначено як виконаний! ✅');
+                            } else {
+                                set.delete(dlKey);
+                                showToast('Дедлайн повернуто в активні');
+                            }
+                            saveCompletedDeadlines(set);
+
+                            // Оновлюємо лічильник незакритих завдань
+                            if (deadlinesCountBadge && deadlinesCache.length > 0) {
+                                const remaining = deadlinesCache.filter(d => {
+                                    const k = String(d.id || `${d.course_id}_${d.title}`);
+                                    return !set.has(k);
+                                }).length;
+                                deadlinesCountBadge.textContent = remaining;
+                            }
+                        }
                         if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
                     });
                 }
@@ -878,11 +936,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     const dl = deadlinesCache[idx];
                     if (dl) {
                         const targetUrl = dl.alternate_link || 'https://classroom.google.com';
+                        const currentSet = loadCompletedDeadlines();
+                        const dlKey = String(dl.id || `${dl.course_id}_${dl.title}`);
+                        const isDone = currentSet.has(dlKey);
+                        const statusBadge = isDone
+                            ? '<span style="display:inline-block; background:#DCFCE7; color:#166534; font-size:12px; font-weight:700; padding:4px 10px; border-radius:8px; margin-bottom:10px;">✅ Виконано (відмічено галочкою)</span>'
+                            : '<span style="display:inline-block; background:#FEF3C7; color:#92400E; font-size:12px; font-weight:700; padding:4px 10px; border-radius:8px; margin-bottom:10px;">⏳ В процесі виконання</span>';
+
                         openModal({
                             tag: dl.course_clean || dl.course_id || 'Завдання Classroom',
                             title: dl.title,
                             time: dl.due_formatted ? `⏰ Дедлайн: ${dl.due_formatted}` : 'Без дедлайну',
                             body: `
+                                ${statusBadge}
                                 ${dl.ai_summary ? `<div style="background:#F3E8FF; padding:10px 14px; border-radius:14px; margin-bottom:12px; font-size:13.5px; color:#581C87; line-height:1.4;"><b>💡 Короткий зміст (AI):</b><br>${escapeHtml(dl.ai_summary)}</div>` : ''}
                                 ${dl.description ? `<div style="font-size:13px; color:#475569; max-height:140px; overflow-y:auto; line-height:1.4;">${escapeHtml(dl.description)}</div>` : ''}
                             `,
