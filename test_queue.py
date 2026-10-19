@@ -162,18 +162,20 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
         button_callbacks = [b.callback_data for row in hub_kb.inline_keyboard for b in row]
         self.assertIn("q:view:ОП", button_callbacks)
         self.assertIn("q:view:АСД", button_callbacks)
-        self.assertIn("q:join:ОП", button_callbacks)
-        self.assertIn("q:join:АСД", button_callbacks)
+        self.assertIn("q:pick:ОП:hub", button_callbacks)
+        self.assertIn("q:pick:АСД:hub", button_callbacks)
 
         # Перевірка наявності швидкого перемикання між ОП та АСД в окремих чергах
         op_text, op_kb = format_queue_view("ОП", op_items)
         op_buttons = [b.callback_data for row in op_kb.inline_keyboard for b in row]
         self.assertIn("q:view:АСД", op_buttons)
+        self.assertIn("q:pick:ОП", op_buttons)
         self.assertIn("q:hub", op_buttons)
 
         asd_text, asd_kb = format_queue_view("АСД", asd_items)
         asd_buttons = [b.callback_data for row in asd_kb.inline_keyboard for b in row]
         self.assertIn("q:view:ОП", asd_buttons)
+        self.assertIn("q:pick:АСД", asd_buttons)
         self.assertIn("q:hub", asd_buttons)
 
         # Очищення
@@ -217,6 +219,67 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
         q = await get_active_queue_db(self.chat_id, "ОП")
         self.assertEqual(len(q), 1)
         self.assertEqual(q[0]["lab_number"], "Лаба 2")
+
+        await clear_queue_db(self.chat_id, "ОП")
+
+    async def test_oldest_labs_surface_to_top(self):
+        # 1. Студент з Лабою 4 стає в чергу
+        ok1, _, pos1 = await join_queue_db(self.chat_id, self.subject, 401, "Андрій", lab_number="Лаба 4")
+        self.assertTrue(ok1)
+        self.assertEqual(pos1, 1)
+
+        # 2. Студент з Лабою 2 стає в чергу -> спливає на #1!
+        ok2, _, pos2 = await join_queue_db(self.chat_id, self.subject, 402, "Богдан", lab_number="Лаба 2")
+        self.assertTrue(ok2)
+        self.assertEqual(pos2, 1)
+
+        # 3. Студент з Лабою 1 (найстаріша) -> спливає на #1!
+        ok3, _, pos3 = await join_queue_db(self.chat_id, self.subject, 403, "Василь", lab_number="Лаба 1")
+        self.assertTrue(ok3)
+        self.assertEqual(pos3, 1)
+
+        # 4. Студент з Лабою 2 (однакова з Богданом -> FIFO)
+        ok4, _, pos4 = await join_queue_db(self.chat_id, self.subject, 404, "Григорій", lab_number="Лаба 2")
+        self.assertTrue(ok4)
+        self.assertEqual(pos4, 3)
+
+        # Перевірка черги за порядком
+        q = await get_active_queue_db(self.chat_id, self.subject)
+        names = [item["user_name"] for item in q]
+        self.assertEqual(names, ["Василь", "Богдан", "Григорій", "Андрій"])
+        labs = [item["lab_number"] for item in q]
+        self.assertEqual(labs, ["Лаба 1", "Лаба 2", "Лаба 2", "Лаба 4"])
+
+        # Наступний у черзі має бути Василь (Лаба 1)
+        called = await next_in_queue_db(self.chat_id, self.subject)
+        self.assertEqual(called["user_name"], "Василь")
+        self.assertEqual(called["lab_number"], "Лаба 1")
+
+        await clear_queue_db(self.chat_id, self.subject)
+
+    async def test_lab_picker_view_and_normalization(self):
+        from handlers import format_lab_picker_view
+        from database import parse_lab_info
+
+        # Тест розбору номерів лаб
+        self.assertEqual(parse_lab_info("1"), (1, "Лаба 1"))
+        self.assertEqual(parse_lab_info("Лаба 2"), (2, "Лаба 2"))
+        self.assertEqual(parse_lab_info("Лр 3 захист"), (3, "Лр 3 захист"))
+        self.assertEqual(parse_lab_info(""), (999, ""))
+        self.assertEqual(parse_lab_info(None), (999, ""))
+
+        # Перевірка клавіатури вибору лаб
+        text, kb = format_lab_picker_view("ОП")
+        self.assertIn("Вибір практичної/лабораторної роботи (ОП)", text)
+        self.assertIn("автоматично спливають нагору", text)
+
+        callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
+        self.assertIn("q:join_lab:ОП:1", callbacks)
+        self.assertIn("q:join_lab:ОП:2", callbacks)
+        self.assertIn("q:join_lab:ОП:3", callbacks)
+        self.assertIn("q:join_lab:ОП:8", callbacks)
+        self.assertIn("q:view:ОП", callbacks)
+        self.assertIn("q:hub", callbacks)
 
         await clear_queue_db(self.chat_id, "ОП")
 

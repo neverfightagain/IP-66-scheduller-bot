@@ -712,11 +712,52 @@ def format_queues_hub_view(op_items: list[dict], asd_items: list[dict]) -> tuple
                 InlineKeyboardButton(text=f"🧮 Черга АСД ({len(asd_items)})", callback_data="q:view:АСД"),
             ],
             [
-                InlineKeyboardButton(text="✋ Зайняти ОП", callback_data="q:join:ОП"),
-                InlineKeyboardButton(text="✋ Зайняти АСД", callback_data="q:join:АСД"),
+                InlineKeyboardButton(text="✋ Зайняти ОП", callback_data="q:pick:ОП:hub"),
+                InlineKeyboardButton(text="✋ Зайняти АСД", callback_data="q:pick:АСД:hub"),
             ],
             [
                 InlineKeyboardButton(text="🔄 Оновити обидві черги", callback_data="q:hub_refresh"),
+            ]
+        ]
+    )
+    return text, kb
+
+
+def format_lab_picker_view(subject: str, from_hub: bool = False) -> tuple[str, InlineKeyboardMarkup]:
+    """Форматування меню інтерактивного вибору лабораторної роботи."""
+    clean_subj = normalize_queue_subject(subject) or "ОП"
+    emoji = "💻" if clean_subj == "ОП" else ("🧮" if clean_subj == "АСД" else "📋")
+
+    text = (
+        f"{emoji} <b>Вибір практичної/лабораторної роботи ({clean_subj})</b>\n\n"
+        f"💡 <i>Оберіть роботу, яку ви плануєте захищати.\n"
+        f"<b>Студенти зі старішими роботами (Лаба 1, 2...) автоматично спливають нагору черги!</b></i>\n\n"
+        f"👇 Оберіть роботу зі списку нижче:"
+    )
+
+    back_target = "q:hub" if from_hub else f"q:view:{clean_subj}"
+    back_label = "🔙 До списку черг" if from_hub else f"🔙 До черги {clean_subj}"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔬 Лаба 1", callback_data=f"q:join_lab:{clean_subj}:1"),
+                InlineKeyboardButton(text="🔬 Лаба 2", callback_data=f"q:join_lab:{clean_subj}:2"),
+                InlineKeyboardButton(text="🔬 Лаба 3", callback_data=f"q:join_lab:{clean_subj}:3"),
+            ],
+            [
+                InlineKeyboardButton(text="🔬 Лаба 4", callback_data=f"q:join_lab:{clean_subj}:4"),
+                InlineKeyboardButton(text="🔬 Лаба 5", callback_data=f"q:join_lab:{clean_subj}:5"),
+                InlineKeyboardButton(text="🔬 Лаба 6", callback_data=f"q:join_lab:{clean_subj}:6"),
+            ],
+            [
+                InlineKeyboardButton(text="🔬 Лаба 7", callback_data=f"q:join_lab:{clean_subj}:7"),
+                InlineKeyboardButton(text="🔬 Лаба 8", callback_data=f"q:join_lab:{clean_subj}:8"),
+                InlineKeyboardButton(text="🔬 Лаба 9+", callback_data=f"q:join_lab:{clean_subj}:9"),
+            ],
+            [
+                InlineKeyboardButton(text=back_label, callback_data=back_target),
+                InlineKeyboardButton(text="🏠 Усі черги", callback_data="q:hub"),
             ]
         ]
     )
@@ -729,23 +770,24 @@ def format_queue_view(subject: str, queue_items: list[dict]) -> tuple[str, Inlin
     emoji = "💻" if clean_subj == "ОП" else ("🧮" if clean_subj == "АСД" else "📋")
     header = f"{emoji} <b>Жива черга на захист: {clean_subj}</b>\n"
     if not queue_items:
-        text = f"{header}\n<i>Черга наразі порожня. Будьте першим!</i>"
+        text = f"{header}\n<i>Черга наразі порожня. Будьте першим!</i>\n\n💡 <i>Студенти зі старішими роботами автоматично піднімаються вище!</i>"
     else:
         text = f"{header}\n"
         for idx, item in enumerate(queue_items, start=1):
             user_display = item["user_name"]
             if item.get("username"):
                 user_display += f" (@{item['username']})"
-            lab_info = f" — <i>{item['lab_number']}</i>" if item.get("lab_number") else ""
+            lab_info = f" — <b>[{item['lab_number']}]</b>" if item.get("lab_number") else ""
             badge = "🥇 " if idx == 1 else f"{idx}. "
             text += f"{badge}<b>{user_display}</b>{lab_info}\n"
+        text += "\n💡 <i>Пріоритет: старіші практичні роботи спливають нагору черги.</i>"
 
     other_subj = "АСД" if clean_subj == "ОП" else "ОП"
     other_icon = "🧮" if clean_subj == "ОП" else "💻"
 
     kb_rows = [
         [
-            InlineKeyboardButton(text="✋ Зайняти чергу", callback_data=f"q:join:{clean_subj}"),
+            InlineKeyboardButton(text="✋ Зайняти чергу", callback_data=f"q:pick:{clean_subj}"),
             InlineKeyboardButton(text="🚪 Вийти", callback_data=f"q:leave:{clean_subj}"),
         ],
         [
@@ -809,6 +851,11 @@ async def cmd_queue_asd(message: Message):
 async def cmd_join_op(message: Message):
     from database import join_queue_db, get_active_queue_db
     lab_number = message.text.replace("/join_op", "", 1).strip()
+    if not lab_number:
+        text, kb = format_lab_picker_view("ОП")
+        await safe_answer(message, text, reply_markup=kb)
+        return
+
     user = message.from_user
     ok, msg, pos = await join_queue_db(message.chat.id, "ОП", user.id, user.full_name, user.username, lab_number)
     items = await get_active_queue_db(message.chat.id, "ОП")
@@ -820,6 +867,11 @@ async def cmd_join_op(message: Message):
 async def cmd_join_asd(message: Message):
     from database import join_queue_db, get_active_queue_db
     lab_number = message.text.replace("/join_asd", "", 1).strip()
+    if not lab_number:
+        text, kb = format_lab_picker_view("АСД")
+        await safe_answer(message, text, reply_markup=kb)
+        return
+
     user = message.from_user
     ok, msg, pos = await join_queue_db(message.chat.id, "АСД", user.id, user.full_name, user.username, lab_number)
     items = await get_active_queue_db(message.chat.id, "АСД")
@@ -834,6 +886,11 @@ async def cmd_join_queue(message: Message):
     parts = [p.strip() for p in raw.split("|")] if "|" in raw else raw.split(maxsplit=1)
     subject = normalize_queue_subject(parts[0]) if len(parts) > 0 and parts[0] else "ОП"
     lab_number = parts[1] if len(parts) > 1 else ""
+
+    if not lab_number:
+        text, kb = format_lab_picker_view(subject)
+        await safe_answer(message, text, reply_markup=kb)
+        return
 
     user = message.from_user
     ok, msg, pos = await join_queue_db(message.chat.id, subject, user.id, user.full_name, user.username, lab_number)
@@ -880,9 +937,10 @@ async def cmd_next_in_queue(message: Message):
 
     name = student["user_name"]
     un = f" (@{student['username']})" if student.get("username") else ""
+    lab_str = f" <b>[{student['lab_number']}]</b>" if student.get("lab_number") else ""
     items = await get_active_queue_db(message.chat.id, subject)
     text, kb = format_queue_view(subject, items)
-    await safe_answer(message, f"🎯 <b>Зараз захищає ({subject}):</b> {name}{un}\n\n" + text, reply_markup=kb)
+    await safe_answer(message, f"🎯 <b>Зараз захищає ({subject}):</b> {name}{un}{lab_str}\n\n" + text, reply_markup=kb)
 
 
 @router.message(Command("clear_queue", "clear_op", "clear_asd"))
@@ -926,18 +984,40 @@ async def cb_queue_actions(callback: CallbackQuery):
 
     subject = normalize_queue_subject(data[2]) if len(data) > 2 else "ОП"
 
+    if action in ("pick", "join"):
+        from_hub = len(data) > 3 and data[3] == "hub"
+        text, kb = format_lab_picker_view(subject, from_hub=from_hub)
+        await callback.answer()
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            pass
+        return
+
+    if action == "join_lab":
+        lab_num = data[3] if len(data) > 3 else "1"
+        lab_label = f"Лаба {lab_num}"
+        ok, msg, pos = await join_queue_db(chat_id, subject, user.id, user.full_name, user.username, lab_label)
+        alert_msg = f"✅ Ви #{pos} у черзі {subject} ({lab_label})!" if ok else msg
+        await callback.answer(alert_msg, show_alert=True)
+        items = await get_active_queue_db(chat_id, subject)
+        text, kb = format_queue_view(subject, items)
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            pass
+        return
+
     if action == "view":
         await callback.answer()
-    elif action == "join":
-        ok, msg, _ = await join_queue_db(chat_id, subject, user.id, user.full_name, user.username)
-        await callback.answer(msg, show_alert=not ok)
     elif action == "leave":
         ok = await leave_queue_db(chat_id, subject, user.id)
         await callback.answer(f"Ви вийшли з черги {subject}" if ok else f"Вас не було в черзі {subject}", show_alert=False)
     elif action == "next":
         next_st = await next_in_queue_db(chat_id, subject)
         if next_st:
-            await callback.answer(f"Наступний: {next_st['user_name']}", show_alert=False)
+            lab_str = f" ({next_st['lab_number']})" if next_st.get("lab_number") else ""
+            await callback.answer(f"Наступний: {next_st['user_name']}{lab_str}", show_alert=False)
         else:
             await callback.answer(f"Черга {subject} порожня!", show_alert=True)
     elif action == "clear":
@@ -946,15 +1026,9 @@ async def cb_queue_actions(callback: CallbackQuery):
     elif action == "refresh":
         await callback.answer(f"Чергу {subject} оновлено", show_alert=False)
 
-    # Якщо користувач зараз у вікні хабу (в тексті є заголовок хабу) і натиснув кнопку "Зайняти"
-    orig_text = callback.message.text or ""
-    if "ЖИВІ ЧЕРГИ НА ЗАХИСТ" in orig_text and action == "join":
-        op_items = await get_active_queue_db(chat_id, "ОП")
-        asd_items = await get_active_queue_db(chat_id, "АСД")
-        text, kb = format_queues_hub_view(op_items, asd_items)
-    else:
-        items = await get_active_queue_db(chat_id, subject)
-        text, kb = format_queue_view(subject, items)
+    # Оновлення виду черги
+    items = await get_active_queue_db(chat_id, subject)
+    text, kb = format_queue_view(subject, items)
 
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)

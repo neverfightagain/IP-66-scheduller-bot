@@ -2,6 +2,7 @@ from typing import Any, Optional
 import asyncio
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 import aiosqlite
@@ -351,6 +352,7 @@ async def init_db():
                 user_name TEXT NOT NULL,
                 username TEXT,
                 lab_number TEXT DEFAULT '',
+                lab_priority INTEGER DEFAULT 999,
                 status TEXT DEFAULT 'waiting',
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -361,6 +363,19 @@ async def init_db():
         """)
         # Повне видалення будь-яких неактивних або застарілих записів
         await db.execute("DELETE FROM lab_queues WHERE status != 'waiting';")
+
+        try:
+            await db.execute("ALTER TABLE lab_queues ADD COLUMN lab_priority INTEGER DEFAULT 999;")
+        except Exception:
+            pass
+
+        try:
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_lab_queues_priority
+                ON lab_queues (chat_id, subject, lab_priority, id);
+            """)
+        except Exception:
+            pass
 
         # 8. Таблиця скасованих пар старостою
         await db.execute("""
@@ -738,6 +753,29 @@ async def remove_scheduled_deletion_db(deletion_id: int):
 # ЖИВА ЧЕРГА НА ЗАХИСТ ЛАБОРАТОРНИХ
 # ==========================================
 
+def parse_lab_info(lab_raw: str | None) -> tuple[int, str]:
+    """
+    Визначає пріоритет роботи (номер) та нормалізовану назву.
+    Чим менший номер роботи (старіша практична робота), тим вищий пріоритет (менше число).
+    Повертає (priority, normalized_name).
+    """
+    if not lab_raw:
+        return 999, ""
+    raw = str(lab_raw).strip()
+    if not raw:
+        return 999, ""
+    match = re.search(r'(\d+)', raw)
+    if match:
+        num = int(match.group(1))
+        # Якщо введено просто число або цифри — нормалізуємо як 'Лаба X'
+        if raw == str(num):
+            name = f"Лаба {num}"
+        else:
+            name = raw
+        return num, name
+    return 999, raw
+
+
 async def join_queue_db(
     chat_id: int,
     subject: str,
@@ -749,55 +787,68 @@ async def join_queue_db(
     """
     Додати студента до живої черги.
     Гарантує відсутність спаму (один студент займає лише 1 місце в черзі з предмету).
-    Якщо студент уже в черзі, оновлює номер лаби без зміни черги.
+    Пріоритет черги: старіші практичні роботи (менший номер) піднімаються нагору!
+    При однаковому номері діє FIFO (хто раніше зайняв).
+    Якщо студент уже в черзі, оновлює номер лаби та перераховує його позицію за пріоритетом.
     Повертає (успіх, повідомлення, позиція_в_черзі).
     """
     subject_clean = (subject or "ОП").strip()[:50]
-    clean_lab = (lab_number or "").strip()[:50]
     clean_name = (user_name or "Студент").strip()[:100]
+    priority, clean_lab = parse_lab_info(lab_number)
 
     async with get_db() as db:
         # Перевірка чи вже є у черзі
         async with db.execute("""
-            SELECT id, lab_number FROM lab_queues
+            SELECT id, lab_number, lab_priority FROM lab_queues
             WHERE chat_id = ? AND subject = ? AND user_id = ?
         """, (chat_id, subject_clean, user_id)) as cursor:
             existing = await cursor.fetchone()
             if existing:
-                # Визначаємо поточну позицію
+                existing_dict = dict(existing)
+                existing_id = existing_dict["id"]
+                current_p = existing_dict.get("lab_priority") or 999
+                current_lab = existing_dict.get("lab_number") or ""
+
+                # Якщо передано новий номер лаби і він відрізняється — оновлюємо
+                if clean_lab and (clean_lab != current_lab or priority != current_p):
+                    await db.execute("""
+                        UPDATE lab_queues
+                        SET lab_number = ?, lab_priority = ?, user_name = ?, username = ?
+                        WHERE id = ?
+                    """, (clean_lab, priority, clean_name, username, existing_id))
+                    await db.commit()
+                    target_priority = priority
+                else:
+                    target_priority = current_p
+
+                # Визначаємо поточну позицію з урахуванням пріоритету (lab_priority ASC, id ASC)
                 async with db.execute("""
                     SELECT COUNT(*) as pos FROM lab_queues
-                    WHERE chat_id = ? AND subject = ? AND id <= ?
-                """, (chat_id, subject_clean, existing["id"])) as pos_cursor:
+                    WHERE chat_id = ? AND subject = ? 
+                      AND (lab_priority < ? OR (lab_priority = ? AND id <= ?))
+                """, (chat_id, subject_clean, target_priority, target_priority, existing_id)) as pos_cursor:
                     row = await pos_cursor.fetchone()
                     pos = row["pos"] if row else 1
 
-                # Якщо вказано новий номер лаби і він змінився — оновлюємо
-                existing_dict = dict(existing)
-                if clean_lab and clean_lab != (existing_dict.get("lab_number") or ""):
-                    await db.execute("""
-                        UPDATE lab_queues
-                        SET lab_number = ?, user_name = ?, username = ?
-                        WHERE id = ?
-                    """, (clean_lab, clean_name, username, existing["id"]))
-                    await db.commit()
-                    return True, f"Ви вже знаходитесь у черзі на позиції #{pos}. Номер роботи оновлено на: {clean_lab}", pos
+                if clean_lab and (clean_lab != current_lab or priority != current_p):
+                    return True, f"Ви вже у черзі. Роботу оновлено: {clean_lab}. Ваша нова позиція: #{pos}", pos
 
                 return False, f"Ви вже знаходитесь у черзі на позиції #{pos}.", pos
 
         # Додаємо нового учасника (гарантовано 1 актуальний запис)
         cursor = await db.execute("""
-            INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'waiting')
-        """, (chat_id, subject_clean, user_id, clean_name, username, clean_lab))
+            INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')
+        """, (chat_id, subject_clean, user_id, clean_name, username, clean_lab, priority))
         await db.commit()
         new_id = cursor.lastrowid
 
-        # Рахуємо позицію
+        # Рахуємо позицію (lab_priority ASC, id ASC)
         async with db.execute("""
             SELECT COUNT(*) as pos FROM lab_queues
-            WHERE chat_id = ? AND subject = ? AND id <= ?
-        """, (chat_id, subject_clean, new_id)) as pos_cursor:
+            WHERE chat_id = ? AND subject = ? 
+              AND (lab_priority < ? OR (lab_priority = ? AND id <= ?))
+        """, (chat_id, subject_clean, priority, priority, new_id)) as pos_cursor:
             row = await pos_cursor.fetchone()
             pos = row["pos"] if row else 1
 
@@ -817,14 +868,14 @@ async def leave_queue_db(chat_id: int, subject: str, user_id: int) -> bool:
 
 
 async def get_active_queue_db(chat_id: int, subject: str = None) -> list[dict]:
-    """Отримати поточний список студентів у черзі."""
+    """Отримати поточний список студентів у черзі (старіші роботи першими)."""
     subject_clean = (subject or "ОП").strip()
     async with get_db() as db:
         async with db.execute("""
-            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, status, joined_at
+            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status, joined_at
             FROM lab_queues
             WHERE chat_id = ? AND subject = ?
-            ORDER BY id ASC
+            ORDER BY lab_priority ASC, id ASC
         """, (chat_id, subject_clean)) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -835,10 +886,10 @@ async def next_in_queue_db(chat_id: int, subject: str = None) -> dict | None:
     subject_clean = (subject or "ОП").strip()
     async with get_db() as db:
         async with db.execute("""
-            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, joined_at
+            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, lab_priority, joined_at
             FROM lab_queues
             WHERE chat_id = ? AND subject = ?
-            ORDER BY id ASC
+            ORDER BY lab_priority ASC, id ASC
             LIMIT 1
         """, (chat_id, subject_clean)) as cursor:
             row = await cursor.fetchone()
