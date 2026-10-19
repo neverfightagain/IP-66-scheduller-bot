@@ -453,6 +453,28 @@ async def init_db():
             ON students (telegram_id);
         """)
 
+        # 12. Таблиця історії захищених лабораторних робіт (AI-детекція та автовилучення з черги)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS lab_defenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER,
+                real_name TEXT NOT NULL,
+                telegram_id INTEGER,
+                subject TEXT NOT NULL,
+                lab_number TEXT NOT NULL,
+                video_id TEXT,
+                timestamp_sec INTEGER DEFAULT 0,
+                exact_quote TEXT,
+                status TEXT DEFAULT 'passed',
+                confirmed INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_lab_defenses_student
+            ON lab_defenses (telegram_id, subject);
+        """)
+
         await db.commit()
         if SQLITE_CLOUD_URL:
             host = SQLITE_CLOUD_URL.split("@")[-1].split("?")[0]
@@ -1418,6 +1440,175 @@ async def bulk_import_students_db(students_list: list[dict]) -> int:
             if ok:
                 count += 1
     return count
+
+
+def normalize_queue_subject(subject_raw: str | None) -> str:
+    """Нормалізація назви предмету для черги (підтримує аліаси для ОП та АСД)."""
+    if not subject_raw:
+        return ""
+    clean = subject_raw.strip()
+    lower = clean.lower()
+    if lower in ("op", "оп", "основи програмування", "програмування", "queue_op", "join_op", "op_queue") or "основ" in lower:
+        return "ОП"
+    if lower in ("asd", "асд", "аісд", "алгоритми", "алгоритми та структури даних", "алгоритми і структури даних", "queue_asd", "join_asd", "asd_queue") or "алгоритм" in lower:
+        return "АСД"
+    return clean
+
+
+async def record_lab_defense_db(
+    real_name: str,
+    subject: str,
+    lab_number: str,
+    student_id: int | None = None,
+    telegram_id: int | None = None,
+    video_id: str = "",
+    timestamp_sec: int = 0,
+    exact_quote: str = "",
+    status: str = "passed",
+    confirmed: int = 1
+) -> int:
+    """Записати факт здачі/захисту лабораторної роботи."""
+    clean_subj = normalize_queue_subject(subject)
+    clean_lab = lab_number.strip()
+    clean_name = real_name.strip()
+
+    async with get_db() as db:
+        # Перевіряємо чи вже не було зафіксовано цей самий захист
+        async with db.execute("""
+            SELECT id FROM lab_defenses 
+            WHERE real_name = ? AND subject = ? AND lab_number = ? AND status = 'passed'
+            LIMIT 1
+        """, (clean_name, clean_subj, clean_lab)) as cur:
+            existing = await cur.fetchone()
+            if existing:
+                return existing["id"]
+
+        cursor = await db.execute("""
+            INSERT INTO lab_defenses (
+                student_id, real_name, telegram_id, subject, lab_number,
+                video_id, timestamp_sec, exact_quote, status, confirmed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            student_id, clean_name, telegram_id, clean_subj, clean_lab,
+            video_id, timestamp_sec, exact_quote, status, confirmed
+        ))
+        await db.commit()
+        return cursor.lastrowid if hasattr(cursor, "lastrowid") else 1
+
+
+async def get_student_defended_labs_db(user_id: int | None = None, real_name: str | None = None, subject: str | None = None) -> list[dict]:
+    """Отримати список захищених робіт студента."""
+    async with get_db() as db:
+        query = "SELECT id, student_id, real_name, telegram_id, subject, lab_number, video_id, timestamp_sec, status, created_at FROM lab_defenses WHERE status = 'passed'"
+        params = []
+        if user_id:
+            query += " AND telegram_id = ?"
+            params.append(user_id)
+        elif real_name:
+            query += " AND real_name = ?"
+            params.append(real_name)
+
+        if subject:
+            clean_subj = normalize_queue_subject(subject)
+            query += " AND subject = ?"
+            params.append(clean_subj)
+
+        query += " ORDER BY id ASC"
+        async with db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def remove_student_from_subject_queues_db(user_id: int, subject: str) -> list[int]:
+    """
+    Видалити студента з усіх активних черг з даної дисципліни.
+    Повертає список chat_id, де студент був у черзі, для подальшого live-sync.
+    """
+    clean_subj = normalize_queue_subject(subject)
+    affected_chats = []
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT DISTINCT chat_id FROM lab_queues 
+            WHERE user_id = ? AND subject = ?
+        """, (user_id, clean_subj)) as cur:
+            rows = await cur.fetchall()
+            affected_chats = [r["chat_id"] for r in rows]
+
+        if affected_chats:
+            await db.execute("""
+                DELETE FROM lab_queues 
+                WHERE user_id = ? AND subject = ?
+            """, (user_id, clean_subj))
+            await db.commit()
+
+    return affected_chats
+
+
+async def resolve_student_by_voice_mention(spoken_name: str, subject: str = None) -> dict | None:
+    """
+    Інтелектуальне зіставлення виголошеного викладачем імені з реєстром студентів ІП-66.
+    Підтримує:
+    1. Прізвище (наприклад, 'Сінчіневіч', 'Архипович')
+    2. Прізвище + ім'я ('Максим Сінчіневіч', 'Сахнюк Дмитро')
+    3. Лише ім'я ('Максим') — за наявності контексту черги обирає студента, який зараз стоїть у черзі!
+    """
+    if not spoken_name:
+        return None
+
+    clean_spoken = spoken_name.strip().lower()
+    spoken_tokens = [t for t in re.split(r"[\s,._-]+", clean_spoken) if len(t) > 2]
+    if not spoken_tokens:
+        return None
+
+    students = await get_all_students_db()
+    if not students:
+        return None
+
+    # Отримуємо ID тих, хто зараз реально стоїть у черзі на цей предмет
+    queue_user_ids = set()
+    if subject:
+        clean_subj = normalize_queue_subject(subject)
+        async with get_db() as db:
+            async with db.execute("SELECT DISTINCT user_id FROM lab_queues WHERE subject = ?", (clean_subj,)) as cur:
+                rows = await cur.fetchall()
+                queue_user_ids = {r["user_id"] for r in rows if r["user_id"]}
+
+    candidates = []
+    for s in students:
+        rname = s["real_name"].lower()
+        sur_raw, first_raw, _ = parse_person_name(s["real_name"])
+        surname = sur_raw.lower()
+        first_name = first_raw.lower()
+
+        # Пріоритет 1: прямий збіг прізвища (найнадійніший критерій в академічній групі)
+        if surname and any(token == surname or (len(token) >= 5 and token[:5] in surname) for token in spoken_tokens):
+            score = 100
+            if s.get("telegram_id") in queue_user_ids:
+                score += 30
+            elif s.get("telegram_id"):
+                score += 15
+            candidates.append((s, score))
+            continue
+
+        # Перевірка повного входження будь-якої комбінації
+        if all(token in rname for token in spoken_tokens):
+            candidates.append((s, 90))
+            continue
+
+        # Пріоритет 2: збіг за іменем
+        if first_name and any(token == first_name for token in spoken_tokens):
+            # Якщо цей студент зараз стоїть у черзі, це колосальний пріоритет!
+            if s.get("telegram_id") in queue_user_ids:
+                candidates.append((s, 95))
+            else:
+                candidates.append((s, 50))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    best_candidate, best_score = candidates[0]
+    return best_candidate
 
 
 

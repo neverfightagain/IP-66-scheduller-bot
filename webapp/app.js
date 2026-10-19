@@ -273,6 +273,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (userAvatarText && !currentUser.photoUrl) {
                     userAvatarText.textContent = firstName.charAt(0).toUpperCase();
                 }
+                fetchStudentDefenses();
             }
         } catch (e) {
             // Резервний варіант: залишаємо Telegram-ім'я
@@ -422,15 +423,40 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    let studentDefenses = [];
+
+    async function fetchStudentDefenses() {
+        if (!currentUser?.id) return;
+        try {
+            const res = await fetch(`/api/defenses?user_id=${currentUser.id}&subject=${encodeURIComponent(activeSubject)}`);
+            const data = await res.json();
+            if (data.success && Array.isArray(data.defenses)) {
+                studentDefenses = data.defenses;
+                renderLabsGrid();
+            }
+        } catch (_) {}
+    }
+
     // 5. Логіка черги: вибір лаб 1..9
     function renderLabsGrid() {
         if (!labsGridEl) return;
         labsGridEl.innerHTML = '';
+
+        const defendedLabNumbers = new Set();
+        (studentDefenses || []).forEach(d => {
+            const numMatch = (d.lab_number || '').match(/\d+/);
+            if (numMatch) defendedLabNumbers.add(parseInt(numMatch[0]));
+        });
+
         for (let i = 1; i <= 9; i++) {
             const btn = document.createElement('button');
             const isSelected = selectedLabs.has(i);
-            btn.className = `lab-pill-btn ${isSelected ? 'selected' : ''}`;
-            btn.innerHTML = `<span>${isSelected ? '✅' : '▫️'}</span><span>Лаба ${i}</span>`;
+            const isDefended = defendedLabNumbers.has(i);
+
+            let icon = isSelected ? '✅' : (isDefended ? '✓' : '▫️');
+            let badge = isDefended ? ' <span style="font-size:10px; color:#16a34a; font-weight:700;">(здано)</span>' : '';
+            btn.className = `lab-pill-btn ${isSelected ? 'selected' : ''} ${isDefended ? 'is-defended' : ''}`;
+            btn.innerHTML = `<span>${icon}</span><span>Лаба ${i}${badge}</span>`;
             btn.addEventListener('click', () => toggleLab(i));
             labsGridEl.appendChild(btn);
         }
@@ -482,6 +508,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updatePriorityPreview();
         updateBottomButtonState();
         fetchQueue();
+        fetchStudentDefenses();
     }
 
     if (subjTabOp) subjTabOp.addEventListener('click', () => switchQueueSubject('ОП'));
@@ -974,7 +1001,8 @@ document.addEventListener('DOMContentLoaded', () => {
         await Promise.all([
             fetchQueue(),
             fetchSchedule(scheduleDay),
-            fetchDeadlines()
+            fetchDeadlines(),
+            fetchStudentDefenses()
         ]);
     }
 

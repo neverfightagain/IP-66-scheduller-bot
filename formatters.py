@@ -273,6 +273,18 @@ def format_lecture_summary(summary: dict | None, video_title: str = "", video_ur
                 lines.append(d_line)
         lines.append("")
 
+    defenses = summary.get("defenses_detected", [])
+    if isinstance(defenses, list) and defenses:
+        passed = [d for d in defenses if isinstance(d, dict) and d.get("status") == "passed"]
+        if passed:
+            lines.append("🎓 <b>Зафіксовані захисти лабораторних:</b>")
+            for d in passed:
+                s_name = escape_html_text(d.get("student_raw_name") or "Студент")
+                l_num = escape_html_text(d.get("lab_number") or "Лабораторна")
+                time_str = f" [<code>{escape_html_text(d['timestamp'])}</code>]" if d.get("timestamp") else ""
+                lines.append(f"• ✅ <b>{s_name}</b> — <b>{l_num}</b>{time_str}")
+            lines.append("")
+
     if video_url:
         lines.append(f'🔗 <a href="{html.escape(video_url)}">Переглянути запис на YouTube</a>')
 

@@ -364,6 +364,24 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
 
+    # --- REST API: Defenses ---
+    async def handle_api_defenses(request):
+        try:
+            from database import get_student_defended_labs_db
+            user_id_str = request.query.get("user_id", "0").strip()
+            user_id = int(user_id_str) if user_id_str.lstrip("-").isdigit() and int(user_id_str) != 0 else None
+            subject = request.query.get("subject", "").strip() or None
+            real_name = request.query.get("real_name", "").strip() or None
+
+            defenses = await get_student_defended_labs_db(user_id=user_id, real_name=real_name, subject=subject)
+            return json_response_cors({
+                "success": True,
+                "defenses": defenses,
+                "total": len(defenses)
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
     # Реєстрація роутів
     app.router.add_get("/", handle_ping)
     app.router.add_get("/health", handle_ping)
@@ -380,6 +398,7 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     app.router.add_get("/api/deadlines", handle_api_deadlines)
     app.router.add_get("/api/students", handle_api_students_get)
     app.router.add_get("/api/student/resolve", handle_api_student_resolve)
+    app.router.add_get("/api/defenses", handle_api_defenses)
 
     # Static files
     if WEBAPP_DIR.exists():

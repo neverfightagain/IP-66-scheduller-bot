@@ -371,6 +371,64 @@ async def process_video_and_notify(
         text = f"{task_title}: {d_date} ({quote})" if quote else f"{task_title}: {d_date}"
         await add_announcement_db(course_id=course_name, source="youtube", text=text, detected_date=d_date)
 
+    # 4. Обробка зафіксованих захистів робіт та автоматичне вилучення з черги
+    defenses = summary.get("defenses_detected", [])
+    if isinstance(defenses, list) and defenses:
+        from database import (
+            normalize_queue_subject,
+            resolve_student_by_voice_mention,
+            record_lab_defense_db,
+            remove_student_from_subject_queues_db,
+        )
+        from webapp_server import sync_queue_message_in_chat
+
+        clean_subj = normalize_queue_subject(course_name or topic)
+        if clean_subj in ("ОП", "АСД"):
+            for d in defenses:
+                if not isinstance(d, dict) or d.get("status") != "passed":
+                    continue
+                raw_name = (d.get("student_raw_name") or "").strip()
+                lab_num = (d.get("lab_number") or "Лабораторна").strip()
+                quote = (d.get("exact_quote") or "").strip()
+                tcode = (d.get("timestamp") or "").strip()
+
+                t_sec = 0
+                if tcode:
+                    try:
+                        p = tcode.split(":")
+                        if len(p) == 2 and p[0].isdigit() and p[1].isdigit():
+                            t_sec = int(p[0]) * 60 + int(p[1])
+                        elif len(p) == 3 and p[0].isdigit() and p[1].isdigit() and p[2].isdigit():
+                            t_sec = int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2])
+                    except Exception:
+                        pass
+
+                matched_student = await resolve_student_by_voice_mention(raw_name, subject=clean_subj)
+                st_real_name = matched_student.get("real_name") if matched_student else raw_name
+                st_id = matched_student.get("id") if matched_student else None
+                st_tg_id = matched_student.get("telegram_id") if matched_student else None
+
+                await record_lab_defense_db(
+                    real_name=st_real_name,
+                    subject=clean_subj,
+                    lab_number=lab_num,
+                    student_id=st_id,
+                    telegram_id=st_tg_id,
+                    video_id=video_id,
+                    timestamp_sec=t_sec,
+                    exact_quote=quote,
+                    status="passed",
+                    confirmed=1
+                )
+
+                # Якщо у студента є прив'язаний telegram_id, вилучаємо його з активної черги
+                if st_tg_id:
+                    affected_chats = await remove_student_from_subject_queues_db(st_tg_id, clean_subj)
+                    for c_id in affected_chats:
+                        await sync_queue_message_in_chat(bot, c_id, clean_subj)
+                    if affected_chats:
+                        logger.info(f"✅ Студента {st_real_name} автоматично вилучено з черги {clean_subj} за підсумком захисту!")
+
     chats = await get_subscribed_chats_db()
     if not chats and fallback_chat_id:
         chats = [{"chat_id": fallback_chat_id, "thread_id": fallback_thread_id}]
