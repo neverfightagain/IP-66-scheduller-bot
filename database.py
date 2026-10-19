@@ -865,6 +865,58 @@ def parse_lab_info(lab_raw: str | None) -> tuple[int, str]:
     return 999, raw
 
 
+PATRONYMIC_SUFFIXES = ("вич", "вна", "івич", "івна", "ович", "овна", "євич", "ївна", "євна")
+
+
+def parse_person_name(full_name: str) -> tuple[str, str, str]:
+    """
+    Розбирає повне ім'я на (прізвище, ім'я, по_батькові).
+    Підтримує:
+    - 'Сінчіневіч Максим Ігорович' -> ('Сінчіневіч', 'Максим', 'Ігорович')
+    - 'Сахнюк Володимирович Дмитро' -> ('Сахнюк', 'Дмитро', 'Володимирович')
+    - 'Куратор Рома' -> ('Куратор', 'Рома', '')
+    - 'Максим' -> ('', 'Максим', '')
+    """
+    if not full_name:
+        return "", "", ""
+    parts = full_name.strip().split()
+    if not parts:
+        return "", "", ""
+    if parts[0].lower() == "куратор":
+        return "Куратор", " ".join(parts[1:]), ""
+    if len(parts) == 1:
+        return "", parts[0], ""
+    if len(parts) >= 3:
+        if parts[1].lower().endswith(PATRONYMIC_SUFFIXES) and not parts[2].lower().endswith(PATRONYMIC_SUFFIXES):
+            return parts[0], parts[2], parts[1]
+        return parts[0], parts[1], parts[2]
+    return parts[0], parts[1], ""
+
+
+def format_queue_name(full_name: str) -> str:
+    """
+    Повертає 'Прізвище Ім'я' без по-батькові для відображення в черзі.
+    """
+    if not full_name:
+        return ""
+    surname, name, _ = parse_person_name(full_name)
+    if surname == "Куратор":
+        return f"Куратор {name}"
+    if surname and name:
+        return f"{surname} {name}"
+    return name or surname or full_name.strip()
+
+
+def extract_first_name(full_name: str) -> str:
+    """
+    Повертає суто ім'я для привітання на головному екрані (без прізвища та по-батькові).
+    """
+    if not full_name:
+        return "Студент"
+    surname, name, _ = parse_person_name(full_name)
+    return name or surname or full_name.strip() or "Студент"
+
+
 async def join_queue_db(
     chat_id: int,
     subject: str,
@@ -889,9 +941,11 @@ async def join_queue_db(
     try:
         real_name_match = await find_student_real_name_db(user_id=user_id, telegram_username=username)
         if real_name_match:
-            clean_name = real_name_match
+            clean_name = format_queue_name(real_name_match)
+        else:
+            clean_name = format_queue_name(clean_name)
     except Exception:
-        pass
+        clean_name = format_queue_name(clean_name)
 
     async with get_db() as db:
         # Перевірка чи вже є у черзі
@@ -965,7 +1019,7 @@ async def leave_queue_db(chat_id: int, subject: str, user_id: int) -> bool:
 
 
 async def get_active_queue_db(chat_id: int, subject: str = None) -> list[dict]:
-    """Отримати поточний список студентів у черзі (старіші роботи першими)."""
+    """Отримати поточний список студентів у черзі (старіші роботи першими, без по-батькові)."""
     subject_clean = (subject or "ОП").strip()
     async with get_db() as db:
         async with db.execute("""
@@ -975,7 +1029,13 @@ async def get_active_queue_db(chat_id: int, subject: str = None) -> list[dict]:
             ORDER BY lab_priority ASC, id ASC
         """, (chat_id, subject_clean)) as cursor:
             rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            items = []
+            for r in rows:
+                item = dict(r)
+                if item.get("user_name"):
+                    item["user_name"] = format_queue_name(item["user_name"])
+                items.append(item)
+            return items
 
 
 async def next_in_queue_db(chat_id: int, subject: str = None) -> dict | None:
@@ -993,6 +1053,8 @@ async def next_in_queue_db(chat_id: int, subject: str = None) -> dict | None:
             if not row:
                 return None
             student = dict(row)
+            if student.get("user_name"):
+                student["user_name"] = format_queue_name(student["user_name"])
 
         await db.execute("""
             DELETE FROM lab_queues

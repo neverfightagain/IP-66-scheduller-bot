@@ -336,6 +336,37 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
 
         await clear_queue_db(self.chat_id, self.subject)
 
+    async def test_patronymic_removal_and_first_name_extraction(self):
+        from database import format_queue_name, extract_first_name
+
+        # Перевірка видалення по-батькові в черзі: "Прізвище Ім'я"
+        self.assertEqual(format_queue_name("Архипович Назар Миколайович"), "Архипович Назар")
+        self.assertEqual(format_queue_name("Сінчіневіч Максим Ігорович"), "Сінчіневіч Максим")
+        self.assertEqual(format_queue_name("Сахнюк Володимирович Дмитро"), "Сахнюк Дмитро")
+        self.assertEqual(format_queue_name("Шевченко Тарас"), "Шевченко Тарас")
+        self.assertEqual(format_queue_name("Куратор Рома"), "Куратор Рома")
+        self.assertEqual(format_queue_name("Максим"), "Максим")
+        self.assertEqual(format_queue_name(""), "")
+
+        # Перевірка отримання суто імені для привітання: "Ім'я"
+        self.assertEqual(extract_first_name("Архипович Назар Миколайович"), "Назар")
+        self.assertEqual(extract_first_name("Сінчіневіч Максим Ігорович"), "Максим")
+        self.assertEqual(extract_first_name("Сахнюк Володимирович Дмитро"), "Дмитро")
+        self.assertEqual(extract_first_name("Шевченко Тарас"), "Тарас")
+        self.assertEqual(extract_first_name("Куратор Рома"), "Рома")
+        self.assertEqual(extract_first_name("Максим"), "Максим")
+        self.assertEqual(extract_first_name(""), "Студент")
+
+        # Перевірка збереження та відображення в черзі без по-батькові
+        await join_queue_db(self.chat_id, self.subject, 601, "Іванов Іван Іванович", lab_number="Лаба 1")
+        items = await get_active_queue_db(self.chat_id, self.subject)
+        self.assertEqual(items[0]["user_name"], "Іванов Іван")
+
+        called = await next_in_queue_db(self.chat_id, self.subject)
+        self.assertEqual(called["user_name"], "Іванов Іван")
+
+        await clear_queue_db(self.chat_id, self.subject)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -182,6 +182,8 @@ class TestWebAppServer(AioHTTPTestCase):
         data_resolve = await resp_resolve.json()
         self.assertTrue(data_resolve["success"])
         self.assertEqual(data_resolve["real_name"], "Шевченко Тарас")
+        self.assertEqual(data_resolve["first_name"], "Тарас")
+        self.assertEqual(data_resolve["short_name"], "Шевченко Тарас")
 
         # 5. Join черги із заміною імені
         join_payload = {

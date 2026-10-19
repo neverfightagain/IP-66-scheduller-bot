@@ -6,12 +6,54 @@ document.addEventListener('DOMContentLoaded', () => {
         tg.expand();
     }
 
+    const PATRONYMIC_SUFFIXES = ['вич', 'вна', 'івич', 'івна', 'ович', 'овна', 'євич', 'ївна', 'євна'];
+
+    function parsePersonName(fullName) {
+        if (!fullName) return { surname: '', name: '', patronymic: '' };
+        const parts = fullName.trim().split(/\s+/);
+        if (!parts.length) return { surname: '', name: '', patronymic: '' };
+
+        if (parts[0].toLowerCase() === 'куратор') {
+            return { surname: 'Куратор', name: parts.slice(1).join(' '), patronymic: '' };
+        }
+        if (parts.length === 1) {
+            return { surname: '', name: parts[0], patronymic: '' };
+        }
+        if (parts.length >= 3) {
+            const p1Lower = parts[1].toLowerCase();
+            const p2Lower = parts[2].toLowerCase();
+            const p1IsPatronymic = PATRONYMIC_SUFFIXES.some(s => p1Lower.endsWith(s));
+            const p2IsPatronymic = PATRONYMIC_SUFFIXES.some(s => p2Lower.endsWith(s));
+            if (p1IsPatronymic && !p2IsPatronymic) {
+                return { surname: parts[0], name: parts[2], patronymic: parts[1] };
+            }
+            return { surname: parts[0], name: parts[1], patronymic: parts[2] };
+        }
+        return { surname: parts[0], name: parts[1], patronymic: '' };
+    }
+
+    function formatQueueName(fullName) {
+        if (!fullName) return '';
+        const { surname, name } = parsePersonName(fullName);
+        if (surname === 'Куратор') return `Куратор ${name}`;
+        if (surname && name) return `${surname} ${name}`;
+        return name || surname || fullName.trim();
+    }
+
+    function extractFirstName(fullName) {
+        if (!fullName) return 'Студент';
+        const { surname, name } = parsePersonName(fullName);
+        return name || surname || fullName.trim() || 'Студент';
+    }
+
     // Інформація про користувача з Telegram WebApp SDK
     const tgUser = tg?.initDataUnsafe?.user;
+    const initialRawName = tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : 'Студент';
+    const initialFirstName = tgUser?.first_name ? extractFirstName(tgUser.first_name) : 'Студент';
     const currentUser = {
         id: tgUser?.id || 999001,
-        name: tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : 'Студент',
-        firstName: tgUser?.first_name || 'Студент',
+        name: formatQueueName(initialRawName) || 'Студент',
+        firstName: initialFirstName,
         username: tgUser?.username || 'student',
         photoUrl: tgUser?.photo_url || ''
     };
@@ -165,8 +207,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             if (data.success && data.real_name) {
                 currentUser.realName = data.real_name;
-                currentUser.name = data.real_name;
-                const firstName = data.real_name.split(' ')[0] || data.real_name;
+                currentUser.name = data.short_name || formatQueueName(data.real_name);
+                const firstName = data.first_name || extractFirstName(data.real_name);
                 currentUser.firstName = firstName;
                 if (userGreetingEl) {
                     userGreetingEl.textContent = `Привіт, ${firstName}! ✨`;
@@ -472,7 +514,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="queue-person-card ${isMe ? 'is-me' : ''}">
                     <div class="queue-rank-badge ${rankClass}">#${rank}</div>
                     <div class="queue-name-col">
-                        <span class="queue-name">${escapeHtml(item.user_name)}${isMe ? ' (Ви)' : ''}</span>
+                        <span class="queue-name">${escapeHtml(formatQueueName(item.user_name))}${isMe ? ' (Ви)' : ''}</span>
                         <span style="font-size:12px; color:var(--text-muted);">${escapeHtml(item.username ? '@' + item.username : '')}</span>
                     </div>
                     ${labBadge}

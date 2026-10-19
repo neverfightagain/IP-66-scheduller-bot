@@ -22,6 +22,7 @@ from config import (
 from kpi_api import get_lessons_for_date, get_current_time_info
 from links_manager import load_links
 from formatters import format_morning_digest, clean_markdown, escape_html_text
+from database import format_queue_name
 
 logger = logging.getLogger(__name__)
 
@@ -674,7 +675,7 @@ def format_queues_hub_view(op_items: list[dict], asd_items: list[dict], chat_id:
     else:
         for idx, item in enumerate(op_items[:5], start=1):
             badge = "🥇 " if idx == 1 else f"{idx}. "
-            user_display = item["user_name"]
+            user_display = format_queue_name(item["user_name"])
             if item.get("username"):
                 user_display += f" (@{item['username']})"
             lab_info = f" — <i>{item['lab_number']}</i>" if item.get("lab_number") else ""
@@ -690,7 +691,7 @@ def format_queues_hub_view(op_items: list[dict], asd_items: list[dict], chat_id:
     else:
         for idx, item in enumerate(asd_items[:5], start=1):
             badge = "🥇 " if idx == 1 else f"{idx}. "
-            user_display = item["user_name"]
+            user_display = format_queue_name(item["user_name"])
             if item.get("username"):
                 user_display += f" (@{item['username']})"
             lab_info = f" — <i>{item['lab_number']}</i>" if item.get("lab_number") else ""
@@ -804,7 +805,7 @@ def format_queue_view(subject: str, queue_items: list[dict], chat_id: int = 0) -
     else:
         text = f"{header}\n"
         for idx, item in enumerate(queue_items, start=1):
-            user_display = item["user_name"]
+            user_display = format_queue_name(item["user_name"])
             if item.get("username"):
                 user_display += f" (@{item['username']})"
             lab_info = f" — <b>[{item['lab_number']}]</b>" if item.get("lab_number") else ""

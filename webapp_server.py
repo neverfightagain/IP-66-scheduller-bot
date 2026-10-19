@@ -25,6 +25,8 @@ from database import (
     get_active_assignments_db,
     get_all_students_db,
     find_student_real_name_db,
+    format_queue_name,
+    extract_first_name,
 )
 from kpi_api import get_lessons_for_date
 from links_manager import load_links
@@ -350,9 +352,13 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             username = request.query.get("username", "").strip() or None
 
             real_name = await find_student_real_name_db(user_id=user_id, telegram_username=username)
+            first_name = extract_first_name(real_name) if real_name else None
+            short_name = format_queue_name(real_name) if real_name else None
             return json_response_cors({
                 "success": True,
                 "real_name": real_name,
+                "first_name": first_name,
+                "short_name": short_name,
                 "found": real_name is not None
             })
         except Exception as e:
