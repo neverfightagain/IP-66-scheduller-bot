@@ -124,6 +124,60 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
         await clear_queue_db(self.chat_id, "АСД")
         await clear_queue_db(self.chat_id, "Мережі")
 
+    async def test_op_and_asd_dual_queues_and_hub(self):
+        from handlers import format_queues_hub_view, normalize_queue_subject, format_queue_view
+
+        # Тест нормалізації аліасів
+        self.assertEqual(normalize_queue_subject("op"), "ОП")
+        self.assertEqual(normalize_queue_subject("оп"), "ОП")
+        self.assertEqual(normalize_queue_subject("asd"), "АСД")
+        self.assertEqual(normalize_queue_subject("асд"), "АСД")
+        self.assertEqual(normalize_queue_subject("Основи програмування"), "ОП")
+        self.assertEqual(normalize_queue_subject("Алгоритми та структури даних"), "АСД")
+
+        # Додаємо студентів у чергу ОП
+        await join_queue_db(self.chat_id, "ОП", 201, "Олексій Олексієнко", "oleksiy", "Лаба 1")
+        # Додаємо студентів у чергу АСД
+        await join_queue_db(self.chat_id, "АСД", 202, "Марія Марієнко", "maria", "Лаба 3")
+
+        op_items = await get_active_queue_db(self.chat_id, "ОП")
+        asd_items = await get_active_queue_db(self.chat_id, "АСД")
+
+        self.assertEqual(len(op_items), 1)
+        self.assertEqual(len(asd_items), 1)
+        self.assertEqual(op_items[0]["user_name"], "Олексій Олексієнко")
+        self.assertEqual(asd_items[0]["user_name"], "Марія Марієнко")
+
+        # Перевірка форматування Hub (обидві черги в одному повідомленні)
+        hub_text, hub_kb = format_queues_hub_view(op_items, asd_items)
+        self.assertIn("Основи програмування (ОП)", hub_text)
+        self.assertIn("Олексій Олексієнко", hub_text)
+        self.assertIn("Алгоритми та структури даних (АСД)", hub_text)
+        self.assertIn("Марія Марієнко", hub_text)
+
+        # Перевірка наявності кнопок навігації в Hub
+        button_callbacks = [b.callback_data for row in hub_kb.inline_keyboard for b in row]
+        self.assertIn("q:view:ОП", button_callbacks)
+        self.assertIn("q:view:АСД", button_callbacks)
+        self.assertIn("q:join:ОП", button_callbacks)
+        self.assertIn("q:join:АСД", button_callbacks)
+
+        # Перевірка наявності швидкого перемикання між ОП та АСД в окремих чергах
+        op_text, op_kb = format_queue_view("ОП", op_items)
+        op_buttons = [b.callback_data for row in op_kb.inline_keyboard for b in row]
+        self.assertIn("q:view:АСД", op_buttons)
+        self.assertIn("q:hub", op_buttons)
+
+        asd_text, asd_kb = format_queue_view("АСД", asd_items)
+        asd_buttons = [b.callback_data for row in asd_kb.inline_keyboard for b in row]
+        self.assertIn("q:view:ОП", asd_buttons)
+        self.assertIn("q:hub", asd_buttons)
+
+        # Очищення
+        await clear_queue_db(self.chat_id, "ОП")
+        await clear_queue_db(self.chat_id, "АСД")
+
 
 if __name__ == "__main__":
     unittest.main()
+
