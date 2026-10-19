@@ -261,27 +261,80 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
         from handlers import format_lab_picker_view
         from database import parse_lab_info
 
-        # Тест розбору номерів лаб
+        # Тест розбору номерів однієї та кількох лаб
         self.assertEqual(parse_lab_info("1"), (1, "Лаба 1"))
         self.assertEqual(parse_lab_info("Лаба 2"), (2, "Лаба 2"))
         self.assertEqual(parse_lab_info("Лр 3 захист"), (3, "Лр 3 захист"))
+        self.assertEqual(parse_lab_info("1, 4"), (1, "Лаби 1, 4"))
+        self.assertEqual(parse_lab_info("4, 1"), (1, "Лаби 1, 4"))
+        self.assertEqual(parse_lab_info("Лаби 2, 5"), (2, "Лаби 2, 5"))
+        self.assertEqual(parse_lab_info("Лаба 3 і Лаба 6"), (3, "Лаби 3, 6"))
         self.assertEqual(parse_lab_info(""), (999, ""))
         self.assertEqual(parse_lab_info(None), (999, ""))
 
-        # Перевірка клавіатури вибору лаб
-        text, kb = format_lab_picker_view("ОП")
-        self.assertIn("Вибір практичної/лабораторної роботи (ОП)", text)
-        self.assertIn("автоматично спливають нагору", text)
-
+        # Перевірка клавіатури вибору лаб без обраних
+        text, kb = format_lab_picker_view("ОП", selected_labs=[])
+        self.assertIn("Вибір практичних/лабораторних робіт (ОП)", text)
+        self.assertIn("Пріоритет автоматично розраховується", text)
         callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
-        self.assertIn("q:join_lab:ОП:1", callbacks)
-        self.assertIn("q:join_lab:ОП:2", callbacks)
-        self.assertIn("q:join_lab:ОП:3", callbacks)
-        self.assertIn("q:join_lab:ОП:8", callbacks)
+        self.assertIn("q:t:ОП::1:0", callbacks)
+        self.assertIn("q:t:ОП::4:0", callbacks)
         self.assertIn("q:view:ОП", callbacks)
         self.assertIn("q:hub", callbacks)
 
+        # Перевірка клавіатури з кількома обраними лабами (1 та 4)
+        text_sel, kb_sel = format_lab_picker_view("ОП", selected_labs=[1, 4])
+        self.assertIn("Лаби 1, 4", text_sel)
+        self.assertIn("Ваш пріоритет у черзі:</b> Лаба 1", text_sel)
+        callbacks_sel = [b.callback_data for row in kb_sel.inline_keyboard for b in row]
+        self.assertIn("q:sub:ОП:1,4", callbacks_sel)
+        self.assertIn("q:t:ОП::clear:0", callbacks_sel)
+
         await clear_queue_db(self.chat_id, "ОП")
+
+    async def test_multi_lab_defense_priority(self):
+        # Перевірка: коли студент здає кілька лаб (наприклад, 1 і 4),
+        # його пріоритет визначається за найменшою/найстарішою лабою (Лаба 1).
+
+        # 1. Студент А здає Лабу 4
+        await join_queue_db(self.chat_id, self.subject, 501, "Андрій", lab_number="Лаба 4")
+
+        # 2. Студент Б здає Лаби 1 та 4 (пріоритет 1!) -> має спливти на позицію #1
+        ok_b, _, pos_b = await join_queue_db(self.chat_id, self.subject, 502, "Богдан", lab_number="1, 4")
+        self.assertTrue(ok_b)
+        self.assertEqual(pos_b, 1)
+
+        # 3. Студент В здає Лаби 2 та 3 (пріоритет 2) -> позиція #2 (між Богданом #1 і Андрієм #3)
+        ok_v, _, pos_v = await join_queue_db(self.chat_id, self.subject, 503, "Василь", lab_number="2, 3")
+        self.assertTrue(ok_v)
+        self.assertEqual(pos_v, 2)
+
+        # 4. Студент Г здає тільки Лабу 1 (пріоритет 1, як і у Богдана, але Богдан був раніше -> FIFO)
+        ok_g, _, pos_g = await join_queue_db(self.chat_id, self.subject, 504, "Григорій", lab_number="1")
+        self.assertTrue(ok_g)
+        self.assertEqual(pos_g, 2) # Богдан (1), Григорій (1), Василь (2), Андрій (4)
+
+        # Перевірка списку черги
+        q = await get_active_queue_db(self.chat_id, self.subject)
+        self.assertEqual(len(q), 4)
+        self.assertEqual(q[0]["user_name"], "Богдан")
+        self.assertEqual(q[0]["lab_number"], "Лаби 1, 4")
+
+        self.assertEqual(q[1]["user_name"], "Григорій")
+        self.assertEqual(q[1]["lab_number"], "Лаба 1")
+
+        self.assertEqual(q[2]["user_name"], "Василь")
+        self.assertEqual(q[2]["lab_number"], "Лаби 2, 3")
+
+        self.assertEqual(q[3]["user_name"], "Андрій")
+        self.assertEqual(q[3]["lab_number"], "Лаба 4")
+
+        # Наступний на черзі має бути Богдан
+        first = await next_in_queue_db(self.chat_id, self.subject)
+        self.assertEqual(first["user_name"], "Богдан")
+        self.assertEqual(first["lab_number"], "Лаби 1, 4")
+
+        await clear_queue_db(self.chat_id, self.subject)
 
 
 if __name__ == "__main__":

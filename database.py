@@ -755,7 +755,8 @@ async def remove_scheduled_deletion_db(deletion_id: int):
 
 def parse_lab_info(lab_raw: str | None) -> tuple[int, str]:
     """
-    Визначає пріоритет роботи (номер) та нормалізовану назву.
+    Визначає пріоритет роботи (найменший номер серед усіх обраних) та нормалізовану назву.
+    Підтримує вибір кількох робіт (наприклад: '1, 4' -> пріоритет 1, назва 'Лаби 1, 4').
     Чим менший номер роботи (старіша практична робота), тим вищий пріоритет (менше число).
     Повертає (priority, normalized_name).
     """
@@ -764,15 +765,18 @@ def parse_lab_info(lab_raw: str | None) -> tuple[int, str]:
     raw = str(lab_raw).strip()
     if not raw:
         return 999, ""
-    match = re.search(r'(\d+)', raw)
-    if match:
-        num = int(match.group(1))
-        # Якщо введено просто число або цифри — нормалізуємо як 'Лаба X'
-        if raw == str(num):
-            name = f"Лаба {num}"
+    matches = re.findall(r'\d+', raw)
+    if matches:
+        nums = sorted(list(set(int(m) for m in matches)))
+        min_num = nums[0]
+        if len(nums) == 1:
+            if raw == str(min_num):
+                name = f"Лаба {min_num}"
+            else:
+                name = raw
         else:
-            name = raw
-        return num, name
+            name = f"Лаби {', '.join(str(n) for n in nums)}"
+        return min_num, name
     return 999, raw
 
 

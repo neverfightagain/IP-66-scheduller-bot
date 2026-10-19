@@ -723,44 +723,75 @@ def format_queues_hub_view(op_items: list[dict], asd_items: list[dict]) -> tuple
     return text, kb
 
 
-def format_lab_picker_view(subject: str, from_hub: bool = False) -> tuple[str, InlineKeyboardMarkup]:
-    """Форматування меню інтерактивного вибору лабораторної роботи."""
+def format_lab_picker_view(
+    subject: str,
+    selected_labs: list[int] | None = None,
+    from_hub: bool = False
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Форматування меню інтерактивного вибору однієї або кількох практичних/лабораторних робіт."""
     clean_subj = normalize_queue_subject(subject) or "ОП"
     emoji = "💻" if clean_subj == "ОП" else ("🧮" if clean_subj == "АСД" else "📋")
 
+    selected_sorted = sorted(list(set(selected_labs or [])))
+    if selected_sorted:
+        min_lab = selected_sorted[0]
+        if len(selected_sorted) == 1:
+            labs_str = f"Лаба {min_lab}"
+        else:
+            labs_str = f"Лаби {', '.join(str(n) for n in selected_sorted)}"
+        status_line = (
+            f"🎯 <b>Обрано для здачі:</b> {labs_str}\n"
+            f"⭐ <b>Ваш пріоритет у черзі:</b> Лаба {min_lab} <i>(найстаріша з обраних)</i>\n"
+        )
+    else:
+        labs_str = ""
+        status_line = "⚪ <i>Роботи ще не обрано. Натисніть одну або декілька кнопок нижче:</i>\n"
+
     text = (
-        f"{emoji} <b>Вибір практичної/лабораторної роботи ({clean_subj})</b>\n\n"
-        f"💡 <i>Оберіть роботу, яку ви плануєте захищати.\n"
-        f"<b>Студенти зі старішими роботами (Лаба 1, 2...) автоматично спливають нагору черги!</b></i>\n\n"
-        f"👇 Оберіть роботу зі списку нижче:"
+        f"{emoji} <b>Вибір практичних/лабораторних робіт ({clean_subj})</b>\n\n"
+        f"💡 <i>Ви можете обрати <b>одразу декілька лаб</b> для здачі!\n"
+        f"<b>Пріоритет автоматично розраховується за найстаршою (найменшою) лабою:</b> наприклад, обравши Лабу 1 та Лабу 4, ви отримаєте пріоритет Лаби 1 і спливете нагору черги.</i>\n\n"
+        f"{status_line}"
     )
+
+    h_flag = "1" if from_hub else "0"
+    cur_sel_str = ",".join(str(x) for x in selected_sorted)
+
+    rows = []
+    # Сітка кнопок 1..9
+    for row_start in (1, 4, 7):
+        row_buttons = []
+        for n in range(row_start, row_start + 3):
+            is_sel = n in selected_sorted
+            btn_icon = "✅" if is_sel else "▫️"
+            btn_text = f"{btn_icon} Лаба {n}"
+            btn_cb = f"q:t:{clean_subj}:{cur_sel_str}:{n}:{h_flag}"
+            row_buttons.append(InlineKeyboardButton(text=btn_text, callback_data=btn_cb))
+        rows.append(row_buttons)
+
+    # Дії вибору
+    if selected_sorted:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"🚀 Зайняти чергу: {labs_str}",
+                callback_data=f"q:sub:{clean_subj}:{cur_sel_str}"
+            )
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                text="🧹 Скинути вибір",
+                callback_data=f"q:t:{clean_subj}::clear:{h_flag}"
+            )
+        ])
 
     back_target = "q:hub" if from_hub else f"q:view:{clean_subj}"
     back_label = "🔙 До списку черг" if from_hub else f"🔙 До черги {clean_subj}"
+    rows.append([
+        InlineKeyboardButton(text=back_label, callback_data=back_target),
+        InlineKeyboardButton(text="🏠 Усі черги", callback_data="q:hub"),
+    ])
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔬 Лаба 1", callback_data=f"q:join_lab:{clean_subj}:1"),
-                InlineKeyboardButton(text="🔬 Лаба 2", callback_data=f"q:join_lab:{clean_subj}:2"),
-                InlineKeyboardButton(text="🔬 Лаба 3", callback_data=f"q:join_lab:{clean_subj}:3"),
-            ],
-            [
-                InlineKeyboardButton(text="🔬 Лаба 4", callback_data=f"q:join_lab:{clean_subj}:4"),
-                InlineKeyboardButton(text="🔬 Лаба 5", callback_data=f"q:join_lab:{clean_subj}:5"),
-                InlineKeyboardButton(text="🔬 Лаба 6", callback_data=f"q:join_lab:{clean_subj}:6"),
-            ],
-            [
-                InlineKeyboardButton(text="🔬 Лаба 7", callback_data=f"q:join_lab:{clean_subj}:7"),
-                InlineKeyboardButton(text="🔬 Лаба 8", callback_data=f"q:join_lab:{clean_subj}:8"),
-                InlineKeyboardButton(text="🔬 Лаба 9+", callback_data=f"q:join_lab:{clean_subj}:9"),
-            ],
-            [
-                InlineKeyboardButton(text=back_label, callback_data=back_target),
-                InlineKeyboardButton(text="🏠 Усі черги", callback_data="q:hub"),
-            ]
-        ]
-    )
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     return text, kb
 
 
@@ -852,7 +883,12 @@ async def cmd_join_op(message: Message):
     from database import join_queue_db, get_active_queue_db
     lab_number = message.text.replace("/join_op", "", 1).strip()
     if not lab_number:
-        text, kb = format_lab_picker_view("ОП")
+        items = await get_active_queue_db(message.chat.id, "ОП")
+        user_item = next((it for it in items if it["user_id"] == message.from_user.id), None)
+        preselected = []
+        if user_item and user_item.get("lab_number"):
+            preselected = [int(x) for x in re.findall(r'\d+', user_item["lab_number"])]
+        text, kb = format_lab_picker_view("ОП", selected_labs=preselected)
         await safe_answer(message, text, reply_markup=kb)
         return
 
@@ -868,7 +904,12 @@ async def cmd_join_asd(message: Message):
     from database import join_queue_db, get_active_queue_db
     lab_number = message.text.replace("/join_asd", "", 1).strip()
     if not lab_number:
-        text, kb = format_lab_picker_view("АСД")
+        items = await get_active_queue_db(message.chat.id, "АСД")
+        user_item = next((it for it in items if it["user_id"] == message.from_user.id), None)
+        preselected = []
+        if user_item and user_item.get("lab_number"):
+            preselected = [int(x) for x in re.findall(r'\d+', user_item["lab_number"])]
+        text, kb = format_lab_picker_view("АСД", selected_labs=preselected)
         await safe_answer(message, text, reply_markup=kb)
         return
 
@@ -888,7 +929,12 @@ async def cmd_join_queue(message: Message):
     lab_number = parts[1] if len(parts) > 1 else ""
 
     if not lab_number:
-        text, kb = format_lab_picker_view(subject)
+        items = await get_active_queue_db(message.chat.id, subject)
+        user_item = next((it for it in items if it["user_id"] == message.from_user.id), None)
+        preselected = []
+        if user_item and user_item.get("lab_number"):
+            preselected = [int(x) for x in re.findall(r'\d+', user_item["lab_number"])]
+        text, kb = format_lab_picker_view(subject, selected_labs=preselected)
         await safe_answer(message, text, reply_markup=kb)
         return
 
@@ -986,8 +1032,64 @@ async def cb_queue_actions(callback: CallbackQuery):
 
     if action in ("pick", "join"):
         from_hub = len(data) > 3 and data[3] == "hub"
-        text, kb = format_lab_picker_view(subject, from_hub=from_hub)
+        items = await get_active_queue_db(chat_id, subject)
+        user_item = next((it for it in items if it["user_id"] == user.id), None)
+        preselected = []
+        if user_item and user_item.get("lab_number"):
+            preselected = [int(x) for x in re.findall(r'\d+', user_item["lab_number"])]
+        text, kb = format_lab_picker_view(subject, selected_labs=preselected, from_hub=from_hub)
         await callback.answer()
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            pass
+        return
+
+    if action == "t":
+        target = data[4] if len(data) > 4 else ""
+        from_hub = len(data) > 5 and data[5] == "1"
+        cur_sel_str = data[3] if len(data) > 3 else ""
+        cur_sel = [int(x) for x in cur_sel_str.split(",") if x.isdigit()]
+
+        if target == "clear":
+            new_sel = []
+        elif target.isdigit():
+            t_num = int(target)
+            if t_num in cur_sel:
+                cur_sel.remove(t_num)
+            else:
+                cur_sel.append(t_num)
+            new_sel = sorted(cur_sel)
+        else:
+            new_sel = sorted(cur_sel)
+
+        text, kb = format_lab_picker_view(subject, selected_labs=new_sel, from_hub=from_hub)
+        await callback.answer()
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            pass
+        return
+
+    if action == "sub":
+        sel_csv = data[3] if len(data) > 3 else ""
+        nums = [int(x) for x in sel_csv.split(",") if x.isdigit()]
+        if not nums:
+            await callback.answer("⚠️ Оберіть хоча б одну роботу!", show_alert=True)
+            return
+
+        nums_sorted = sorted(nums)
+        min_p = nums_sorted[0]
+        if len(nums_sorted) == 1:
+            lab_label = f"Лаба {min_p}"
+        else:
+            lab_label = f"Лаби {', '.join(str(n) for n in nums_sorted)}"
+
+        ok, msg, pos = await join_queue_db(chat_id, subject, user.id, user.full_name, user.username, lab_label)
+        alert_msg = f"✅ Ви #{pos} у черзі {subject}!\nЗдаєте: {lab_label}\nПріоритет: Лаба {min_p}" if ok else msg
+        await callback.answer(alert_msg, show_alert=True)
+        items = await get_active_queue_db(chat_id, subject)
+        text, kb = format_queue_view(subject, items)
         try:
             await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
