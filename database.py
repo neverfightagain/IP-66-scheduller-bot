@@ -1496,11 +1496,128 @@ async def record_lab_defense_db(
         return cursor.lastrowid if hasattr(cursor, "lastrowid") else 1
 
 
-async def get_student_defended_labs_db(user_id: int | None = None, real_name: str | None = None, subject: str | None = None) -> list[dict]:
+async def get_lab_defense_by_id_db(defense_id: int) -> dict | None:
+    """Отримати запис про захист роботи за його ID."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, student_id, real_name, telegram_id, subject, lab_number,
+                   video_id, timestamp_sec, exact_quote, status, confirmed, created_at
+            FROM lab_defenses
+            WHERE id = ?
+        """, (defense_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def confirm_lab_defense_db(defense_id: int) -> dict | None:
+    """Підтвердити захист роботи (перевести confirmed = 1)."""
+    async with get_db() as db:
+        await db.execute("""
+            UPDATE lab_defenses
+            SET confirmed = 1, status = 'passed'
+            WHERE id = ?
+        """, (defense_id,))
+        await db.commit()
+    return await get_lab_defense_by_id_db(defense_id)
+
+
+async def reject_lab_defense_db(defense_id: int) -> bool:
+    """Відхилити/скасувати зафіксований захист роботи."""
+    async with get_db() as db:
+        cur = await db.execute("""
+            UPDATE lab_defenses
+            SET status = 'rejected', confirmed = 0
+            WHERE id = ?
+        """, (defense_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def get_student_queue_positions_db(user_id: int, subject: str) -> list[dict]:
+    """
+    Повертає список позицій студента у чергах по всіх чатах:
+    [{'chat_id': int, 'position': int, 'lab_number': str}]
+    """
+    clean_subj = normalize_queue_subject(subject)
+    positions = []
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT DISTINCT chat_id FROM lab_queues WHERE subject = ? AND user_id = ?
+        """, (clean_subj, user_id)) as cur:
+            chat_rows = await cur.fetchall()
+            chat_ids = [r["chat_id"] for r in chat_rows]
+
+    for cid in chat_ids:
+        q_items = await get_active_queue_db(cid, clean_subj)
+        for idx, item in enumerate(q_items, start=1):
+            if item["user_id"] == user_id:
+                positions.append({
+                    "chat_id": cid,
+                    "position": idx,
+                    "lab_number": item.get("lab_number") or ""
+                })
+                break
+    return positions
+
+
+async def get_all_defenses_summary_db(subject: str | None = None) -> list[dict]:
+    """Отримати всі підтверджені здачі робіт для всіх студентів (для зведеного табло в Mini App)."""
+    async with get_db() as db:
+        query = """
+            SELECT id, student_id, real_name, telegram_id, subject, lab_number,
+                   video_id, timestamp_sec, exact_quote, status, confirmed, created_at
+            FROM lab_defenses
+            WHERE status = 'passed' AND confirmed = 1
+        """
+        params = []
+        if subject:
+            clean_subj = normalize_queue_subject(subject)
+            query += " AND subject = ?"
+            params.append(clean_subj)
+
+        query += " ORDER BY id ASC"
+        async with db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def toggle_student_lab_defense_db(real_name: str, subject: str, lab_number: str, telegram_id: int | None = None) -> dict:
+    """Перемкнути статус зарахування роботи студента (ручна відмітка в Mini App)."""
+    clean_subj = normalize_queue_subject(subject)
+    clean_lab = lab_number.strip()
+    clean_name = real_name.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, status, confirmed FROM lab_defenses
+            WHERE real_name = ? AND subject = ? AND lab_number = ?
+            LIMIT 1
+        """, (clean_name, clean_subj, clean_lab)) as cur:
+            existing = await cur.fetchone()
+            if existing:
+                if existing["status"] == "passed" and existing["confirmed"] == 1:
+                    await db.execute("DELETE FROM lab_defenses WHERE id = ?", (existing["id"],))
+                    await db.commit()
+                    return {"passed": False, "action": "removed"}
+                else:
+                    await db.execute("UPDATE lab_defenses SET status = 'passed', confirmed = 1 WHERE id = ?", (existing["id"],))
+                    await db.commit()
+                    return {"passed": True, "action": "confirmed"}
+
+        cursor = await db.execute("""
+            INSERT INTO lab_defenses (real_name, subject, lab_number, telegram_id, video_id, exact_quote, status, confirmed)
+            VALUES (?, ?, ?, ?, 'manual', 'Ручна відмітка в Mini App', 'passed', 1)
+        """, (clean_name, clean_subj, clean_lab, telegram_id))
+        await db.commit()
+        return {"passed": True, "action": "added", "id": cursor.lastrowid if hasattr(cursor, "lastrowid") else 1}
+
+
+async def get_student_defended_labs_db(user_id: int | None = None, real_name: str | None = None, subject: str | None = None, confirmed_only: bool = True) -> list[dict]:
     """Отримати список захищених робіт студента."""
     async with get_db() as db:
-        query = "SELECT id, student_id, real_name, telegram_id, subject, lab_number, video_id, timestamp_sec, status, created_at FROM lab_defenses WHERE status = 'passed'"
+        query = "SELECT id, student_id, real_name, telegram_id, subject, lab_number, video_id, timestamp_sec, exact_quote, status, confirmed, created_at FROM lab_defenses WHERE status = 'passed'"
         params = []
+        if confirmed_only:
+            query += " AND confirmed = 1"
         if user_id:
             query += " AND telegram_id = ?"
             params.append(user_id)
@@ -1608,7 +1725,11 @@ async def resolve_student_by_voice_mention(spoken_name: str, subject: str = None
 
     candidates.sort(key=lambda x: x[1], reverse=True)
     best_candidate, best_score = candidates[0]
-    return best_candidate
+    res = dict(best_candidate)
+    res["match_score"] = best_score
+    res["confidence"] = round(min(1.0, best_score / 100.0), 2)
+    return res
+
 
 
 

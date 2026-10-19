@@ -179,6 +179,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const deadlinesItemsContainer = document.getElementById('deadlines-items-container');
     const deadlinesCountBadge = document.getElementById('deadlines-count-badge');
 
+    // Subjects Elements (ОП Практикуми / АСД Практичні роботи)
+    const subjectsTabOp = document.getElementById('subjects-tab-op');
+    const subjectsTabAsd = document.getElementById('subjects-tab-asd');
+    const btnSubnavMy = document.getElementById('btn-subnav-my');
+    const btnSubnavGroup = document.getElementById('btn-subnav-group');
+    const subjectsMyView = document.getElementById('subjects-my-view');
+    const subjectsGroupView = document.getElementById('subjects-group-view');
+    const subjectProgressHero = document.getElementById('subject-progress-hero');
+    const subjectHeroTitle = document.getElementById('subject-hero-title');
+    const subjectHeroTerm = document.getElementById('subject-hero-term');
+    const subjectScoreBadge = document.getElementById('subject-score-badge');
+    const subjectProgressBarFill = document.getElementById('subject-progress-bar-fill');
+    const subjectProgressPercent = document.getElementById('subject-progress-percent');
+    const subjectProgressStatus = document.getElementById('subject-progress-status');
+    const subjectWorksContainer = document.getElementById('subject-works-container');
+    const groupSearchInput = document.getElementById('group-search-input');
+    const groupStudentsList = document.getElementById('group-students-list');
+
+    let activeSubjectsSubj = 'ОП';
+    let activeSubjectsSubView = 'my';
+    let subjectsOverviewData = { subjects: {}, students: [], defenses: [] };
+    let groupSearchQuery = '';
+
     // Bottom Action Button & Toast
     const btnPrimaryAction = document.getElementById('btn-primary-action');
     const btnPrimaryActionText = document.getElementById('btn-primary-action-text');
@@ -354,6 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (targetTab === 'tab-schedule') fetchSchedule(scheduleDay);
             if (targetTab === 'tab-deadlines') fetchDeadlines();
             if (targetTab === 'tab-queue') fetchQueue();
+            if (targetTab === 'tab-subjects') fetchSubjectsOverview();
         });
     });
 
@@ -387,6 +411,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (currentTab === 'tab-deadlines') {
             btnPrimaryActionText.textContent = `🔄 Оновити дедлайни з Classroom`;
             btnPrimaryAction.disabled = false;
+        } else if (currentTab === 'tab-subjects') {
+            const termLabel = activeSubjectsSubj === 'ОП' ? 'Практикуми' : 'Практичні';
+            btnPrimaryActionText.textContent = `🔄 Оновити ${activeSubjectsSubj} (${termLabel})`;
+            btnPrimaryAction.disabled = false;
         }
     }
 
@@ -419,6 +447,9 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (currentTab === 'tab-deadlines') {
                 await fetchDeadlines();
                 showToast("Дедлайни оновлено!");
+            } else if (currentTab === 'tab-subjects') {
+                await fetchSubjectsOverview();
+                showToast(`Дані з ${activeSubjectsSubj} оновлено! 📚`);
             }
         });
     }
@@ -992,6 +1023,344 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // --- 8. Навчальні предмети (ОП Практикуми / АСД Практичні роботи) ---
+    function getSubjectTerminology(subj) {
+        if (subj === 'ОП') {
+            return {
+                code: 'ОП',
+                title: 'Основи програмування',
+                termSingular: 'Практикум',
+                termPlural: 'Практикуми',
+                totalWorks: 8,
+                emoji: '💻',
+                themeClass: ''
+            };
+        } else {
+            return {
+                code: 'АСД',
+                title: 'Алгоритми та структури даних',
+                termSingular: 'Практична робота',
+                termPlural: 'Практичні роботи',
+                totalWorks: 8,
+                emoji: '🧮',
+                themeClass: 'asd-theme'
+            };
+        }
+    }
+
+    function getStudentProgressKey(studentName, subj) {
+        const cleanName = (studentName || currentUser?.name || 'student').trim().toLowerCase();
+        return `ip66_subj_progress_${cleanName}_${subj}`;
+    }
+
+    function loadStudentLocalProgress(studentName, subj) {
+        try {
+            const raw = localStorage.getItem(getStudentProgressKey(studentName, subj));
+            if (!raw) return new Set();
+            const arr = JSON.parse(raw);
+            return new Set(Array.isArray(arr) ? arr.map(Number) : []);
+        } catch (_) {
+            return new Set();
+        }
+    }
+
+    function saveStudentLocalProgress(studentName, subj, numSet) {
+        try {
+            const arr = Array.from(numSet);
+            localStorage.setItem(getStudentProgressKey(studentName, subj), JSON.stringify(arr));
+        } catch (_) {}
+    }
+
+    async function fetchSubjectsOverview() {
+        try {
+            const res = await fetch('/api/subjects/overview');
+            const data = await res.json();
+            if (data.success) {
+                subjectsOverviewData = data;
+                renderSubjectsView();
+            }
+        } catch (err) {
+            console.error('Failed to fetch subjects overview', err);
+        }
+    }
+
+    function renderSubjectsView() {
+        const meta = getSubjectTerminology(activeSubjectsSubj);
+
+        // Перемикач шапки картки
+        if (subjectProgressHero) {
+            if (meta.themeClass) {
+                subjectProgressHero.classList.add(meta.themeClass);
+            } else {
+                subjectProgressHero.classList.remove('asd-theme');
+            }
+        }
+        if (subjectHeroTitle) subjectHeroTitle.textContent = meta.title;
+        if (subjectHeroTerm) subjectHeroTerm.textContent = `${meta.termPlural} (1..${meta.totalWorks})`;
+
+        if (activeSubjectsSubView === 'my') {
+            if (subjectsMyView) subjectsMyView.classList.remove('hidden');
+            if (subjectsGroupView) subjectsGroupView.classList.add('hidden');
+            renderMyProgressView(meta);
+        } else {
+            if (subjectsMyView) subjectsMyView.classList.add('hidden');
+            if (subjectsGroupView) subjectsGroupView.classList.remove('hidden');
+            renderGroupProgressView(meta);
+        }
+    }
+
+    function renderMyProgressView(meta) {
+        if (!subjectWorksContainer) return;
+
+        const myName = currentUser?.name || 'Студент';
+        const localSet = loadStudentLocalProgress(myName, meta.code);
+
+        // Збираємо офіційно підтверджені захисти з бази даних
+        const officialDefenses = new Map();
+        (subjectsOverviewData?.defenses || []).forEach(d => {
+            const isMatch = (currentUser?.id && d.telegram_id === currentUser.id) ||
+                            (d.real_name && d.real_name.toLowerCase() === myName.toLowerCase());
+            if (isMatch && d.subject === meta.code) {
+                const matchNum = (d.lab_number || '').match(/\d+/);
+                if (matchNum) {
+                    const n = parseInt(matchNum[0]);
+                    officialDefenses.set(n, d);
+                    localSet.add(n);
+                }
+            }
+        });
+
+        // Підрахунок прогресу
+        const passedCount = Array.from(localSet).filter(n => n >= 1 && n <= meta.totalWorks).length;
+        const percent = Math.round((passedCount / meta.totalWorks) * 100);
+
+        if (subjectScoreBadge) subjectScoreBadge.textContent = `${passedCount} / ${meta.totalWorks}`;
+        if (subjectProgressBarFill) subjectProgressBarFill.style.width = `${percent}%`;
+        if (subjectProgressPercent) subjectProgressPercent.textContent = `${percent}% виконано`;
+        if (subjectProgressStatus) {
+            if (passedCount === meta.totalWorks) {
+                subjectProgressStatus.textContent = '🎉 Всі роботи складено!';
+            } else if (passedCount > 0) {
+                subjectProgressStatus.textContent = `Залишилося: ${meta.totalWorks - passedCount}`;
+            } else {
+                subjectProgressStatus.textContent = 'Очікує виконання';
+            }
+        }
+
+        let html = '';
+        for (let i = 1; i <= meta.totalWorks; i++) {
+            const isPassed = localSet.has(i);
+            const officialDef = officialDefenses.get(i);
+            const workTitle = `${meta.termSingular} ${i}`;
+
+            let badgeHtml = '';
+            let quoteHtml = '';
+
+            if (officialDef) {
+                badgeHtml = '<span class="work-status-badge ai-video">🎥 Здано на парі (AI)</span>';
+                if (officialDef.exact_quote) {
+                    quoteHtml = `<div class="work-quote-snippet">💬 «${escapeHtml(officialDef.exact_quote)}»</div>`;
+                }
+            } else if (isPassed) {
+                badgeHtml = '<span class="work-status-badge passed">✅ Зараховано</span>';
+            } else {
+                badgeHtml = '<span class="work-status-badge pending">⏳ Ще не здано</span>';
+            }
+
+            html += `
+                <div class="work-item-card ${isPassed ? 'is-passed' : ''}" data-work-num="${i}">
+                    <div class="custom-checkbox ${isPassed ? 'checked' : ''}" style="${isPassed ? 'background:#16A34A; border-color:#16A34A;' : ''}">
+                        <svg viewBox="0 0 24 24" fill="none" style="${isPassed ? 'display:block; stroke:#FFFFFF; stroke-width:3.5;' : 'display:none;'}">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    </div>
+                    <div class="work-meta-block">
+                        <div class="work-title-row">
+                            <span class="work-main-title">${escapeHtml(workTitle)}</span>
+                            ${badgeHtml}
+                        </div>
+                        ${quoteHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        subjectWorksContainer.innerHTML = html;
+
+        subjectWorksContainer.querySelectorAll('.work-item-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const num = parseInt(card.getAttribute('data-work-num'));
+                toggleStudentWork(myName, currentUser?.id, meta.code, num);
+            });
+        });
+    }
+
+    function renderGroupProgressView(meta) {
+        if (!groupStudentsList) return;
+
+        let students = subjectsOverviewData?.students || [];
+        if (groupSearchQuery) {
+            students = students.filter(s =>
+                (s.real_name || '').toLowerCase().includes(groupSearchQuery) ||
+                (s.telegram_username || '').toLowerCase().includes(groupSearchQuery)
+            );
+        }
+
+        if (students.length === 0) {
+            groupStudentsList.innerHTML = '<div style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">Студентів не знайдено</div>';
+            return;
+        }
+
+        // Карта захищених робіт з бази: { [studentKey]: Set(labNumbers) }
+        const dbDefensesMap = new Map();
+        (subjectsOverviewData?.defenses || []).forEach(d => {
+            if (d.subject === meta.code) {
+                const key = (d.real_name || '').trim().toLowerCase();
+                const numMatch = (d.lab_number || '').match(/\d+/);
+                if (key && numMatch) {
+                    if (!dbDefensesMap.has(key)) dbDefensesMap.set(key, new Set());
+                    dbDefensesMap.get(key).add(parseInt(numMatch[0]));
+                }
+            }
+        });
+
+        let html = '';
+        students.forEach(st => {
+            const stName = st.real_name || 'Студент';
+            const cleanKey = stName.trim().toLowerCase();
+            const localSet = loadStudentLocalProgress(stName, meta.code);
+            const dbSet = dbDefensesMap.get(cleanKey) || new Set();
+
+            // Об'єднуємо відмітки
+            const allPassed = new Set([...localSet, ...dbSet]);
+            const passedCount = Array.from(allPassed).filter(n => n >= 1 && n <= meta.totalWorks).length;
+            const isAllDone = passedCount === meta.totalWorks;
+
+            let chipsHtml = '';
+            for (let i = 1; i <= meta.totalWorks; i++) {
+                const isPassed = allPassed.has(i);
+                chipsHtml += `
+                    <span class="work-chip ${isPassed ? 'is-defended' : ''}" 
+                          data-student="${escapeHtml(stName)}" 
+                          data-tgid="${st.telegram_id || 0}" 
+                          data-num="${i}">
+                        ${i}${isPassed ? '✓' : ''}
+                    </span>
+                `;
+            }
+
+            html += `
+                <div class="student-group-card">
+                    <div class="student-card-header">
+                        <span class="student-card-name">${escapeHtml(stName)}</span>
+                        <span class="student-card-score ${isAllDone ? 'all-passed' : ''}">
+                            ${passedCount} / ${meta.totalWorks}
+                        </span>
+                    </div>
+                    <div class="student-chips-row">
+                        ${chipsHtml}
+                    </div>
+                </div>
+            `;
+        });
+
+        groupStudentsList.innerHTML = html;
+
+        // Клік по чіпу у списку групи перемикає статус цієї роботи у студента
+        groupStudentsList.querySelectorAll('.work-chip').forEach(chip => {
+            chip.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const stName = chip.getAttribute('data-student');
+                const tgId = parseInt(chip.getAttribute('data-tgid')) || 0;
+                const num = parseInt(chip.getAttribute('data-num'));
+                toggleStudentWork(stName, tgId, meta.code, num);
+            });
+        });
+    }
+
+    async function toggleStudentWork(studentName, studentTgId, subj, workNum) {
+        const meta = getSubjectTerminology(subj);
+        const workTitle = `${meta.termSingular} ${workNum}`;
+        const set = loadStudentLocalProgress(studentName, subj);
+
+        let isNowPassed = false;
+        if (set.has(workNum)) {
+            set.delete(workNum);
+            isNowPassed = false;
+            showToast(`${workTitle} повернуто в нездані`);
+        } else {
+            set.add(workNum);
+            isNowPassed = true;
+            showToast(`✅ ${workTitle} зараховано!`);
+        }
+
+        saveStudentLocalProgress(studentName, subj, set);
+        if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+
+        // Оновлюємо відображення одразу без затримки
+        renderSubjectsView();
+
+        // Фонова синхронізація з сервером бази даних
+        try {
+            await fetch('/api/defenses/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    real_name: studentName,
+                    subject: subj,
+                    lab_number: workTitle,
+                    user_id: studentTgId || null
+                })
+            });
+        } catch (_) {}
+    }
+
+    // Слухачі подій розділу предметів
+    if (subjectsTabOp) {
+        subjectsTabOp.addEventListener('click', () => {
+            activeSubjectsSubj = 'ОП';
+            subjectsTabOp.classList.add('active');
+            subjectsTabAsd.classList.remove('active');
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            renderSubjectsView();
+            updateBottomButtonState();
+        });
+    }
+    if (subjectsTabAsd) {
+        subjectsTabAsd.addEventListener('click', () => {
+            activeSubjectsSubj = 'АСД';
+            subjectsTabAsd.classList.add('active');
+            subjectsTabOp.classList.remove('active');
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            renderSubjectsView();
+            updateBottomButtonState();
+        });
+    }
+    if (btnSubnavMy) {
+        btnSubnavMy.addEventListener('click', () => {
+            activeSubjectsSubView = 'my';
+            btnSubnavMy.classList.add('active');
+            btnSubnavGroup.classList.remove('active');
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            renderSubjectsView();
+        });
+    }
+    if (btnSubnavGroup) {
+        btnSubnavGroup.addEventListener('click', () => {
+            activeSubjectsSubView = 'group';
+            btnSubnavGroup.classList.add('active');
+            btnSubnavMy.classList.remove('active');
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            renderSubjectsView();
+        });
+    }
+    if (groupSearchInput) {
+        groupSearchInput.addEventListener('input', (e) => {
+            groupSearchQuery = e.target.value.trim().toLowerCase();
+            renderGroupProgressView(getSubjectTerminology(activeSubjectsSubj));
+        });
+    }
+
     function updateHeroSubtitle() {
         if (!heroSubtitleEl) return;
         heroSubtitleEl.textContent = 'Група ІП-66 • ФІОТ';
@@ -1002,7 +1371,8 @@ document.addEventListener('DOMContentLoaded', () => {
             fetchQueue(),
             fetchSchedule(scheduleDay),
             fetchDeadlines(),
-            fetchStudentDefenses()
+            fetchStudentDefenses(),
+            fetchSubjectsOverview()
         ]);
     }
 

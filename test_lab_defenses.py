@@ -168,6 +168,141 @@ class TestLabDefensesSystem(AioHTTPTestCase):
         self.assertEqual(data["defenses"][0]["lab_number"], "Лаба 4")
         self.assertEqual(data["defenses"][0]["real_name"], "Тест Студент API")
 
+    async def test_confirm_and_reject_lab_defense_db(self):
+        from database import confirm_lab_defense_db, reject_lab_defense_db, get_lab_defense_by_id_db
+
+        # 1. Захист очікує підтвердження (confirmed=0)
+        def_id_1 = await record_lab_defense_db(
+            real_name="Тест Студент Підтвердження",
+            subject="ОП",
+            lab_number="Практикум 1",
+            telegram_id=555111,
+            video_id="vid_conf_1",
+            confirmed=0
+        )
+        rec_before = await get_lab_defense_by_id_db(def_id_1)
+        self.assertEqual(rec_before["confirmed"], 0)
+
+        # 2. Підтвердження
+        rec_after = await confirm_lab_defense_db(def_id_1)
+        self.assertIsNotNone(rec_after)
+        self.assertEqual(rec_after["confirmed"], 1)
+        self.assertEqual(rec_after["status"], "passed")
+
+        # 3. Відхилення другого захисту
+        def_id_2 = await record_lab_defense_db(
+            real_name="Тест Студент Відхилення",
+            subject="АСД",
+            lab_number="Практична 1",
+            telegram_id=555222,
+            video_id="vid_conf_2",
+            confirmed=0
+        )
+        rej_ok = await reject_lab_defense_db(def_id_2)
+        self.assertTrue(rej_ok)
+        rec_rej = await get_lab_defense_by_id_db(def_id_2)
+        self.assertEqual(rec_rej["status"], "rejected")
+
+    async def test_get_student_queue_positions(self):
+        from database import get_student_queue_positions_db
+
+        # Ставимо студента в чергу
+        await join_queue_db(self.chat_id, "ОП", 888111, "Тест Позиція", "pos_user", "Лаба 1")
+        positions = await get_student_queue_positions_db(888111, "ОП")
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0]["position"], 1)
+        self.assertEqual(positions[0]["chat_id"], self.chat_id)
+
+    async def test_toggle_student_lab_defense(self):
+        from database import toggle_student_lab_defense_db, get_student_defended_labs_db
+
+        # 1. Ручне відмічання (додавання)
+        res_add = await toggle_student_lab_defense_db("Тест Студент Тогл", "ОП", "Практикум 2", telegram_id=333444)
+        self.assertTrue(res_add["passed"])
+
+        defended = await get_student_defended_labs_db(real_name="Тест Студент Тогл", subject="ОП")
+        self.assertEqual(len(defended), 1)
+        self.assertEqual(defended[0]["lab_number"], "Практикум 2")
+
+        # 2. Повторне натискання (зняття відмітки)
+        res_del = await toggle_student_lab_defense_db("Тест Студент Тогл", "ОП", "Практикум 2", telegram_id=333444)
+        self.assertFalse(res_del["passed"])
+        self.assertEqual(res_del["action"], "removed")
+
+    async def test_api_subjects_overview(self):
+        resp = await self.client.request("GET", "/api/subjects/overview")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["success"])
+        self.assertIn("ОП", data["subjects"])
+        self.assertIn("АСД", data["subjects"])
+        # Перевірка строгої термінології: Практикуми для ОП, Практичні роботи для АСД
+        self.assertEqual(data["subjects"]["ОП"]["term_plural"], "Практикуми")
+        self.assertEqual(data["subjects"]["ОП"]["term_singular"], "Практикум")
+        self.assertEqual(data["subjects"]["АСД"]["term_plural"], "Практичні роботи")
+        self.assertEqual(data["subjects"]["АСД"]["term_singular"], "Практична робота")
+
+    async def test_api_defenses_toggle_endpoint(self):
+        payload = {
+            "real_name": "Тест Сінчіневіч API",
+            "subject": "ОП",
+            "lab_number": "Практикум 3",
+            "user_id": 999333
+        }
+        resp = await self.client.request("POST", "/api/defenses/toggle", json=payload)
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["passed"])
+
+        # Перевірка зняття відмітки тим же ендпоінтом
+        resp_toggle_off = await self.client.request("POST", "/api/defenses/toggle", json=payload)
+        self.assertEqual(resp_toggle_off.status, 200)
+        data_off = await resp_toggle_off.json()
+        self.assertTrue(data_off["success"])
+        self.assertFalse(data_off["passed"])
+
+    async def test_cb_queue_def_confirm_and_reject(self):
+        from handlers import cb_queue_actions
+        from database import record_lab_defense_db, get_active_queue_db, get_lab_defense_by_id_db
+
+        # Студент стає в чергу
+        await join_queue_db(self.chat_id, "ОП", 654321, "Тест Підтверджуваний", "test_conf", "Лаба 1")
+        q_init = await get_active_queue_db(self.chat_id, "ОП")
+        self.assertEqual(len(q_init), 1)
+
+        # Створюємо захист, що очікує підтвердження
+        def_id = await record_lab_defense_db(
+            real_name="Тест Підтверджуваний",
+            subject="ОП",
+            lab_number="Практикум 1",
+            telegram_id=654321,
+            video_id="vid_test_cb",
+            confirmed=0
+        )
+
+        # Mock CallbackQuery для confirm
+        mock_cb = MagicMock()
+        mock_cb.data = f"q:def_confirm:{def_id}:654321:ОП"
+        mock_cb.message.chat.id = self.chat_id
+        mock_cb.from_user.full_name = "Староста Тест"
+        mock_cb.answer = AsyncMock()
+        mock_cb.message.edit_text = AsyncMock()
+        mock_cb.bot = self.mock_bot
+
+        await cb_queue_actions(mock_cb)
+
+        # Перевіряємо: захист підтверджено в базі
+        def_rec = await get_lab_defense_by_id_db(def_id)
+        self.assertEqual(def_rec["confirmed"], 1)
+
+        # Студента автоматично виписано з черги
+        q_after = await get_active_queue_db(self.chat_id, "ОП")
+        self.assertEqual(len(q_after), 0)
+        mock_cb.message.edit_text.assert_called_once()
+        self.assertIn("Захист підтверджено", mock_cb.message.edit_text.call_args[0][0])
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -367,17 +367,87 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     # --- REST API: Defenses ---
     async def handle_api_defenses(request):
         try:
-            from database import get_student_defended_labs_db
+            from database import get_student_defended_labs_db, get_all_defenses_summary_db
             user_id_str = request.query.get("user_id", "0").strip()
             user_id = int(user_id_str) if user_id_str.lstrip("-").isdigit() and int(user_id_str) != 0 else None
             subject = request.query.get("subject", "").strip() or None
             real_name = request.query.get("real_name", "").strip() or None
+            is_all = request.query.get("all", "0").strip() in ("1", "true")
 
-            defenses = await get_student_defended_labs_db(user_id=user_id, real_name=real_name, subject=subject)
+            if is_all:
+                defenses = await get_all_defenses_summary_db(subject=subject)
+            else:
+                defenses = await get_student_defended_labs_db(user_id=user_id, real_name=real_name, subject=subject)
+
             return json_response_cors({
                 "success": True,
                 "defenses": defenses,
                 "total": len(defenses)
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_defenses_toggle(request):
+        try:
+            from database import toggle_student_lab_defense_db
+            data = await request.json()
+            real_name = str(data.get("real_name", "")).strip()
+            subject = str(data.get("subject", "ОП")).strip()
+            lab_number = str(data.get("lab_number", "")).strip()
+            user_id_raw = data.get("user_id")
+            user_id = int(user_id_raw) if user_id_raw else None
+
+            if not real_name or not lab_number:
+                return json_response_cors({"success": False, "error": "real_name and lab_number are required"}, status=400)
+
+            res = await toggle_student_lab_defense_db(
+                real_name=real_name,
+                subject=subject,
+                lab_number=lab_number,
+                telegram_id=user_id
+            )
+            return json_response_cors({
+                "success": True,
+                "real_name": real_name,
+                "subject": subject,
+                "lab_number": lab_number,
+                **res
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_subjects_overview(request):
+        try:
+            from database import get_all_students_db, get_all_defenses_summary_db
+            students = await get_all_students_db()
+            defenses = await get_all_defenses_summary_db()
+
+            subjects_meta = {
+                "ОП": {
+                    "code": "ОП",
+                    "title": "Основи програмування",
+                    "term_singular": "Практикум",
+                    "term_plural": "Практикуми",
+                    "total_works": 8,
+                    "emoji": "💻"
+                },
+                "АСД": {
+                    "code": "АСД",
+                    "title": "Алгоритми та структури даних",
+                    "term_singular": "Практична робота",
+                    "term_plural": "Практичні роботи",
+                    "total_works": 8,
+                    "emoji": "🧮"
+                }
+            }
+
+            return json_response_cors({
+                "success": True,
+                "subjects": subjects_meta,
+                "students": students,
+                "defenses": defenses,
+                "total_students": len(students),
+                "total_defenses": len(defenses)
             })
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
@@ -399,6 +469,8 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     app.router.add_get("/api/students", handle_api_students_get)
     app.router.add_get("/api/student/resolve", handle_api_student_resolve)
     app.router.add_get("/api/defenses", handle_api_defenses)
+    app.router.add_post("/api/defenses/toggle", handle_api_defenses_toggle)
+    app.router.add_get("/api/subjects/overview", handle_api_subjects_overview)
 
     # Static files
     if WEBAPP_DIR.exists():
