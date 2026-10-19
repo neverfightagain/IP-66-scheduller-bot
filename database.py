@@ -491,6 +491,10 @@ async def init_db():
         await db.commit()
         await cleanup_past_assignments_db()
 
+        # Автоматичне вилучення кураторів із реєстру студентів (вони не навчаються в групі)
+        await db.execute("DELETE FROM students WHERE LOWER(real_name) LIKE '%куратор%'")
+        await db.commit()
+
         # Автоматичний первинний імпорт списку групи з STUDENTS_ROSTER_JSON або students_roster.json
         from config import STUDENTS_ROSTER_JSON
         roster_data = None
@@ -511,19 +515,22 @@ async def init_db():
 
         if roster_data:
             try:
-                async with db.execute("SELECT COUNT(*) as cnt FROM students") as cur:
+                async with db.execute("SELECT COUNT(*) as cnt FROM students WHERE LOWER(real_name) NOT LIKE '%куратор%'") as cur:
                     row = await cur.fetchone()
                     if row and row["cnt"] == 0:
                         for item in roster_data:
+                            rname = item.get("real_name", "")
+                            if "куратор" in rname.lower():
+                                continue
                             notes = item.get("notes", "")
                             if not notes and item.get("birthdate"):
                                 notes = f"Д/Н: {item['birthdate']}"
                             await db.execute("""
                                 INSERT INTO students (real_name, telegram_username, subgroup, notes)
                                 VALUES (?, ?, ?, ?)
-                            """, (item["real_name"], item.get("telegram_username"), item.get("subgroup", 1), notes))
+                            """, (rname, item.get("telegram_username"), item.get("subgroup", 1), notes))
                         await db.commit()
-                        logger.info(f"Успішно імпортовано {len(roster_data)} студентів з реєстру.")
+                        logger.info(f"Успішно імпортовано студентів з реєстру.")
             except Exception as e_rost:
                 logger.warning(f"Не вдалося імпортувати студентів: {e_rost}")
 
@@ -1386,11 +1393,12 @@ async def add_or_update_student_db(
 
 
 async def get_all_students_db() -> list[dict]:
-    """Отримати повний список студентів групи, відсортований за підгрупою та іменем."""
+    """Отримати повний список студентів групи (без кураторів), відсортований за підгрупою та іменем."""
     async with get_db() as db:
         async with db.execute("""
             SELECT id, real_name, telegram_username, telegram_id, subgroup, notes, created_at
             FROM students
+            WHERE LOWER(real_name) NOT LIKE '%куратор%'
             ORDER BY subgroup ASC, real_name ASC
         """) as cur:
             rows = await cur.fetchall()
@@ -1424,10 +1432,12 @@ async def find_student_real_name_db(user_id: int = None, telegram_username: str 
 
 
 async def bulk_import_students_db(students_list: list[dict]) -> int:
-    """Масовий імпорт списку студентів з таблиці/словника."""
+    """Масовий імпорт списку студентів з таблиці/словника (пропускаючи кураторів)."""
     count = 0
     for s in students_list:
         rname = s.get("real_name") or s.get("name") or ""
+        if "куратор" in rname.lower():
+            continue
         uname = s.get("telegram_username") or s.get("username")
         tg_id = s.get("telegram_id") or s.get("user_id")
         try:
@@ -1586,26 +1596,26 @@ async def toggle_student_lab_defense_db(real_name: str, subject: str, lab_number
     clean_subj = normalize_queue_subject(subject)
     clean_lab = lab_number.strip()
     clean_name = real_name.strip()
+    num_match = re.search(r'\d+', clean_lab)
+    digit_str = num_match.group(0) if num_match else clean_lab
+
     async with get_db() as db:
         async with db.execute("""
             SELECT id, status, confirmed FROM lab_defenses
-            WHERE real_name = ? AND subject = ? AND lab_number = ?
+            WHERE (real_name = ? OR (telegram_id IS NOT NULL AND telegram_id != 0 AND telegram_id = ?))
+              AND subject = ?
+              AND (lab_number = ? OR lab_number LIKE '%' || ? || '%')
             LIMIT 1
-        """, (clean_name, clean_subj, clean_lab)) as cur:
+        """, (clean_name, telegram_id or 0, clean_subj, clean_lab, digit_str)) as cur:
             existing = await cur.fetchone()
             if existing:
-                if existing["status"] == "passed" and existing["confirmed"] == 1:
-                    await db.execute("DELETE FROM lab_defenses WHERE id = ?", (existing["id"],))
-                    await db.commit()
-                    return {"passed": False, "action": "removed"}
-                else:
-                    await db.execute("UPDATE lab_defenses SET status = 'passed', confirmed = 1 WHERE id = ?", (existing["id"],))
-                    await db.commit()
-                    return {"passed": True, "action": "confirmed"}
+                await db.execute("DELETE FROM lab_defenses WHERE id = ?", (existing["id"],))
+                await db.commit()
+                return {"passed": False, "action": "removed"}
 
         cursor = await db.execute("""
             INSERT INTO lab_defenses (real_name, subject, lab_number, telegram_id, video_id, exact_quote, status, confirmed)
-            VALUES (?, ?, ?, ?, 'manual', 'Ручна відмітка в Mini App', 'passed', 1)
+            VALUES (?, ?, ?, ?, 'manual', '', 'passed', 1)
         """, (clean_name, clean_subj, clean_lab, telegram_id))
         await db.commit()
         return {"passed": True, "action": "added", "id": cursor.lastrowid if hasattr(cursor, "lastrowid") else 1}

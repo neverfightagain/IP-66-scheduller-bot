@@ -161,20 +161,20 @@
             </div>
         </section>
 
-        <!-- РОЗДІЛ 4: Предмети та лабораторні (ОП Практикуми / АСД Практичні роботи) -->
+        <!-- РОЗДІЛ 4: Предмети та практичні роботи (ОП Практикуми / АСД Практичні роботи) -->
         <section id="tab-subjects" class="tab-content">
             <div class="queue-mode-box">
                 <div class="section-header-row" style="margin-bottom:12px;">
                     <div>
-                        <span class="section-title">Навчальні предмети</span>
+                        <span class="section-title">Практичні роботи</span>
                         <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">
-                            Облік робіт: ОП (Практикуми) та АСД (Практичні)
+                            Особистий прогрес здачі (ІП-66)
                         </div>
                     </div>
                 </div>
 
                 <!-- Перемикач дисциплін: ОП vs АСД -->
-                <div class="subj-pills-row" style="margin-bottom:12px;">
+                <div class="subj-pills-row" style="margin-bottom:14px;">
                     <button class="subj-pill-tab active" data-subject="ОП" id="subjects-tab-op">
                         <span>💻 ОП (Практикуми)</span>
                     </button>
@@ -183,46 +183,27 @@
                     </button>
                 </div>
 
-                <!-- Підперемикач: Мій прогрес / Прогрес групи -->
-                <div class="subjects-subnav-row">
-                    <button class="subnav-pill active" id="btn-subnav-my">👤 Мій прогрес</button>
-                    <button class="subnav-pill" id="btn-subnav-group">👥 Прогрес групи</button>
-                </div>
-
-                <!-- БЛОК 1: Мій особистий прогрес -->
-                <div id="subjects-my-view">
-                    <!-- Картка зведеного прогресу студента -->
-                    <div class="subject-progress-hero" id="subject-progress-hero">
-                        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
-                            <div>
-                                <div class="subject-hero-title" id="subject-hero-title">Основи програмування</div>
-                                <div class="subject-hero-term" id="subject-hero-term">Практикуми (1..8)</div>
-                            </div>
-                            <span class="subject-score-badge" id="subject-score-badge">0 / 8</span>
+                <!-- Картка зведеного прогресу студента -->
+                <div class="subject-progress-hero" id="subject-progress-hero">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+                        <div>
+                            <div class="subject-hero-title" id="subject-hero-title">Основи програмування</div>
+                            <div class="subject-hero-term" id="subject-hero-term">Практикуми (1..8)</div>
                         </div>
-                        <div class="progress-bar-track">
-                            <div class="progress-bar-fill" id="subject-progress-bar-fill" style="width: 0%;"></div>
-                        </div>
-                        <div class="progress-bar-meta">
-                            <span id="subject-progress-percent">0% здано</span>
-                            <span id="subject-progress-status" style="color:#16a34a; font-weight:700;"></span>
-                        </div>
+                        <span class="subject-score-badge" id="subject-score-badge">0 / 8</span>
                     </div>
-
-                    <!-- Список робіт (Практикуми 1..8 для ОП або Практичні 1..8 для АСД) -->
-                    <div class="tasks-list" id="subject-works-container" style="margin-top:14px;">
-                        <!-- Генерується динамічно JS -->
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="subject-progress-bar-fill" style="width: 0%;"></div>
+                    </div>
+                    <div class="progress-bar-meta">
+                        <span id="subject-progress-percent">0% здано</span>
+                        <span id="subject-progress-status" style="color:#16a34a; font-weight:700;"></span>
                     </div>
                 </div>
 
-                <!-- БЛОК 2: Зведений огляд усієї групи -->
-                <div id="subjects-group-view" class="hidden">
-                    <div style="margin-bottom:12px;">
-                        <input type="text" id="group-search-input" placeholder="🔍 Пошук студента..." class="group-search-field">
-                    </div>
-                    <div id="group-students-list" class="tasks-list">
-                        <!-- Список студентів групи з чіпами робіт підвантажується JS -->
-                    </div>
+                <!-- Список робіт (Практикуми 1..8 для ОП або Практичні 1..8 для АСД) -->
+                <div class="tasks-list" id="subject-works-container" style="margin-top:14px;">
+                    <!-- Генерується динамічно JS -->
                 </div>
             </div>
         </section>

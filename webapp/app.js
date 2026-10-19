@@ -182,10 +182,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Subjects Elements (ОП Практикуми / АСД Практичні роботи)
     const subjectsTabOp = document.getElementById('subjects-tab-op');
     const subjectsTabAsd = document.getElementById('subjects-tab-asd');
-    const btnSubnavMy = document.getElementById('btn-subnav-my');
-    const btnSubnavGroup = document.getElementById('btn-subnav-group');
-    const subjectsMyView = document.getElementById('subjects-my-view');
-    const subjectsGroupView = document.getElementById('subjects-group-view');
     const subjectProgressHero = document.getElementById('subject-progress-hero');
     const subjectHeroTitle = document.getElementById('subject-hero-title');
     const subjectHeroTerm = document.getElementById('subject-hero-term');
@@ -194,13 +190,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const subjectProgressPercent = document.getElementById('subject-progress-percent');
     const subjectProgressStatus = document.getElementById('subject-progress-status');
     const subjectWorksContainer = document.getElementById('subject-works-container');
-    const groupSearchInput = document.getElementById('group-search-input');
-    const groupStudentsList = document.getElementById('group-students-list');
 
     let activeSubjectsSubj = 'ОП';
-    let activeSubjectsSubView = 'my';
-    let subjectsOverviewData = { subjects: {}, students: [], defenses: [] };
-    let groupSearchQuery = '';
+    let officialAiDefenses = [];
 
     // Bottom Action Button & Toast
     const btnPrimaryAction = document.getElementById('btn-primary-action');
@@ -478,6 +470,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const numMatch = (d.lab_number || '').match(/\d+/);
             if (numMatch) defendedLabNumbers.add(parseInt(numMatch[0]));
         });
+
+        // Також додаємо відмітки з локального збереження студента
+        const myName = currentUser?.name || 'Студент';
+        const localSet = loadStudentLocalProgress(myName, activeSubject);
+        if (localSet) {
+            localSet.forEach(n => defendedLabNumbers.add(n));
+        }
 
         for (let i = 1; i <= 9; i++) {
             const btn = document.createElement('button');
@@ -1056,7 +1055,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function loadStudentLocalProgress(studentName, subj) {
         try {
             const raw = localStorage.getItem(getStudentProgressKey(studentName, subj));
-            if (!raw) return new Set();
+            if (raw === null) return null;
             const arr = JSON.parse(raw);
             return new Set(Array.isArray(arr) ? arr.map(Number) : []);
         } catch (_) {
@@ -1098,37 +1097,40 @@ document.addEventListener('DOMContentLoaded', () => {
         if (subjectHeroTitle) subjectHeroTitle.textContent = meta.title;
         if (subjectHeroTerm) subjectHeroTerm.textContent = `${meta.termPlural} (1..${meta.totalWorks})`;
 
-        if (activeSubjectsSubView === 'my') {
-            if (subjectsMyView) subjectsMyView.classList.remove('hidden');
-            if (subjectsGroupView) subjectsGroupView.classList.add('hidden');
-            renderMyProgressView(meta);
-        } else {
-            if (subjectsMyView) subjectsMyView.classList.add('hidden');
-            if (subjectsGroupView) subjectsGroupView.classList.remove('hidden');
-            renderGroupProgressView(meta);
-        }
+        renderMyProgressView(meta);
     }
 
     function renderMyProgressView(meta) {
         if (!subjectWorksContainer) return;
 
         const myName = currentUser?.name || 'Студент';
-        const localSet = loadStudentLocalProgress(myName, meta.code);
+        const myRealName = currentUser?.realName || myName;
+        const myTgId = currentUser?.id;
 
-        // Збираємо офіційно підтверджені захисти з бази даних
+        // Збираємо офіційно зафіксовані захисти з бази даних
         const officialDefenses = new Map();
         (subjectsOverviewData?.defenses || []).forEach(d => {
-            const isMatch = (currentUser?.id && d.telegram_id === currentUser.id) ||
-                            (d.real_name && d.real_name.toLowerCase() === myName.toLowerCase());
+            const isMatch = (myTgId && d.telegram_id === myTgId) ||
+                            (d.real_name && (d.real_name.toLowerCase() === myName.toLowerCase() || d.real_name.toLowerCase() === myRealName.toLowerCase()));
             if (isMatch && d.subject === meta.code) {
                 const matchNum = (d.lab_number || '').match(/\d+/);
                 if (matchNum) {
                     const n = parseInt(matchNum[0]);
                     officialDefenses.set(n, d);
-                    localSet.add(n);
                 }
             }
         });
+
+        // Завантажуємо локальний стан студента з localStorage
+        let localSet = loadStudentLocalProgress(myName, meta.code);
+        if (localSet === null) {
+            // Перший запуск: ініціалізуємо даними з бази, якщо такі є
+            localSet = new Set();
+            for (const n of officialDefenses.keys()) {
+                localSet.add(n);
+            }
+            saveStudentLocalProgress(myName, meta.code, localSet);
+        }
 
         // Підрахунок прогресу
         const passedCount = Array.from(localSet).filter(n => n >= 1 && n <= meta.totalWorks).length;
@@ -1136,7 +1138,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (subjectScoreBadge) subjectScoreBadge.textContent = `${passedCount} / ${meta.totalWorks}`;
         if (subjectProgressBarFill) subjectProgressBarFill.style.width = `${percent}%`;
-        if (subjectProgressPercent) subjectProgressPercent.textContent = `${percent}% виконано`;
+        if (subjectProgressPercent) subjectProgressPercent.textContent = `${percent}% здано`;
         if (subjectProgressStatus) {
             if (passedCount === meta.totalWorks) {
                 subjectProgressStatus.textContent = '🎉 Всі роботи складено!';
@@ -1151,20 +1153,21 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let i = 1; i <= meta.totalWorks; i++) {
             const isPassed = localSet.has(i);
             const officialDef = officialDefenses.get(i);
-            const workTitle = `${meta.termSingular} ${i}`;
+            // Лише справжні записи з відеозаписів викладачів мають video_id != 'manual'
+            const isAiDefense = isPassed && officialDef && officialDef.video_id && officialDef.video_id !== 'manual';
 
             let badgeHtml = '';
             let quoteHtml = '';
 
-            if (officialDef) {
+            if (isAiDefense) {
                 badgeHtml = '<span class="work-status-badge ai-video">🎥 Здано на парі (AI)</span>';
                 if (officialDef.exact_quote) {
                     quoteHtml = `<div class="work-quote-snippet">💬 «${escapeHtml(officialDef.exact_quote)}»</div>`;
                 }
             } else if (isPassed) {
-                badgeHtml = '<span class="work-status-badge passed">✅ Зараховано</span>';
+                badgeHtml = '<span class="work-status-badge passed">✅ Здано</span>';
             } else {
-                badgeHtml = '<span class="work-status-badge pending">⏳ Ще не здано</span>';
+                badgeHtml = '<span class="work-status-badge pending">⏳ Не здано</span>';
             }
 
             html += `
@@ -1176,7 +1179,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <div class="work-meta-block">
                         <div class="work-title-row">
-                            <span class="work-main-title">${escapeHtml(workTitle)}</span>
+                            <div class="work-title-badge-wrap">
+                                <span>${escapeHtml(meta.termSingular)}</span>
+                                <span class="work-num-pill">№ ${i}</span>
+                            </div>
                             ${badgeHtml}
                         </div>
                         ${quoteHtml}
@@ -1195,127 +1201,76 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function renderGroupProgressView(meta) {
-        if (!groupStudentsList) return;
-
-        let students = subjectsOverviewData?.students || [];
-        if (groupSearchQuery) {
-            students = students.filter(s =>
-                (s.real_name || '').toLowerCase().includes(groupSearchQuery) ||
-                (s.telegram_username || '').toLowerCase().includes(groupSearchQuery)
-            );
-        }
-
-        if (students.length === 0) {
-            groupStudentsList.innerHTML = '<div style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">Студентів не знайдено</div>';
-            return;
-        }
-
-        // Карта захищених робіт з бази: { [studentKey]: Set(labNumbers) }
-        const dbDefensesMap = new Map();
-        (subjectsOverviewData?.defenses || []).forEach(d => {
-            if (d.subject === meta.code) {
-                const key = (d.real_name || '').trim().toLowerCase();
-                const numMatch = (d.lab_number || '').match(/\d+/);
-                if (key && numMatch) {
-                    if (!dbDefensesMap.has(key)) dbDefensesMap.set(key, new Set());
-                    dbDefensesMap.get(key).add(parseInt(numMatch[0]));
-                }
-            }
-        });
-
-        let html = '';
-        students.forEach(st => {
-            const stName = st.real_name || 'Студент';
-            const cleanKey = stName.trim().toLowerCase();
-            const localSet = loadStudentLocalProgress(stName, meta.code);
-            const dbSet = dbDefensesMap.get(cleanKey) || new Set();
-
-            // Об'єднуємо відмітки
-            const allPassed = new Set([...localSet, ...dbSet]);
-            const passedCount = Array.from(allPassed).filter(n => n >= 1 && n <= meta.totalWorks).length;
-            const isAllDone = passedCount === meta.totalWorks;
-
-            let chipsHtml = '';
-            for (let i = 1; i <= meta.totalWorks; i++) {
-                const isPassed = allPassed.has(i);
-                chipsHtml += `
-                    <span class="work-chip ${isPassed ? 'is-defended' : ''}" 
-                          data-student="${escapeHtml(stName)}" 
-                          data-tgid="${st.telegram_id || 0}" 
-                          data-num="${i}">
-                        ${i}${isPassed ? '✓' : ''}
-                    </span>
-                `;
-            }
-
-            html += `
-                <div class="student-group-card">
-                    <div class="student-card-header">
-                        <span class="student-card-name">${escapeHtml(stName)}</span>
-                        <span class="student-card-score ${isAllDone ? 'all-passed' : ''}">
-                            ${passedCount} / ${meta.totalWorks}
-                        </span>
-                    </div>
-                    <div class="student-chips-row">
-                        ${chipsHtml}
-                    </div>
-                </div>
-            `;
-        });
-
-        groupStudentsList.innerHTML = html;
-
-        // Клік по чіпу у списку групи перемикає статус цієї роботи у студента
-        groupStudentsList.querySelectorAll('.work-chip').forEach(chip => {
-            chip.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const stName = chip.getAttribute('data-student');
-                const tgId = parseInt(chip.getAttribute('data-tgid')) || 0;
-                const num = parseInt(chip.getAttribute('data-num'));
-                toggleStudentWork(stName, tgId, meta.code, num);
-            });
-        });
-    }
-
     async function toggleStudentWork(studentName, studentTgId, subj, workNum) {
         const meta = getSubjectTerminology(subj);
-        const workTitle = `${meta.termSingular} ${workNum}`;
-        const set = loadStudentLocalProgress(studentName, subj);
+        const workTitle = `${meta.termSingular} № ${workNum}`;
+        let set = loadStudentLocalProgress(studentName, subj);
+        if (set === null) set = new Set();
 
         let isNowPassed = false;
         if (set.has(workNum)) {
             set.delete(workNum);
             isNowPassed = false;
-            showToast(`${workTitle} повернуто в нездані`);
+            showToast(`${workTitle}: відмітку знято`);
+
+            // Видаляємо з локального кешу defenses, щоб не перевідкривалося при перерендері
+            if (subjectsOverviewData && Array.isArray(subjectsOverviewData.defenses)) {
+                subjectsOverviewData.defenses = subjectsOverviewData.defenses.filter(d => {
+                    const matchNum = (d.lab_number || '').match(/\d+/);
+                    const n = matchNum ? parseInt(matchNum[0]) : null;
+                    const isSameSubj = d.subject === subj;
+                    const isMe = (studentTgId && d.telegram_id === studentTgId) ||
+                                 (d.real_name && d.real_name.toLowerCase() === studentName.toLowerCase());
+                    return !(isSameSubj && isMe && n === workNum);
+                });
+            }
         } else {
             set.add(workNum);
             isNowPassed = true;
             showToast(`✅ ${workTitle} зараховано!`);
+
+            // Додаємо в локальний кеш defenses
+            if (subjectsOverviewData && Array.isArray(subjectsOverviewData.defenses)) {
+                subjectsOverviewData.defenses.push({
+                    real_name: studentName,
+                    telegram_id: studentTgId,
+                    subject: subj,
+                    lab_number: workTitle,
+                    video_id: 'manual',
+                    exact_quote: '',
+                    status: 'passed',
+                    confirmed: 1
+                });
+            }
         }
 
         saveStudentLocalProgress(studentName, subj, set);
         if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
 
-        // Оновлюємо відображення одразу без затримки
+        // Миттєвий перерендер UI
         renderSubjectsView();
 
-        // Фонова синхронізація з сервером бази даних
+        // Оновлюємо статус у черзі вибору лаб, якщо це той самий предмет
+        if (activeSubject === subj) {
+            renderLabsGrid();
+        }
+
+        // Фонова синхронізація з базою даних
         try {
             await fetch('/api/defenses/toggle', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    real_name: studentName,
+                    real_name: currentUser?.realName || studentName,
                     subject: subj,
-                    lab_number: workTitle,
+                    lab_number: `${meta.termSingular} ${workNum}`,
                     user_id: studentTgId || null
                 })
             });
         } catch (_) {}
     }
 
-    // Слухачі подій розділу предметів
+    // Слухачі подій перемикання дисциплін (ОП vs АСД)
     if (subjectsTabOp) {
         subjectsTabOp.addEventListener('click', () => {
             activeSubjectsSubj = 'ОП';
@@ -1334,30 +1289,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
             renderSubjectsView();
             updateBottomButtonState();
-        });
-    }
-    if (btnSubnavMy) {
-        btnSubnavMy.addEventListener('click', () => {
-            activeSubjectsSubView = 'my';
-            btnSubnavMy.classList.add('active');
-            btnSubnavGroup.classList.remove('active');
-            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-            renderSubjectsView();
-        });
-    }
-    if (btnSubnavGroup) {
-        btnSubnavGroup.addEventListener('click', () => {
-            activeSubjectsSubView = 'group';
-            btnSubnavGroup.classList.add('active');
-            btnSubnavMy.classList.remove('active');
-            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-            renderSubjectsView();
-        });
-    }
-    if (groupSearchInput) {
-        groupSearchInput.addEventListener('input', (e) => {
-            groupSearchQuery = e.target.value.trim().toLowerCase();
-            renderGroupProgressView(getSubjectTerminology(activeSubjectsSubj));
         });
     }
 
