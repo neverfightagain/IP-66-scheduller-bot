@@ -27,12 +27,18 @@ class TestCourseNameCleaning(unittest.TestCase):
 class TestFormattingAndRadar(unittest.TestCase):
     def test_deadlines_radar_spacing_and_summary(self):
         # Обидва завдання на один тиждень (поточний), щоб перевірити відступи між ними
+        from datetime import datetime, timedelta
+        from config import KYIV_TZ
+        now = datetime.now(KYIV_TZ)
+        due_1 = (now + timedelta(days=1)).strftime("%Y-%m-%d 20:00")
+        due_2 = (now + timedelta(days=2)).strftime("%Y-%m-%d 23:59")
+
         assignments = [
             {
                 "id": "test_1",
                 "course_id": "English IP-65, 66",
                 "title": "Topic 1",
-                "due_date": "2026-10-18 20:00",
+                "due_date": due_1,
                 "description": "Very long raw teacher description with links https://example.com/quiz",
                 "ai_summary": "Опрацювати матеріал та пройти тест.",
                 "status": "active"
@@ -41,7 +47,7 @@ class TestFormattingAndRadar(unittest.TestCase):
                 "id": "test_2",
                 "course_id": "2026/27 КДМ ІП-6Х",
                 "title": "Lab 1",
-                "due_date": "2026-10-18 23:59",
+                "due_date": due_2,
                 "description": "Short desc",
                 "ai_summary": "Виконати завдання 1-5.",
                 "status": "active"
@@ -68,12 +74,17 @@ class TestFormattingAndRadar(unittest.TestCase):
         self.assertIn("</blockquote>\n\n", radar)
 
     def test_deadlines_radar_fallback_without_ai_summary(self):
+        from datetime import datetime, timedelta
+        from config import KYIV_TZ
+        now = datetime.now(KYIV_TZ)
+        due = (now + timedelta(days=1)).strftime("%Y-%m-%d 23:59")
+
         assignments = [
             {
                 "id": "test_fallback",
                 "course_id": "АСД ІП-66",
                 "title": "Lab 2",
-                "due_date": "2026-10-18 23:59",
+                "due_date": due,
                 "description": "Тільки сирий опис",
                 "ai_summary": None,
                 "status": "active"

@@ -49,8 +49,29 @@ async def start_health_check_server():
         async def handle_ping(request):
             return web.Response(text="KPI Schedule Bot is OK")
 
+        async def handle_status(request):
+            from datetime import datetime
+            from config import KYIV_TZ, TURSO_DATABASE_URL, SQLITE_CLOUD_URL
+            from database import get_subscribed_chats_db
+            from scheduler import _today_cached_lessons, _today_cached_week, _today_cached_day_name
+            try:
+                targets = await get_subscribed_chats_db()
+                return web.json_response({
+                    "status": "online",
+                    "time_kyiv": datetime.now(KYIV_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                    "database_target": "turso" if TURSO_DATABASE_URL else ("sqlitecloud" if SQLITE_CLOUD_URL else "local_sqlite"),
+                    "subscribed_chats": targets,
+                    "subscribed_count": len(targets),
+                    "cached_lessons_count": len(_today_cached_lessons),
+                    "week": _today_cached_week,
+                    "day": _today_cached_day_name,
+                })
+            except Exception as e:
+                return web.json_response({"status": "error", "error": str(e)}, status=500)
+
         app.router.add_get("/", handle_ping)
         app.router.add_get("/health", handle_ping)
+        app.router.add_get("/status", handle_status)
 
         runner = web.AppRunner(app)
         await runner.setup()

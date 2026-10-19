@@ -442,7 +442,15 @@ async def get_subscribed_chats_db() -> list[dict]:
             WHERE notifications_enabled = 1
         """) as cursor:
             rows = await cursor.fetchall()
-            return [{"chat_id": row["chat_id"], "thread_id": row["thread_id"]} for row in rows]
+            targets = [{"chat_id": row["chat_id"], "thread_id": row["thread_id"]} for row in rows]
+            if not targets and ENV_CHAT_ID:
+                try:
+                    cid = int(ENV_CHAT_ID)
+                    tid = int(ENV_THREAD_ID) if ENV_THREAD_ID else None
+                    targets = [{"chat_id": cid, "thread_id": tid}]
+                except ValueError:
+                    pass
+            return targets
 
 
 async def add_subscription_db(chat_id: int, thread_id: int | None = None) -> bool:

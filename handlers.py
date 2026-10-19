@@ -583,3 +583,60 @@ async def cmd_summary(message: Message):
     except Exception as e:
         logger.error(f"Помилка в cmd_summary: {e}", exc_info=True)
         await safe_answer(message, f"⚠️ Не вдалося сформувати підсумок дня: {escape_html_text(str(e))}")
+
+
+@router.message(Command("status"))
+async def cmd_status(message: Message):
+    """Показати діагностику підписки цього чату та статус бота."""
+    chat_id = message.chat.id
+    thread_id = getattr(message, "message_thread_id", None)
+
+    from database import get_subscribed_chats_db
+    targets = await get_subscribed_chats_db()
+    is_subscribed = any(
+        t["chat_id"] == chat_id and (thread_id is None or t.get("thread_id") == thread_id)
+        for t in targets
+    )
+
+    now_kyiv = datetime.now(KYIV_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    status_icon = "🟢 ПІДПИСАНО" if is_subscribed else "🔴 НЕ ПІДПИСАНО"
+    advice = (
+        "✅ <b>Цей чат отримує всі сповіщення:</b> ранковий розклад о 08:00, нагадування перед парами, дедлайни Classroom та конспекти лекцій."
+        if is_subscribed
+        else "⚠️ <b>УВАГА: Цей чат НЕ підписано на сповіщення!</b>\nНадішліть команду <code>/subscribe</code> або <code>/start</code> прямо в цей чат/топік, щоб увімкнути сповіщення."
+    )
+
+    text = (
+        f"📊 <b>Діагностика бота:</b>\n\n"
+        f"• <b>Статус цього чату:</b> {status_icon}\n"
+        f"• <b>ID чату:</b> <code>{chat_id}</code>\n"
+        f"• <b>ID топіку:</b> <code>{thread_id or 'Загальний'}</code>\n"
+        f"• <b>Час сервера (Київ):</b> <code>{now_kyiv}</code>\n"
+        f"• <b>Усього підписаних чатів у базі:</b> {len(targets)}\n\n"
+        f"{advice}\n\n"
+        f"💡 Щоб протестувати надсилання прямо зараз, відправте <code>/test_alert</code>"
+    )
+    await safe_answer(message, text)
+
+
+@router.message(Command("test_alert"))
+async def cmd_test_alert(message: Message):
+    """Надіслати тестове нагадування в цей чат/топік прямо зараз."""
+    chat_id = message.chat.id
+    thread_id = getattr(message, "message_thread_id", None)
+
+    from database import add_subscription_db
+    await add_subscription_db(chat_id, thread_id)
+
+    dummy_lesson = {
+        "name": "Тестова пара (ІП-66)",
+        "type": "Практика",
+        "time": "12:20",
+        "lecturer": "Тестовий викладач",
+        "tag": "prac",
+        "location": "Zoom"
+    }
+    from formatters import format_lesson_alert
+    text, kb = format_lesson_alert(dummy_lesson, minutes_left=5)
+    await safe_answer(message, f"🧪 <b>Тестове нагадування:</b>\n\n{text}", reply_markup=kb)
