@@ -640,3 +640,149 @@ async def cmd_test_alert(message: Message):
     from formatters import format_lesson_alert
     text, kb = format_lesson_alert(dummy_lesson, minutes_left=5)
     await safe_answer(message, f"🧪 <b>Тестове нагадування:</b>\n\n{text}", reply_markup=kb)
+
+
+# ==========================================
+# ЖИВА ЧЕРГА НА ЗАХИСТ ЛАБОРАТОРНИХ (/queue)
+# ==========================================
+
+def format_queue_view(subject: str, queue_items: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
+    """Форматування тексту черги та інлайн-кнопок управління."""
+    clean_subj = subject or "Загальна"
+    header = f"📋 <b>Жива черга на захист: {clean_subj}</b>\n"
+    if not queue_items:
+        text = f"{header}\n<i>Черга наразі порожня. Будьте першим!</i>"
+    else:
+        text = f"{header}\n"
+        for idx, item in enumerate(queue_items, start=1):
+            user_display = item["user_name"]
+            if item.get("username"):
+                user_display += f" (@{item['username']})"
+            lab_info = f" — <i>{item['lab_number']}</i>" if item.get("lab_number") else ""
+            badge = "🥇 " if idx == 1 else f"{idx}. "
+            text += f"{badge}<b>{user_display}</b>{lab_info}\n"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✋ Зайняти чергу", callback_data=f"q:join:{clean_subj}"),
+                InlineKeyboardButton(text="🚪 Вийти", callback_data=f"q:leave:{clean_subj}"),
+            ],
+            [
+                InlineKeyboardButton(text="➡️ Наступний", callback_data=f"q:next:{clean_subj}"),
+                InlineKeyboardButton(text="🔄 Оновити", callback_data=f"q:refresh:{clean_subj}"),
+            ],
+            [
+                InlineKeyboardButton(text="🧹 Очистити чергу", callback_data=f"q:clear:{clean_subj}"),
+            ]
+        ]
+    )
+    return text, kb
+
+
+@router.message(Command("queue"))
+async def cmd_queue(message: Message):
+    from database import get_active_queue_db
+    parts = message.text.split(maxsplit=1)
+    subject = parts[1].strip() if len(parts) > 1 else "Загальна"
+    chat_id = message.chat.id
+    items = await get_active_queue_db(chat_id, subject)
+    text, kb = format_queue_view(subject, items)
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.message(Command("join_queue"))
+async def cmd_join_queue(message: Message):
+    from database import join_queue_db, get_active_queue_db
+    raw = message.text.replace("/join_queue", "", 1).strip()
+    parts = [p.strip() for p in raw.split("|")] if "|" in raw else raw.split(maxsplit=1)
+    subject = parts[0] if len(parts) > 0 and parts[0] else "Загальна"
+    lab_number = parts[1] if len(parts) > 1 else ""
+
+    user = message.from_user
+    user_id = user.id
+    user_name = user.full_name
+    username = user.username
+
+    ok, msg, pos = await join_queue_db(message.chat.id, subject, user_id, user_name, username, lab_number)
+    items = await get_active_queue_db(message.chat.id, subject)
+    text, kb = format_queue_view(subject, items)
+    await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
+
+
+@router.message(Command("leave_queue"))
+async def cmd_leave_queue(message: Message):
+    from database import leave_queue_db, get_active_queue_db
+    parts = message.text.split(maxsplit=1)
+    subject = parts[1].strip() if len(parts) > 1 else "Загальна"
+    ok = await leave_queue_db(message.chat.id, subject, message.from_user.id)
+    msg = "✅ Ви вийшли з черги." if ok else "ℹ️ Вас не було в черзі."
+    items = await get_active_queue_db(message.chat.id, subject)
+    text, kb = format_queue_view(subject, items)
+    await safe_answer(message, f"{msg}\n\n" + text, reply_markup=kb)
+
+
+@router.message(Command("next_in_queue"))
+async def cmd_next_in_queue(message: Message):
+    from database import next_in_queue_db, get_active_queue_db
+    parts = message.text.split(maxsplit=1)
+    subject = parts[1].strip() if len(parts) > 1 else "Загальна"
+    student = await next_in_queue_db(message.chat.id, subject)
+    if not student:
+        await safe_answer(message, f"ℹ️ Черга з предмету <b>{subject}</b> порожня!")
+        return
+
+    name = student["user_name"]
+    un = f" (@{student['username']})" if student.get("username") else ""
+    items = await get_active_queue_db(message.chat.id, subject)
+    text, kb = format_queue_view(subject, items)
+    await safe_answer(message, f"🎯 <b>Зараз захищає:</b> {name}{un}\n\n" + text, reply_markup=kb)
+
+
+@router.message(Command("clear_queue"))
+async def cmd_clear_queue(message: Message):
+    from database import clear_queue_db
+    parts = message.text.split(maxsplit=1)
+    subject = parts[1].strip() if len(parts) > 1 else "Загальна"
+    count = await clear_queue_db(message.chat.id, subject)
+    await safe_answer(message, f"🧹 Чергу з предмету <b>{subject}</b> очищено! (Видалено записів: {count})")
+
+
+@router.callback_query(F.data.startswith("q:"))
+async def cb_queue_actions(callback: CallbackQuery):
+    from database import join_queue_db, leave_queue_db, next_in_queue_db, clear_queue_db, get_active_queue_db
+    data = callback.data.split(":")
+    if len(data) < 3:
+        await callback.answer()
+        return
+
+    action = data[1]
+    subject = data[2]
+    chat_id = callback.message.chat.id
+    user = callback.from_user
+
+    if action == "join":
+        ok, msg, _ = await join_queue_db(chat_id, subject, user.id, user.full_name, user.username)
+        await callback.answer(msg, show_alert=not ok)
+    elif action == "leave":
+        ok = await leave_queue_db(chat_id, subject, user.id)
+        await callback.answer("Ви вийшли з черги" if ok else "Вас не було в черзі", show_alert=False)
+    elif action == "next":
+        next_st = await next_in_queue_db(chat_id, subject)
+        if next_st:
+            await callback.answer(f"Наступний: {next_st['user_name']}", show_alert=False)
+        else:
+            await callback.answer("Черга порожня!", show_alert=True)
+    elif action == "clear":
+        await clear_queue_db(chat_id, subject)
+        await callback.answer("Чергу очищено!", show_alert=False)
+    elif action == "refresh":
+        await callback.answer("Чергу оновлено", show_alert=False)
+
+    # Оновлюємо інтерфейс черги
+    items = await get_active_queue_db(chat_id, subject)
+    text, kb = format_queue_view(subject, items)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass

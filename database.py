@@ -341,6 +341,25 @@ async def init_db():
             );
         """)
 
+        # 7. Таблиця живої черги на захист лабораторних
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS lab_queues (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                subject TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                user_name TEXT NOT NULL,
+                username TEXT,
+                lab_number TEXT DEFAULT '',
+                status TEXT DEFAULT 'waiting',
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_lab_queues_active
+            ON lab_queues (chat_id, subject, status);
+        """)
+
         await db.commit()
         if SQLITE_CLOUD_URL:
             host = SQLITE_CLOUD_URL.split("@")[-1].split("?")[0]
@@ -665,4 +684,123 @@ async def remove_scheduled_deletion_db(deletion_id: int):
     async with get_db() as db:
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
+
+
+# ==========================================
+# ЖИВА ЧЕРГА НА ЗАХИСТ ЛАБОРАТОРНИХ
+# ==========================================
+
+async def join_queue_db(
+    chat_id: int,
+    subject: str,
+    user_id: int,
+    user_name: str,
+    username: str = None,
+    lab_number: str = ""
+) -> tuple[bool, str, int]:
+    """
+    Додати студента до живої черги.
+    Повертає (успіх, повідомлення, позиція_в_черзі).
+    """
+    subject_clean = (subject or "Загальна").strip()
+    async with get_db() as db:
+        # Перевірка чи вже є у черзі
+        async with db.execute("""
+            SELECT id FROM lab_queues
+            WHERE chat_id = ? AND subject = ? AND user_id = ? AND status = 'waiting'
+        """, (chat_id, subject_clean, user_id)) as cursor:
+            existing = await cursor.fetchone()
+            if existing:
+                # Визначаємо поточну позицію
+                async with db.execute("""
+                    SELECT COUNT(*) as pos FROM lab_queues
+                    WHERE chat_id = ? AND subject = ? AND status = 'waiting' AND id <= ?
+                """, (chat_id, subject_clean, existing["id"])) as pos_cursor:
+                    row = await pos_cursor.fetchone()
+                    pos = row["pos"] if row else 1
+                return False, f"Ви вже знаходитесь у черзі на позиції #{pos}.", pos
+
+        # Додаємо нового учасника
+        cursor = await db.execute("""
+            INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'waiting')
+        """, (chat_id, subject_clean, user_id, user_name, username, lab_number.strip()))
+        await db.commit()
+        new_id = cursor.lastrowid
+
+        # Рахуємо позицію
+        async with db.execute("""
+            SELECT COUNT(*) as pos FROM lab_queues
+            WHERE chat_id = ? AND subject = ? AND status = 'waiting' AND id <= ?
+        """, (chat_id, subject_clean, new_id)) as pos_cursor:
+            row = await pos_cursor.fetchone()
+            pos = row["pos"] if row else 1
+
+        return True, "Успішно додано до черги!", pos
+
+
+async def leave_queue_db(chat_id: int, subject: str, user_id: int) -> bool:
+    """Видалити студента з черги."""
+    subject_clean = (subject or "Загальна").strip()
+    async with get_db() as db:
+        cursor = await db.execute("""
+            UPDATE lab_queues
+            SET status = 'left'
+            WHERE chat_id = ? AND subject = ? AND user_id = ? AND status = 'waiting'
+        """, (chat_id, subject_clean, user_id))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_active_queue_db(chat_id: int, subject: str = None) -> list[dict]:
+    """Отримати поточний список студентів у черзі (status = 'waiting')."""
+    subject_clean = (subject or "Загальна").strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, status, joined_at
+            FROM lab_queues
+            WHERE chat_id = ? AND subject = ? AND status = 'waiting'
+            ORDER BY id ASC
+        """, (chat_id, subject_clean)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def next_in_queue_db(chat_id: int, subject: str = None) -> dict | None:
+    """Перевести наступного студента з черги в статус 'done' і повернути його дані."""
+    subject_clean = (subject or "Загальна").strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, joined_at
+            FROM lab_queues
+            WHERE chat_id = ? AND subject = ? AND status = 'waiting'
+            ORDER BY id ASC
+            LIMIT 1
+        """, (chat_id, subject_clean)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            student = dict(row)
+
+        await db.execute("""
+            UPDATE lab_queues
+            SET status = 'done'
+            WHERE id = ?
+        """, (student["id"],))
+        await db.commit()
+        return student
+
+
+async def clear_queue_db(chat_id: int, subject: str = None) -> int:
+    """Повністю очистити активну чергу з даного предмету."""
+    subject_clean = (subject or "Загальна").strip()
+    async with get_db() as db:
+        cursor = await db.execute("""
+            UPDATE lab_queues
+            SET status = 'cleared'
+            WHERE chat_id = ? AND subject = ? AND status = 'waiting'
+        """, (chat_id, subject_clean))
+        await db.commit()
+        return cursor.rowcount
+
 
