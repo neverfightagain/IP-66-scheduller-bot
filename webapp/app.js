@@ -12,7 +12,8 @@ document.addEventListener('DOMContentLoaded', () => {
         id: tgUser?.id || 999001,
         name: tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : 'Студент',
         firstName: tgUser?.first_name || 'Студент',
-        username: tgUser?.username || 'student'
+        username: tgUser?.username || 'student',
+        photoUrl: tgUser?.photo_url || ''
     };
 
     // Параметри URL від бота (chat_id, subject)
@@ -26,15 +27,16 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentQueue = [];
     let allQueuesData = { 'ОП': [], 'АСД': [] };
     let scheduleLessons = [];
+    let deadlinesCache = [];
     let scheduleDay = 'today';
-    let currentTab = 'tab-queue'; // Фокус на черзі!
+    let currentTab = 'tab-queue';
     let pollInterval = null;
 
     // DOM Elements
-    const btnCloseApp = document.getElementById('btn-close-app');
     const userGreetingEl = document.getElementById('user-greeting');
     const heroSubtitleEl = document.getElementById('hero-subtitle');
-    const btnAvatarBadge = document.getElementById('btn-avatar-badge');
+    const userAvatarBadge = document.getElementById('user-avatar-badge');
+    const userAvatarText = document.getElementById('user-avatar-text');
     const btnSync = document.getElementById('btn-sync');
 
     // Featured Card
@@ -84,10 +86,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const deadlinesItemsContainer = document.getElementById('deadlines-items-container');
     const deadlinesCountBadge = document.getElementById('deadlines-count-badge');
 
-    // Bottom Action Button
+    // Bottom Action Button & Toast
     const btnPrimaryAction = document.getElementById('btn-primary-action');
     const btnPrimaryActionText = document.getElementById('btn-primary-action-text');
     const toastEl = document.getElementById('toast');
+
+    // Modal Elements
+    const modalBackdrop = document.getElementById('modal-backdrop');
+    const modalTag = document.getElementById('modal-tag');
+    const modalTitle = document.getElementById('modal-title');
+    const modalTime = document.getElementById('modal-time');
+    const modalBodyContent = document.getElementById('modal-body-content');
+    const modalPrimaryLink = document.getElementById('modal-primary-link');
+    const btnCloseModal = document.getElementById('btn-close-modal');
 
     // Toast Helper
     function showToast(text, duration = 2500) {
@@ -99,37 +110,60 @@ document.addEventListener('DOMContentLoaded', () => {
         }, duration);
     }
 
-    // 1. Ініціалізація заголовку
+    // Modal Sheet Functions
+    function openModal({ tag, title, time, body, linkUrl, linkText }) {
+        if (!modalBackdrop) return;
+        if (modalTag) modalTag.textContent = tag || 'Деталі';
+        if (modalTitle) modalTitle.textContent = title || '';
+        if (modalTime) modalTime.textContent = time || '';
+        if (modalBodyContent) modalBodyContent.innerHTML = body || '';
+
+        if (modalPrimaryLink) {
+            if (linkUrl && linkUrl !== '#') {
+                modalPrimaryLink.href = linkUrl;
+                modalPrimaryLink.textContent = linkText || '🚀 Приєднатися до заняття';
+                modalPrimaryLink.style.display = 'flex';
+            } else {
+                modalPrimaryLink.style.display = 'none';
+            }
+        }
+
+        modalBackdrop.classList.remove('hidden');
+    }
+
+    function closeModal() {
+        if (modalBackdrop) modalBackdrop.classList.add('hidden');
+    }
+
+    if (btnCloseModal) btnCloseModal.addEventListener('click', closeModal);
+    if (modalBackdrop) {
+        modalBackdrop.addEventListener('click', (e) => {
+            if (e.target === modalBackdrop) closeModal();
+        });
+    }
+
+    // 1. Ініціалізація заголовку та неклікабельної аватарки
     if (userGreetingEl) {
         userGreetingEl.textContent = `Привіт, ${currentUser.firstName}! ✨`;
     }
 
-    // Кнопка закриття
-    if (btnCloseApp) {
-        btnCloseApp.addEventListener('click', () => {
-            if (tg) {
-                tg.close();
-            } else {
-                showToast("Закриття додатку");
-            }
-        });
+    if (userAvatarBadge) {
+        if (currentUser.photoUrl) {
+            userAvatarBadge.style.backgroundImage = `url(${currentUser.photoUrl})`;
+            userAvatarBadge.style.backgroundSize = 'cover';
+            if (userAvatarText) userAvatarText.textContent = '';
+        } else {
+            if (userAvatarText) userAvatarText.textContent = currentUser.firstName.charAt(0).toUpperCase();
+        }
     }
 
-    // Кнопка оновлення (три крапки / sync)
+    // Явна кнопка оновлення
     if (btnSync) {
         btnSync.addEventListener('click', async () => {
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
             showToast("🔄 Оновлюю дані...");
             await refreshAllData();
-            showToast("✅ Дані успішно оновлено!");
-        });
-    }
-
-    // Клік по стікеру кави
-    if (btnAvatarBadge) {
-        btnAvatarBadge.addEventListener('click', () => {
-            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-            showToast(`☕ Гарного дня, ${currentUser.firstName}! Група ІП-66`);
+            showToast("✅ Дані оновлено!");
         });
     }
 
@@ -150,16 +184,32 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Клік по бузковій картці пари
+    // Бузкова картка пари -> відкриває модальне вікно пари
     if (featuredCard) {
         featuredCard.addEventListener('click', () => {
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-            const activeLink = featuredCard.getAttribute('data-link');
-            if (activeLink) {
-                window.open(activeLink, '_blank');
+            const lessonData = featuredCard._lessonData;
+            if (lessonData) {
+                openLessonModal(lessonData);
             } else {
                 switchToTab('tab-schedule');
             }
+        });
+    }
+
+    function openLessonModal(lesson) {
+        const link = lesson.link_url || '';
+        openModal({
+            tag: `Пара ${lesson.pair_number || 1} (${lesson.time || '10:15'})`,
+            title: lesson.name,
+            time: `${lesson.type || 'Пара'} • ${lesson.location || 'Онлайн'}`,
+            body: `
+                <div style="margin-bottom:8px;"><b>👤 Викладач:</b> ${escapeHtml(lesson.lecturer || 'Не вказано')}</div>
+                ${lesson.link_comment ? `<div style="font-size:12.5px; color:#6D28D9; background:#F3E8FF; padding:8px 12px; border-radius:12px; margin-bottom:8px;">📝 ${escapeHtml(lesson.link_comment)}</div>` : ''}
+                ${!link ? '<div style="color:var(--text-secondary); font-size:13px;">ℹ️ Посилання на онлайн-заняття ще не збережено старостою.</div>' : ''}
+            `,
+            linkUrl: link,
+            linkText: '🚀 Приєднатися (Zoom / Teams / Meet)'
         });
     }
 
@@ -205,24 +255,22 @@ document.addEventListener('DOMContentLoaded', () => {
             if (myItem) {
                 const myIdx = currentQueue.indexOf(myItem) + 1;
                 btnPrimaryActionText.textContent = `✅ Ви у черзі #${myIdx} (${activeSubject})`;
-                btnPrimaryAction.disabled = false;
             } else {
                 const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
                 if (sorted.length === 0) {
                     btnPrimaryActionText.textContent = `✋ Зайняти чергу ${activeSubject} (оберіть лабу)`;
-                    btnPrimaryAction.disabled = false; // Клік підкаже обрати
                 } else {
                     const labsText = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
                     btnPrimaryActionText.textContent = `🚀 Зайняти чергу: ${labsText}`;
-                    btnPrimaryAction.disabled = false;
                 }
             }
+            btnPrimaryAction.disabled = false;
         } else if (currentTab === 'tab-schedule') {
             const firstWithLink = scheduleLessons.find(l => l.link_url);
             if (firstWithLink) {
-                btnPrimaryActionText.textContent = `🔗 Приєднатися: ${firstWithLink.name.substring(0, 24)}...`;
+                btnPrimaryActionText.textContent = `🔗 Приєднатися: ${firstWithLink.name.substring(0, 22)}...`;
             } else {
-                btnPrimaryActionText.textContent = `📅 Розклад ІП-66`;
+                btnPrimaryActionText.textContent = `📅 Розклад пар ІП-66`;
             }
             btnPrimaryAction.disabled = false;
         } else if (currentTab === 'tab-deadlines') {
@@ -245,7 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
                 if (sorted.length === 0) {
-                    showToast("⚠️ Будь ласка, оберіть хоча б одну лабу в сітці 1..9!");
+                    showToast("⚠️ Оберіть номер лаби для захисту у сітці 1..9!");
                     if (labsGridEl) labsGridEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     return;
                 }
@@ -253,7 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (currentTab === 'tab-schedule') {
                 const firstWithLink = scheduleLessons.find(l => l.link_url);
                 if (firstWithLink) {
-                    window.open(firstWithLink.link_url, '_blank');
+                    openLessonModal(firstWithLink);
                 } else {
                     showToast("У розкладі немає збережених Zoom/Meet посилань");
                 }
@@ -305,7 +353,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (priorityPreviewEl) priorityPreviewEl.classList.remove('hidden');
     }
 
-    // Перемикач ОП / АСД
+    // Перемикач предметів черги (ОП / АСД)
     function switchQueueSubject(subj) {
         if (subj === activeSubject) return;
         activeSubject = subj;
@@ -332,7 +380,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Отримання черги
     async function fetchQueue() {
         try {
-            // Отримуємо поточну активну чергу
             const res = await fetch(`/api/queue?subject=${encodeURIComponent(activeSubject)}&chat_id=${chatId}`);
             const data = await res.json();
             if (!data.success) return;
@@ -341,7 +388,7 @@ document.addEventListener('DOMContentLoaded', () => {
             allQueuesData[activeSubject] = currentQueue;
             renderQueueList(currentQueue);
 
-            // Оновлюємо бейджі
+            // Оновлюємо бейджі та міні-картки
             if (activeSubject === 'ОП') {
                 if (badgeOpCount) badgeOpCount.textContent = currentQueue.length;
                 if (miniOpStat) miniOpStat.textContent = `${currentQueue.length}`;
@@ -352,7 +399,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (miniAsdSub) miniAsdSub.textContent = currentQueue.length > 0 ? `Активна черга 🔥` : `Черга вільна`;
             }
 
-            // Також оновлюємо іншу чергу у фоні для міні-картки
             const otherSubj = activeSubject === 'ОП' ? 'АСД' : 'ОП';
             fetchOtherQueueCount(otherSubj);
 
@@ -514,7 +560,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 6. Розклад пар (реальні дані)
+    // 6. Розклад пар (реальні пари + клік відкриває модалку)
     if (btnDayToday) {
         btnDayToday.addEventListener('click', () => {
             scheduleDay = 'today';
@@ -560,30 +606,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
             scheduleLessons = data.lessons;
 
-            // Оновлюємо бузкову картку на основі реального часу
+            // Оновлюємо бузкову картку
             if (day === 'today') {
                 updateFeaturedCardWithLessons(data.lessons);
             }
 
             if (scheduleItemsContainer) {
-                scheduleItemsContainer.innerHTML = data.lessons.map(l => {
-                    const linkBtn = l.link_url
-                        ? `<a href="${l.link_url}" target="_blank" style="color:#7C3AED; font-weight:700; text-decoration:none; font-size:13px; background:#F3E8FF; padding:4px 10px; border-radius:99px;">🔗 Приєднатися</a>`
-                        : `<span style="color:var(--text-muted); font-size:12px;">Без лінка</span>`;
+                scheduleItemsContainer.innerHTML = data.lessons.map((l, idx) => {
+                    const linkBadge = l.link_url
+                        ? `<span style="color:#7C3AED; font-weight:700; font-size:12.5px; background:#F3E8FF; padding:4px 10px; border-radius:99px;">🔗 Zoom / Meet</span>`
+                        : `<span style="color:var(--text-muted); font-size:12px;">Деталі →</span>`;
 
                     return `
-                        <div class="task-item-card">
+                        <div class="task-item-card lesson-clickable-card" data-lesson-idx="${idx}" style="cursor:pointer;">
                             <div class="task-meta-block">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
                                     <span style="font-size:12.5px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
-                                    ${linkBtn}
+                                    ${linkBadge}
                                 </div>
                                 <span class="task-title">${escapeHtml(l.name)}</span>
-                                <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')}</span>
+                                <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')} • ${escapeHtml(l.location || 'Онлайн')}</span>
                             </div>
                         </div>
                     `;
                 }).join('');
+
+                // Клік на картку пари відкриває модальне вікно
+                scheduleItemsContainer.querySelectorAll('.lesson-clickable-card').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const idx = parseInt(el.getAttribute('data-lesson-idx'));
+                        const lesson = scheduleLessons[idx];
+                        if (lesson) openLessonModal(lesson);
+                    });
+                });
             }
             updateHeroSubtitle();
         } catch (err) {
@@ -591,20 +646,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Динамічний розрахунок статусу поточної пари
+    // Розрахунок статусу поточної або наступної пари
     function updateFeaturedCardWithLessons(lessons) {
         if (!featuredCard) return;
 
-        // Поточний час у Києві
         const now = new Date();
         const curMinutes = now.getHours() * 60 + now.getMinutes();
 
-        // Розклад дзвінків КПІ:
-        // 1 пара: 08:30 - 10:05 (510 - 605)
-        // 2 пара: 10:25 - 12:00 (625 - 720)
-        // 3 пара: 12:20 - 13:55 (740 - 835)
-        // 4 пара: 14:15 - 15:50 (855 - 950)
-        // 5 пара: 16:10 - 17:45 (970 - 1065)
         let currentLesson = null;
         let nextLesson = null;
 
@@ -613,7 +661,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const parts = timeStr.split(':');
             if (parts.length >= 2) {
                 const startM = parseInt(parts[0]) * 60 + parseInt(parts[1]);
-                const endM = startM + 95; // 1 пара = 1 год 35 хв
+                const endM = startM + 95; // 1 пара = 95 хв
                 if (curMinutes >= startM && curMinutes <= endM) {
                     currentLesson = l;
                     break;
@@ -624,50 +672,43 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (currentLesson) {
+            featuredCard._lessonData = currentLesson;
             if (featuredStatusTag) featuredStatusTag.textContent = '🔴 Зараз триває пара';
             if (featuredTimePill) featuredTimePill.textContent = currentLesson.time || 'Триває';
             if (featuredCardTitle) featuredCardTitle.textContent = currentLesson.name;
-            if (featuredCardMeta) featuredCardMeta.textContent = `${currentLesson.type || 'Пара'} • ${currentLesson.lecturer || 'КПІ'}`;
-            if (currentLesson.link_url) {
-                featuredCard.setAttribute('data-link', currentLesson.link_url);
-            }
+            if (featuredCardMeta) featuredCardMeta.textContent = `${currentLesson.type || 'Пара'} • ${currentLesson.lecturer || 'КПІ'} (натисніть)`;
         } else if (nextLesson) {
+            featuredCard._lessonData = nextLesson;
             if (featuredStatusTag) featuredStatusTag.textContent = '⏳ Наступна пара';
             if (featuredTimePill) featuredTimePill.textContent = nextLesson.time || 'Сьогодні';
             if (featuredCardTitle) featuredCardTitle.textContent = nextLesson.name;
-            if (featuredCardMeta) featuredCardMeta.textContent = `${nextLesson.type || 'Пара'} • ${nextLesson.lecturer || 'КПІ'}`;
-            if (nextLesson.link_url) {
-                featuredCard.setAttribute('data-link', nextLesson.link_url);
-            }
+            if (featuredCardMeta) featuredCardMeta.textContent = `${nextLesson.type || 'Пара'} • ${nextLesson.lecturer || 'КПІ'} (натисніть)`;
         } else {
-            // Пари на сьогодні завершено
+            featuredCard._lessonData = lessons[0];
             if (featuredStatusTag) featuredStatusTag.textContent = '✨ Пари на сьогодні завершено';
             if (featuredTimePill) featuredTimePill.textContent = 'Відпочинок';
             if (featuredCardTitle) featuredCardTitle.textContent = 'Всі заняття на сьогодні пройшли!';
             if (featuredCardMeta) featuredCardMeta.textContent = 'Перевірте розклад на завтра або здайте лабу в черзі 🎯';
-            featuredCard.removeAttribute('data-link');
         }
     }
 
     function updateFeaturedCardNoLessons() {
         if (!featuredCard) return;
-        if (featuredStatusTag) featuredStatusTag.textContent = '🎉 Вихідний / Пар немає';
+        featuredCard._lessonData = null;
+        if (featuredStatusTag) featuredStatusTag.textContent = '🎉 Вихідний';
         if (featuredTimePill) featuredTimePill.textContent = 'Вільний день';
         if (featuredCardTitle) featuredCardTitle.textContent = 'Сьогодні пар немає';
         if (featuredCardMeta) featuredCardMeta.textContent = 'Відпочивайте або готуйтеся до лабораторних робіт!';
-        featuredCard.removeAttribute('data-link');
     }
 
-    // 7. Справжні дедлайни з Classroom
-    let deadlinesCache = [];
-
+    // 7. Справжні актуальні дедлайни з Classroom (відфільтровані, з чистими назвами предметів)
     async function fetchDeadlines() {
         if (!deadlinesItemsContainer) return;
         try {
             const res = await fetch('/api/deadlines');
             const data = await res.json();
             if (!data.success || !data.deadlines || data.deadlines.length === 0) {
-                deadlinesItemsContainer.innerHTML = '<div style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">✅ Всі дедлайни закриті! Нових завдань немає.</div>';
+                deadlinesItemsContainer.innerHTML = '<div style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">✅ Всі актуальні дедлайни закриті! Нових завдань немає.</div>';
                 if (deadlinesCountBadge) deadlinesCountBadge.textContent = '0';
                 return;
             }
@@ -675,30 +716,29 @@ document.addEventListener('DOMContentLoaded', () => {
             deadlinesCache = data.deadlines;
             if (deadlinesCountBadge) deadlinesCountBadge.textContent = data.total || deadlinesCache.length;
 
-            deadlinesItemsContainer.innerHTML = deadlinesCache.map(d => {
-                const linkAttr = d.alternate_link ? `data-link="${escapeHtml(d.alternate_link)}"` : '';
-                const dueText = d.due_time ? `⏰ Дедлайн: ${d.due_time.substring(0, 16)}` : 'Без дедлайну';
-                const summaryText = d.ai_summary ? `<div style="font-size:12px; color:var(--text-secondary); margin-top:4px;">💡 ${escapeHtml(d.ai_summary)}</div>` : '';
+            deadlinesItemsContainer.innerHTML = deadlinesCache.map((d, idx) => {
+                const dueText = d.due_formatted ? `⏰ Дедлайн: ${d.due_formatted}` : (d.due_time ? `⏰ ${d.due_time}` : 'Без дедлайну');
 
                 return `
-                    <div class="task-item-card" ${linkAttr} style="cursor:pointer;">
+                    <div class="task-item-card deadline-clickable-card" data-dl-idx="${idx}" style="cursor:pointer;">
                         <div class="custom-checkbox">
                             <svg viewBox="0 0 24 24" fill="none">
                                 <polyline points="20 6 9 17 4 12"></polyline>
                             </svg>
                         </div>
                         <div class="task-meta-block">
-                            <span class="task-due-date" style="color:#7C3AED; font-weight:700;">${escapeHtml(d.course_name || 'Курс')}</span>
+                            <span class="task-due-date" style="color:#7C3AED; font-weight:800; font-size:12px; text-transform:uppercase;">
+                                ${escapeHtml(d.course_clean || d.course_id || 'Курс')}
+                            </span>
                             <span class="task-title" style="margin:2px 0;">${escapeHtml(d.title)}</span>
                             <span class="task-due-date">${escapeHtml(dueText)}</span>
-                            ${summaryText}
                         </div>
                     </div>
                 `;
             }).join('');
 
-            // Клік по чекбоксу відмічає виконання
-            deadlinesItemsContainer.querySelectorAll('.task-item-card').forEach(el => {
+            // Клік по чекбоксу відмічає виконання, клік по картці відкриває модалку
+            deadlinesItemsContainer.querySelectorAll('.deadline-clickable-card').forEach(el => {
                 const checkbox = el.querySelector('.custom-checkbox');
                 if (checkbox) {
                     checkbox.addEventListener('click', (e) => {
@@ -708,8 +748,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     });
                 }
                 el.addEventListener('click', () => {
-                    const link = el.getAttribute('data-link');
-                    if (link) window.open(link, '_blank');
+                    const idx = parseInt(el.getAttribute('data-dl-idx'));
+                    const dl = deadlinesCache[idx];
+                    if (dl) {
+                        openModal({
+                            tag: dl.course_clean || dl.course_id || 'Завдання',
+                            title: dl.title,
+                            time: dl.due_formatted ? `⏰ Дедлайн: ${dl.due_formatted}` : 'Без дедлайну',
+                            body: `
+                                ${dl.ai_summary ? `<div style="background:#F3E8FF; padding:10px 14px; border-radius:14px; margin-bottom:12px; font-size:13.5px; color:#581C87; line-height:1.4;"><b>💡 Короткий зміст (AI):</b><br>${escapeHtml(dl.ai_summary)}</div>` : ''}
+                                ${dl.description ? `<div style="font-size:13px; color:#475569; max-height:140px; overflow-y:auto; line-height:1.4;">${escapeHtml(dl.description)}</div>` : ''}
+                            `,
+                            linkUrl: dl.alternate_link || '#',
+                            linkText: '🚀 Відкрити в Google Classroom'
+                        });
+                    }
                 });
             });
 
@@ -727,7 +780,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const totalLessons = scheduleLessons.length;
         const totalDeadlines = deadlinesCache.length;
 
-        heroSubtitleEl.textContent = `У чергах: ${totalQueued} студентів • Пар сьогодні: ${totalLessons} • Дедлайнів: ${totalDeadlines}`;
+        heroSubtitleEl.textContent = `У чергах: ${totalQueued} • Пар сьогодні: ${totalLessons} • Дедлайнів: ${totalDeadlines}`;
     }
 
     async function refreshAllData() {

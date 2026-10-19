@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>🌸 ІП-66 Портал</title>
+    <title>ІП-66 Портал</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/webapp/app.css">
@@ -14,44 +14,39 @@
 </head>
 <body>
     <div id="app" class="app-container">
-        <!-- 1. Верхній бар (Закрити | 🌸 ІП-66 Портал | •••) -->
-        <header class="top-nav-bar">
-            <button class="nav-text-btn" id="btn-close-app">Закрити</button>
-            <div class="top-nav-title">
-                <span class="flower-icon">🌸</span>
-                <span>ІП-66 Портал</span>
-            </div>
-            <button class="nav-more-btn" id="btn-sync" title="Оновити дані">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                    <circle cx="5" cy="12" r="2.2"/>
-                    <circle cx="12" cy="12" r="2.2"/>
-                    <circle cx="19" cy="12" r="2.2"/>
-                </svg>
-            </button>
-        </header>
-
-        <!-- 2. Hero-блок привітання -->
-        <section class="hero-section">
+        <!-- 1. Hero-блок (Привітання + Невипадкова аватарка + Кнопка оновлення) -->
+        <section class="hero-section" style="padding-top: 10px;">
             <div class="hero-text-block">
                 <h1 class="hero-greeting" id="user-greeting">Привіт, студент! ✨</h1>
                 <p class="hero-subtitle" id="hero-subtitle">Завантаження розкладу та черг...</p>
             </div>
-            <button class="hero-avatar-badge" id="btn-avatar-badge" title="Профіль студента">
-                <div class="sticker-emoji" id="user-avatar">☕</div>
-            </button>
+            
+            <div class="hero-actions-col">
+                <!-- Неклікабельна аватарка користувача -->
+                <div class="user-avatar-badge" id="user-avatar-badge" aria-label="Аватар користувача">
+                    <span id="user-avatar-text">С</span>
+                </div>
+                <!-- Явна кнопка швидкого оновлення -->
+                <button class="action-sync-btn" id="btn-sync" title="Оновити дані">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                    </svg>
+                    <span>Оновити</span>
+                </button>
+            </div>
         </section>
 
-        <!-- 3. Динамічна бузкова картка пари або активного статусу -->
-        <section class="featured-card" id="featured-card">
+        <!-- 2. Динамічна бузкова картка поточної/наступної пари -->
+        <section class="featured-card" id="featured-card" role="button" tabindex="0">
             <div class="card-top-row">
                 <span class="card-status-tag" id="featured-status-tag">Розклад пар</span>
                 <span class="card-time-pill" id="featured-time-pill">Сьогодні</span>
             </div>
             <h2 class="featured-card-title" id="featured-card-title">Завантаження...</h2>
-            <p class="featured-card-meta" id="featured-card-meta">Натисніть для перегляду деталей</p>
+            <p class="featured-card-meta" id="featured-card-meta">Натисніть для перегляду посилання</p>
         </section>
 
-        <!-- 4. Дві інтерактивні пастельні міні-картки: Черга ОП (М'ятна) та Черга АСД (Пісочна) -->
+        <!-- 3. Дві інтерактивні пастельні міні-картки: Черга ОП (М'ятна) та Черга АСД (Пісочна) -->
         <section class="mini-cards-grid">
             <!-- Ліва картка: М'ятна (Черга ОП) -->
             <div class="mini-card mint-card" id="mini-card-op" role="button" tabindex="0">
@@ -68,7 +63,7 @@
             </div>
         </section>
 
-        <!-- 5. Перемикач розділів (Капсульні таби) -->
+        <!-- 4. Перемикач розділів (Капсульні таби) -->
         <div class="segmented-nav">
             <button class="seg-pill-btn active" data-tab="tab-queue">
                 ✋ Жива черга
@@ -77,11 +72,11 @@
                 📅 Розклад пар
             </button>
             <button class="seg-pill-btn" data-tab="tab-deadlines">
-                ⏳ Дедлайни
+                ⏳ Актуальні дедлайни
             </button>
         </div>
 
-        <!-- РОЗДІЛ 1: Жива черга на захист (ОП / АСД) - ГОЛОВНИЙ ФОКУС -->
+        <!-- РОЗДІЛ 1: Жива черга на захист (ОП / АСД) -->
         <section id="tab-queue" class="tab-content active">
             <div class="queue-mode-box">
                 <!-- Перемикач предметів ОП / АСД -->
@@ -140,7 +135,7 @@
             </div>
         </section>
 
-        <!-- РОЗДІЛ 2: Розклад пар -->
+        <!-- РОЗДІЛ 2: Розклад пар (Клікабельні картки з відкриттям модалки та лінка) -->
         <section id="tab-schedule" class="tab-content">
             <div class="queue-mode-box">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
@@ -150,6 +145,10 @@
                         <button id="btn-day-tomorrow" class="subj-pill-badge" style="border:none; cursor:pointer; background:#F1F5F9; color:#64748B; font-weight:700; padding:6px 12px; border-radius:99px;">Завтра</button>
                     </div>
                 </div>
+
+                <p style="font-size:12.5px; color:var(--text-secondary); margin-bottom:12px;">
+                    💡 <i>Натисніть на будь-яку пару, щоб відкрити посилання на Zoom/Meet або переглянути деталі:</i>
+                </p>
 
                 <div id="schedule-loading" class="hidden" style="text-align:center; padding:20px; color:var(--text-muted);">
                     Завантаження розкладу...
@@ -161,24 +160,52 @@
             </div>
         </section>
 
-        <!-- РОЗДІЛ 3: Дедлайни Google Classroom -->
+        <!-- РОЗДІЛ 3: Актуальні дедлайни Classroom -->
         <section id="tab-deadlines" class="tab-content">
             <div class="queue-mode-box">
-                <div class="section-header-row" style="margin-bottom:14px;">
-                    <span class="section-title">Активні дедлайни</span>
+                <div class="section-header-row" style="margin-bottom:10px;">
+                    <span class="section-title">Актуальні дедлайни</span>
                     <span class="subj-pill-badge" id="deadlines-count-badge">0</span>
                 </div>
+
+                <p style="font-size:12.5px; color:var(--text-secondary); margin-bottom:14px;">
+                    🎯 <i>Тільки активні завдання з чітко вказаними предметами:</i>
+                </p>
+
                 <div class="tasks-list" id="deadlines-items-container">
                     <!-- Справжні завдання з Classroom -->
                 </div>
             </div>
         </section>
 
-        <!-- 6. Нижня головна кнопка дії (Midnight Pill) -->
+        <!-- 5. Нижня кнопка дії (Midnight Pill) -->
         <div class="bottom-action-wrapper">
             <button class="primary-pill-btn" id="btn-primary-action">
                 <span id="btn-primary-action-text">✋ Зайняти чергу</span>
             </button>
+        </div>
+    </div>
+
+    <!-- Модальне вікно деталей пари / дедлайну -->
+    <div id="modal-backdrop" class="modal-backdrop hidden">
+        <div class="modal-sheet" id="modal-sheet">
+            <div class="modal-drag-handle"></div>
+            <div class="modal-header">
+                <span class="modal-tag" id="modal-tag">Пара</span>
+                <button class="modal-close-icon" id="btn-close-modal">✕</button>
+            </div>
+            <h3 class="modal-title" id="modal-title">Назва предмета</h3>
+            <div class="modal-meta-row" id="modal-meta-row">
+                <span id="modal-time">10:15 - 11:45</span> • <span id="modal-type">Лекція</span>
+            </div>
+            <div class="modal-body-content" id="modal-body-content">
+                <!-- Опис або деталі -->
+            </div>
+            <div class="modal-actions-row">
+                <a href="#" id="modal-primary-link" target="_blank" class="modal-primary-btn">
+                    🚀 Приєднатися до заняття
+                </a>
+            </div>
         </div>
     </div>
 

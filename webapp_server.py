@@ -191,6 +191,7 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     # --- REST API: Schedule ---
     async def handle_api_schedule(request):
         try:
+            from links_manager import get_lesson_link_info
             day_param = request.query.get("day", "today").strip().lower()
             now_kyiv = datetime.now(KYIV_TZ)
 
@@ -200,17 +201,17 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 target_date = now_kyiv.date()
 
             week_num, day_name, lessons = await get_lessons_for_date(KPI_GROUP_ID, target_date)
-            links = load_links()
 
-            # Додаємо прямі посилання до кожної пари
+            # Додаємо прямі посилання до кожної пари за назвою та типом
             enriched_lessons = []
             for l in lessons:
-                subj = l.get("subject", "")
-                link_info = links.get(subj, {})
+                lname = l.get("name", "")
+                ltype = l.get("type", "")
+                link_info = get_lesson_link_info(lname, ltype)
                 enriched_lessons.append({
                     **l,
-                    "link_url": link_info.get("url", ""),
-                    "link_comment": link_info.get("comment", "")
+                    "link_url": link_info.get("url", "").strip(),
+                    "link_comment": link_info.get("comment", "").strip()
                 })
 
             return json_response_cors({
@@ -228,10 +229,57 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     async def handle_api_deadlines(request):
         try:
             assignments = await get_active_assignments_db()
+            now_kyiv = datetime.now(KYIV_TZ)
+
+            clean_deadlines = []
+            for a in assignments:
+                title_lower = (a.get("title") or "").lower()
+                # Фільтруємо пробні або тестові завдання
+                if any(bad in title_lower for bad in ["пробне", "тренувальн", "демо-завдання"]):
+                    continue
+
+                due_str = a.get("due_date", "")
+                if not due_str or due_str == "Без дедлайну":
+                    continue
+
+                # Перевіряємо актуальність дати
+                try:
+                    if len(due_str) == 10:
+                        due_dt = datetime.strptime(due_str, "%Y-%m-%d").replace(hour=23, minute=59, tzinfo=KYIV_TZ)
+                    else:
+                        due_dt = datetime.strptime(due_str[:16], "%Y-%m-%d %H:%M").replace(tzinfo=KYIV_TZ)
+
+                    # Не показуємо старі минулі дедлайни (понад 2 дні тому)
+                    if due_dt < now_kyiv - timedelta(days=2):
+                        continue
+                except Exception:
+                    continue
+
+                # Зрозуміла назва предмету
+                course_raw = a.get("course_id") or ""
+                course_clean = course_raw
+                if "ОП" in course_raw:
+                    course_clean = "Основи програмування (ОП)"
+                elif "КДМ" in course_raw:
+                    course_clean = "Дискретна математика (КДМ)"
+                elif "АСД" in course_raw:
+                    course_clean = "Алгоритми та структури даних (АСД)"
+                elif any(m in course_raw for m in ["Мат", "Матем", "ЛААГ"]):
+                    course_clean = "Вища математика"
+
+                clean_deadlines.append({
+                    **a,
+                    "course_clean": course_clean,
+                    "due_time": due_dt.strftime("%Y-%m-%d %H:%M"),
+                    "due_formatted": due_dt.strftime("%d.%m о %H:%M")
+                })
+
+            clean_deadlines.sort(key=lambda x: x["due_time"])
+
             return json_response_cors({
                 "success": True,
-                "deadlines": assignments,
-                "total": len(assignments)
+                "deadlines": clean_deadlines,
+                "total": len(clean_deadlines)
             })
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
