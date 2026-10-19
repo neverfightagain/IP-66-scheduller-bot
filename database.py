@@ -432,9 +432,25 @@ async def init_db():
                 UNIQUE (chat_id, subject, variant_or_topic)
             );
         """)
+        # 11. Таблиця списку студентів групи (справжні імена та прив'язка до Telegram)
         await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_topic_claims_chat_subj
-            ON topic_claims (chat_id, subject);
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                real_name TEXT NOT NULL,
+                telegram_username TEXT,
+                telegram_id INTEGER,
+                subgroup INTEGER DEFAULT 1,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_students_username
+            ON students (telegram_username);
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_students_tg_id
+            ON students (telegram_id);
         """)
 
         await db.commit()
@@ -833,6 +849,14 @@ async def join_queue_db(
     clean_name = (user_name or "Студент").strip()[:100]
     priority, clean_lab = parse_lab_info(lab_number)
 
+    # Автоматична заміна на справжнє ім'я зі списку групи, якщо студент є в базі
+    try:
+        real_name_match = await find_student_real_name_db(user_id=user_id, telegram_username=username)
+        if real_name_match:
+            clean_name = real_name_match
+    except Exception:
+        pass
+
     async with get_db() as db:
         # Перевірка чи вже є у черзі
         async with db.execute("""
@@ -1182,5 +1206,120 @@ async def get_free_variants_db(chat_id: int, subject: str, max_variants: int = 3
 
     free_list = [i for i in range(1, max_variants + 1) if i not in taken_numbers]
     return free_list
+
+
+# ==============================================================================
+# 11. Студентський список групи (Roster: реальні імена та прив'язка до Telegram)
+# ==============================================================================
+
+async def add_or_update_student_db(
+    real_name: str,
+    telegram_username: str = None,
+    telegram_id: int = None,
+    subgroup: int = 1,
+    notes: str = ""
+) -> bool:
+    """Додати або оновити студента в списку групи."""
+    clean_real_name = (real_name or "").strip()
+    if not clean_real_name:
+        return False
+    clean_username = telegram_username.lstrip("@").strip().lower() if telegram_username else None
+
+    async with get_db() as db:
+        existing_id = None
+        if telegram_id:
+            async with db.execute("SELECT id FROM students WHERE telegram_id = ?", (telegram_id,)) as cur:
+                row = await cur.fetchone()
+                if row:
+                    existing_id = row["id"]
+
+        if not existing_id and clean_username:
+            async with db.execute("SELECT id FROM students WHERE LOWER(telegram_username) = ?", (clean_username,)) as cur:
+                row = await cur.fetchone()
+                if row:
+                    existing_id = row["id"]
+
+        if not existing_id:
+            async with db.execute("SELECT id FROM students WHERE LOWER(real_name) = ?", (clean_real_name.lower(),)) as cur:
+                row = await cur.fetchone()
+                if row:
+                    existing_id = row["id"]
+
+        if existing_id:
+            await db.execute("""
+                UPDATE students
+                SET real_name = ?,
+                    telegram_username = COALESCE(?, telegram_username),
+                    telegram_id = COALESCE(?, telegram_id),
+                    subgroup = ?,
+                    notes = ?
+                WHERE id = ?
+            """, (clean_real_name, clean_username, telegram_id, subgroup, notes, existing_id))
+        else:
+            await db.execute("""
+                INSERT INTO students (real_name, telegram_username, telegram_id, subgroup, notes)
+                VALUES (?, ?, ?, ?, ?)
+            """, (clean_real_name, clean_username, telegram_id, subgroup, notes))
+
+        await db.commit()
+        return True
+
+
+async def get_all_students_db() -> list[dict]:
+    """Отримати повний список студентів групи, відсортований за підгрупою та іменем."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, real_name, telegram_username, telegram_id, subgroup, notes, created_at
+            FROM students
+            ORDER BY subgroup ASC, real_name ASC
+        """) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def find_student_real_name_db(user_id: int = None, telegram_username: str = None) -> str | None:
+    """Знайти справжнє ім'я студента за telegram_id або username."""
+    clean_uname = telegram_username.lstrip("@").strip().lower() if telegram_username else None
+    async with get_db() as db:
+        if user_id:
+            async with db.execute("SELECT real_name FROM students WHERE telegram_id = ? LIMIT 1", (user_id,)) as cur:
+                row = await cur.fetchone()
+                if row and row["real_name"]:
+                    return row["real_name"]
+
+        if clean_uname:
+            async with db.execute("SELECT id, real_name, telegram_id FROM students WHERE LOWER(telegram_username) = ? LIMIT 1", (clean_uname,)) as cur:
+                row = await cur.fetchone()
+                if row and row["real_name"]:
+                    # Автоматично запам'ятовуємо telegram_id для подальших входів
+                    if user_id and not row.get("telegram_id"):
+                        try:
+                            await db.execute("UPDATE students SET telegram_id = ? WHERE id = ?", (user_id, row["id"]))
+                            await db.commit()
+                        except Exception:
+                            pass
+                    return row["real_name"]
+
+    return None
+
+
+async def bulk_import_students_db(students_list: list[dict]) -> int:
+    """Масовий імпорт списку студентів з таблиці/словника."""
+    count = 0
+    for s in students_list:
+        rname = s.get("real_name") or s.get("name") or ""
+        uname = s.get("telegram_username") or s.get("username")
+        tg_id = s.get("telegram_id") or s.get("user_id")
+        try:
+            subg = int(s.get("subgroup") or 1)
+        except Exception:
+            subg = 1
+        notes = s.get("notes") or ""
+        if rname:
+            ok = await add_or_update_student_db(rname, uname, tg_id, subg, notes)
+            if ok:
+                count += 1
+    return count
+
 
 

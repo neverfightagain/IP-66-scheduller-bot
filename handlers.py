@@ -1018,6 +1018,68 @@ async def cmd_clear_queue(message: Message):
     await safe_answer(message, f"🧹 Чергу з предмету <b>{subject}</b> очищено! (Видалено записів: {count})")
 
 
+@router.message(Command("students", "people", "roster"))
+@router.message(F.text.casefold().in_(["список людей", "список групи", "студенти", "одногрупники"]))
+async def cmd_students_list(message: Message):
+    """Показати список студентів групи з реальними іменами та Telegram-тегами."""
+    from database import get_all_students_db
+    students = await get_all_students_db()
+    if not students:
+        await safe_answer(
+            message,
+            "👥 <b>Список студентів групи ІП-66:</b>\n\n"
+            "<i>Список наразі порожній. Надішліть мені посилання на Google Таблицю або скопіюйте список текстом, і я одразу завантажу всіх одногрупників!</i>"
+        )
+        return
+
+    text_lines = ["👥 <b>Список студентів групи ІП-66:</b>\n"]
+    by_subgroup = {}
+    for s in students:
+        sg = s.get("subgroup") or 1
+        by_subgroup.setdefault(sg, []).append(s)
+
+    for sg in sorted(by_subgroup.keys()):
+        text_lines.append(f"<b>🔹 Підгрупа {sg}:</b>")
+        for idx, s in enumerate(by_subgroup[sg], 1):
+            uname_str = f" (@{s['telegram_username']})" if s.get("telegram_username") else ""
+            notes_str = f" — <i>{s['notes']}</i>" if s.get("notes") else ""
+            text_lines.append(f"  {idx}. <b>{escape_html_text(s['real_name'])}</b>{uname_str}{notes_str}")
+        text_lines.append("")
+
+    text_lines.append("<i>💡 Справжні імена автоматично підставляються в живу чергу та Telegram Mini App.</i>")
+    await safe_answer(message, "\n".join(text_lines))
+
+
+@router.message(Command("addstudent"))
+async def cmd_add_student(message: Message):
+    """Додати або оновити студента: /addstudent Іванов Іван @username [підгрупа 1 або 2]"""
+    from database import add_or_update_student_db
+    parts = message.text.split()[1:]
+    if not parts:
+        await safe_answer(message, "ℹ️ Формат: <code>/addstudent Прізвище Ім'я @username [підгрупа]</code>")
+        return
+
+    subgroup = 1
+    if parts[-1].isdigit() and int(parts[-1]) in (1, 2):
+        subgroup = int(parts.pop())
+
+    uname = None
+    for p in list(parts):
+        if p.startswith("@"):
+            uname = p
+            parts.remove(p)
+            break
+
+    real_name = " ".join(parts).strip()
+    if not real_name:
+        await safe_answer(message, "❌ Будь ласка, вкажіть реальне ім'я студента!")
+        return
+
+    await add_or_update_student_db(real_name=real_name, telegram_username=uname, subgroup=subgroup)
+    uname_info = f" (@{uname.lstrip('@')})" if uname else ""
+    await safe_answer(message, f"✅ Студента <b>{escape_html_text(real_name)}</b>{uname_info} додано до {subgroup}-ї підгрупи!")
+
+
 @router.callback_query(F.data.startswith("q:"))
 async def cb_queue_actions(callback: CallbackQuery):
     from database import join_queue_db, leave_queue_db, next_in_queue_db, clear_queue_db, get_active_queue_db, set_queue_message_id_db

@@ -23,6 +23,8 @@ from database import (
     clear_queue_db,
     get_queue_message_id_db,
     get_active_assignments_db,
+    get_all_students_db,
+    find_student_real_name_db,
 )
 from kpi_api import get_lessons_for_date
 from links_manager import load_links
@@ -329,6 +331,33 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
 
+    # --- REST API: Students Roster ---
+    async def handle_api_students_get(request):
+        try:
+            students = await get_all_students_db()
+            return json_response_cors({
+                "success": True,
+                "students": students,
+                "total": len(students)
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_student_resolve(request):
+        try:
+            user_id_str = request.query.get("user_id", "0").strip()
+            user_id = int(user_id_str) if user_id_str.lstrip("-").isdigit() and int(user_id_str) != 0 else None
+            username = request.query.get("username", "").strip() or None
+
+            real_name = await find_student_real_name_db(user_id=user_id, telegram_username=username)
+            return json_response_cors({
+                "success": True,
+                "real_name": real_name,
+                "found": real_name is not None
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
     # Реєстрація роутів
     app.router.add_get("/", handle_ping)
     app.router.add_get("/health", handle_ping)
@@ -343,6 +372,8 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     app.router.add_post("/api/queue/next", handle_api_queue_next)
     app.router.add_get("/api/schedule", handle_api_schedule)
     app.router.add_get("/api/deadlines", handle_api_deadlines)
+    app.router.add_get("/api/students", handle_api_students_get)
+    app.router.add_get("/api/student/resolve", handle_api_student_resolve)
 
     # Static files
     if WEBAPP_DIR.exists():

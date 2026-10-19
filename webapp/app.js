@@ -158,6 +158,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Розпізнавання реального імені користувача з реєстру групи
+    async function resolveStudentIdentity() {
+        try {
+            const res = await fetch(`/api/student/resolve?user_id=${currentUser.id}&username=${encodeURIComponent(currentUser.username || '')}`);
+            const data = await res.json();
+            if (data.success && data.real_name) {
+                currentUser.realName = data.real_name;
+                currentUser.name = data.real_name;
+                const firstName = data.real_name.split(' ')[0] || data.real_name;
+                currentUser.firstName = firstName;
+                if (userGreetingEl) {
+                    userGreetingEl.textContent = `Привіт, ${firstName}! ✨`;
+                }
+                if (userAvatarText && !currentUser.photoUrl) {
+                    userAvatarText.textContent = firstName.charAt(0).toUpperCase();
+                }
+            }
+        } catch (e) {
+            // Резервний варіант: залишаємо Telegram-ім'я
+        }
+    }
+    resolveStudentIdentity();
+
     // Явна кнопка оновлення
     if (btnSync) {
         btnSync.addEventListener('click', async () => {

@@ -156,6 +156,50 @@ class TestWebAppServer(AioHTTPTestCase):
         for dl in data_dead["deadlines"]:
             self.assertIn("alternate_link", dl)
 
+    async def test_students_roster_and_name_resolution(self):
+        from database import add_or_update_student_db, get_all_students_db, find_student_real_name_db
+        # 1. Додавання студента
+        ok = await add_or_update_student_db("Шевченко Тарас", "taras_tg", 555444, subgroup=1)
+        self.assertTrue(ok)
+
+        # 2. Пошук реального імені
+        real_by_id = await find_student_real_name_db(user_id=555444)
+        self.assertEqual(real_by_id, "Шевченко Тарас")
+
+        real_by_uname = await find_student_real_name_db(telegram_username="taras_tg")
+        self.assertEqual(real_by_uname, "Шевченко Тарас")
+
+        # 3. GET /api/students
+        resp = await self.client.request("GET", "/api/students")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["success"])
+        self.assertTrue(any(s["real_name"] == "Шевченко Тарас" for s in data["students"]))
+
+        # 4. GET /api/student/resolve
+        resp_resolve = await self.client.request("GET", "/api/student/resolve?user_id=555444")
+        self.assertEqual(resp_resolve.status, 200)
+        data_resolve = await resp_resolve.json()
+        self.assertTrue(data_resolve["success"])
+        self.assertEqual(data_resolve["real_name"], "Шевченко Тарас")
+
+        # 5. Join черги із заміною імені
+        join_payload = {
+            "chat_id": self.chat_id,
+            "subject": self.subject,
+            "user_id": 555444,
+            "user_name": "NicknameNotInRealLife",
+            "username": "taras_tg",
+            "lab_number": "Лаба 1"
+        }
+        resp_join = await self.client.request("POST", "/api/queue/join", json=join_payload)
+        self.assertEqual(resp_join.status, 200)
+
+        # Перевіряємо що в черзі збережено реальне ім'я
+        resp_q = await self.client.request("GET", f"/api/queue?subject={self.subject}&chat_id={self.chat_id}")
+        data_q = await resp_q.json()
+        self.assertEqual(data_q["items"][0]["user_name"], "Шевченко Тарас")
+
 
 if __name__ == "__main__":
     unittest.main()
