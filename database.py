@@ -493,10 +493,13 @@ async def init_db():
                     row = await cur.fetchone()
                     if row and row["cnt"] == 0:
                         for item in roster_data:
+                            notes = item.get("notes", "")
+                            if not notes and item.get("birthdate"):
+                                notes = f"Д/Н: {item['birthdate']}"
                             await db.execute("""
                                 INSERT INTO students (real_name, telegram_username, subgroup, notes)
                                 VALUES (?, ?, ?, ?)
-                            """, (item["real_name"], item.get("telegram_username"), item.get("subgroup", 1), item.get("notes", "")))
+                            """, (item["real_name"], item.get("telegram_username"), item.get("subgroup", 1), notes))
                         await db.commit()
                         logger.info(f"Успішно імпортовано {len(roster_data)} студентів з реєстру.")
             except Exception as e_rost:

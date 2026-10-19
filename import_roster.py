@@ -40,6 +40,8 @@ async def main():
         uname = s.get("telegram_username")
         subgroup = s.get("subgroup", 1 if i <= 17 else 2)
         notes = s.get("notes", "")
+        if not notes and s.get("birthdate"):
+            notes = f"Д/Н: {s['birthdate']}"
 
         ok = await add_or_update_student_db(
             real_name=rname,
