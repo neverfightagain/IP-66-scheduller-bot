@@ -15,11 +15,14 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
         await init_db()
         self.chat_id = 999001
         self.subject = "Тест-АСД"
-        # Очистити перед тестом
-        await clear_queue_db(self.chat_id, self.subject)
+        async with get_db() as db:
+            await db.execute("DELETE FROM lab_queues WHERE chat_id = ?", (self.chat_id,))
+            await db.commit()
 
     async def asyncTearDown(self):
-        await clear_queue_db(self.chat_id, self.subject)
+        async with get_db() as db:
+            await db.execute("DELETE FROM lab_queues WHERE chat_id = ?", (self.chat_id,))
+            await db.commit()
 
     async def test_join_and_fifo_order(self):
         # 1. Студент 1 стає в чергу
@@ -177,7 +180,48 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
         await clear_queue_db(self.chat_id, "ОП")
         await clear_queue_db(self.chat_id, "АСД")
 
+    async def test_physical_deletion_no_dead_rows(self):
+        # Перевірка: при leave, next та clear записи дійсно видаляються, а не засмічують базу статусами left/done/cleared
+        await join_queue_db(self.chat_id, "ОП", 301, "Тест 1", "test1", "Лаба 1")
+        await join_queue_db(self.chat_id, "ОП", 302, "Тест 2", "test2", "Лаба 2")
+
+        # Перевіряємо прямим SQL-запитом кількість рядків у таблиці
+        async with get_db() as db:
+            async with db.execute("SELECT COUNT(*) as cnt FROM lab_queues WHERE chat_id = ? AND subject = 'ОП'", (self.chat_id,)) as c:
+                row = await c.fetchone()
+                self.assertEqual(row["cnt"], 2)
+
+        # Студент 301 виходить з черги -> рядок фізично видаляється
+        await leave_queue_db(self.chat_id, "ОП", 301)
+        async with get_db() as db:
+            async with db.execute("SELECT COUNT(*) as cnt FROM lab_queues WHERE chat_id = ? AND subject = 'ОП'", (self.chat_id,)) as c:
+                row = await c.fetchone()
+                self.assertEqual(row["cnt"], 1)
+
+        # Викликаємо студента 302 на захист (next_in_queue) -> рядок видаляється
+        st = await next_in_queue_db(self.chat_id, "ОП")
+        self.assertIsNotNone(st)
+        self.assertEqual(st["user_id"], 302)
+        async with get_db() as db:
+            async with db.execute("SELECT COUNT(*) as cnt FROM lab_queues WHERE chat_id = ? AND subject = 'ОП'", (self.chat_id,)) as c:
+                row = await c.fetchone()
+                self.assertEqual(row["cnt"], 0)
+
+        # Тест оновлення номеру лаби без дублювання записів
+        await join_queue_db(self.chat_id, "ОП", 303, "Тест 3", "test3", "Лаба 1")
+        ok_upd, msg_upd, _ = await join_queue_db(self.chat_id, "ОП", 303, "Тест 3", "test3", "Лаба 2")
+        self.assertTrue(ok_upd)
+        self.assertIn("оновлено", msg_upd)
+
+        # Рядок усе ще 1, але лаба тепер "Лаба 2"
+        q = await get_active_queue_db(self.chat_id, "ОП")
+        self.assertEqual(len(q), 1)
+        self.assertEqual(q[0]["lab_number"], "Лаба 2")
+
+        await clear_queue_db(self.chat_id, "ОП")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
