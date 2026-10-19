@@ -3,174 +3,173 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>ІП-66 Студентський Портал</title>
+    <title>🌸 Мой Кампус</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/webapp/app.css">
-    <!-- Font -->
+    <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
     <div id="app" class="app-container">
-        <!-- Top App Header -->
-        <header class="app-header">
-            <div class="user-profile">
-                <div class="user-avatar" id="user-avatar">?</div>
-                <div class="user-info">
-                    <span class="user-greeting" id="user-greeting">Привіт, студент!</span>
-                    <span class="user-group">Група ІП-66 • ФІОТ</span>
-                </div>
+        <!-- 1. Top Navigation Bar (Закрыть | 🌸 Мой Кампус | •••) -->
+        <header class="top-nav-bar">
+            <button class="nav-text-btn" id="btn-close-app">Закрыть</button>
+            <div class="top-nav-title">
+                <span class="flower-icon">🌸</span>
+                <span>Мой Кампус</span>
             </div>
-            <button class="icon-btn" id="btn-sync" title="Оновити дані">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+            <button class="nav-more-btn" id="btn-sync" title="Оновити дані">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="5" cy="12" r="2.2"/>
+                    <circle cx="12" cy="12" r="2.2"/>
+                    <circle cx="19" cy="12" r="2.2"/>
                 </svg>
             </button>
         </header>
 
-        <!-- Main Content Area with Dynamic Tabs -->
-        <main class="content-container">
-            <!-- TAB 1: ЖИВІ ЧЕРГИ -->
-            <section id="tab-queue" class="tab-content active">
+        <!-- 2. Hero Greeting Section -->
+        <section class="hero-section">
+            <div class="hero-text-block">
+                <h1 class="hero-greeting" id="user-greeting">Привет, Саша! ✨</h1>
+                <p class="hero-subtitle" id="hero-subtitle">У тебя сегодня 3 лекции и 1 дедлайн</p>
+            </div>
+            <div class="hero-avatar-badge" id="btn-avatar-badge">
+                <div class="sticker-emoji" id="user-avatar">☕</div>
+            </div>
+        </section>
+
+        <!-- 3. Featured Card (Lilac: идёт сейчас) -->
+        <section class="featured-card" id="featured-card">
+            <div class="card-top-row">
+                <span class="card-status-tag" id="featured-status-tag">идёт сейчас</span>
+                <span class="card-time-pill" id="featured-time-pill">10:15 - 11:45</span>
+            </div>
+            <h2 class="featured-card-title" id="featured-card-title">Алгоритмы и структуры данных</h2>
+            <p class="featured-card-meta" id="featured-card-meta">Лабораторная • Ауд. 104</p>
+        </section>
+
+        <!-- 4. Two-Column Mini Cards (Mint & Butter Yellow) -->
+        <section class="mini-cards-grid">
+            <!-- Left Card: Mint (Посещаемость / Черга ОП) -->
+            <div class="mini-card mint-card" id="mini-card-left">
+                <span class="mini-card-label" id="mini-left-label">Посещаемость</span>
+                <div class="mini-card-stat" id="mini-left-stat">94%</div>
+                <div class="mini-card-sub" id="mini-left-sub">Отличный темп! 🌱</div>
+            </div>
+
+            <!-- Right Card: Butter Yellow (Следующая / Черга АСД) -->
+            <div class="mini-card butter-card" id="mini-card-right">
+                <span class="mini-card-label" id="mini-right-label">Следующая</span>
+                <div class="mini-card-stat-text" id="mini-right-title">Базы Данных</div>
+                <div class="mini-card-sub" id="mini-right-sub">через 40 мин • Ауд. 210</div>
+            </div>
+        </section>
+
+        <!-- Segmented Tab Pills for Sections -->
+        <div class="segmented-nav">
+            <button class="seg-pill-btn active" data-tab="tab-overview">
+                Дедлайны и задачи
+            </button>
+            <button class="seg-pill-btn" data-tab="tab-queue">
+                Живая очередь
+            </button>
+            <button class="seg-pill-btn" data-tab="tab-schedule">
+                Расписание пар
+            </button>
+        </div>
+
+        <!-- TAB 1: Дедлайны и задачи (Matching the Screenshot 1:1) -->
+        <section id="tab-overview" class="tab-content active">
+            <div class="tasks-list" id="overview-tasks-list">
+                <!-- Task items rendered dynamically via JS -->
+            </div>
+        </section>
+
+        <!-- TAB 2: Жива черга на захист (ОП / АСД) -->
+        <section id="tab-queue" class="tab-content">
+            <div class="queue-mode-box">
                 <!-- Subject Switcher Pills -->
-                <div class="subject-switcher">
-                    <button class="subj-btn active" data-subject="ОП">
-                        <span class="subj-icon">💻</span>
-                        <span class="subj-name">Основи програмування</span>
-                        <span class="badge" id="badge-op-count">0</span>
+                <div class="subj-pills-row">
+                    <button class="subj-pill-tab active" data-subject="ОП">
+                        <span>💻 Основи програмування</span>
+                        <span class="subj-pill-badge" id="badge-op-count">0</span>
                     </button>
-                    <button class="subj-btn" data-subject="АСД">
-                        <span class="subj-icon">🧮</span>
-                        <span class="subj-name">АСД</span>
-                        <span class="badge" id="badge-asd-count">0</span>
+                    <button class="subj-pill-tab" data-subject="АСД">
+                        <span>🧮 АСД</span>
+                        <span class="subj-pill-badge" id="badge-asd-count">0</span>
                     </button>
                 </div>
 
-                <!-- My Status Card (If user in queue) -->
-                <div id="my-status-card" class="card my-status-card hidden">
-                    <div class="status-header">
-                        <span class="status-label">Ваша позиція:</span>
-                        <span class="status-pos" id="my-pos-badge">#1</span>
-                    </div>
-                    <div class="status-details">
-                        <span class="status-labs" id="my-labs-label">Лаби 1, 4</span>
-                        <span class="status-prio" id="my-prio-label">⭐ Пріоритет: Лаба 1</span>
-                    </div>
-                    <button class="btn btn-secondary btn-sm" id="btn-leave-queue">🚪 Вийти з черги</button>
+                <!-- Lab Picker Grid 1..9 -->
+                <p style="font-size:13px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">
+                    🎯 Оберіть роботи для здачі (пріоритет за найменшою):
+                </p>
+                <div class="labs-grid-picker" id="labs-grid">
+                    <!-- Populated dynamically via JS -->
                 </div>
 
-                <!-- Lab Picker Section -->
-                <div class="card lab-picker-card">
-                    <div class="card-title">
-                        <span>🔬 Оберіть практичні/лабораторні для здачі</span>
-                    </div>
-                    <p class="card-subtitle">
-                        ⚡ <i>Можна обрати декілька лаб. Пріоритет рахується за <b>найстарішою (найменшою)</b> роботою!</i>
-                    </p>
-
-                    <!-- Multi-select buttons grid 1..9 -->
-                    <div class="labs-grid" id="labs-grid">
-                        <!-- Generated via JS -->
-                    </div>
-
-                    <!-- Priority preview -->
-                    <div id="priority-preview" class="priority-preview hidden">
-                        <span id="preview-text">🎯 Обрано: Лаби 1, 4 • ⭐ Пріоритет: Лаба 1</span>
-                    </div>
-
-                    <!-- Submit action button -->
-                    <button class="btn btn-primary btn-block" id="btn-submit-queue" disabled>
-                        <span>✋ Зайняти чергу</span>
-                    </button>
+                <div id="priority-preview" class="queue-prio-banner hidden">
+                    <span id="preview-text">🎯 Обрано: Лаби 1, 4 • ⭐ Пріоритет: Лаба 1</span>
                 </div>
 
-                <!-- Live Queue List -->
-                <div class="queue-list-section">
-                    <div class="section-header">
-                        <h3>📋 Поточна черга на захист</h3>
-                        <div class="queue-actions">
-                            <button class="btn-text" id="btn-next-student" title="Перевести наступного (староста)">➡️ Наступний</button>
-                        </div>
+                <!-- My Status if in queue -->
+                <div id="my-status-box" class="hidden" style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:14px; padding:12px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-weight:700; color:#166534;" id="my-pos-text">Ви #1 у черзі!</div>
+                        <div style="font-size:12px; color:#15803D;" id="my-labs-text">Лаби 1, 4</div>
                     </div>
-
-                    <div id="queue-empty" class="empty-state">
-                        <div class="empty-icon">☕</div>
-                        <p>Черга порожня. Будьте першим!</p>
-                    </div>
-
-                    <div class="queue-list" id="queue-items-container">
-                        <!-- Queue items injected via JS -->
-                    </div>
-                </div>
-            </section>
-
-            <!-- TAB 2: РОЗКЛАД ПАР -->
-            <section id="tab-schedule" class="tab-content">
-                <div class="schedule-controls">
-                    <div class="day-toggle">
-                        <button class="toggle-btn active" data-day="today">Сьогодні</button>
-                        <button class="toggle-btn" data-day="tomorrow">Завтра</button>
-                    </div>
-                    <div class="week-info" id="schedule-week-badge">Тиждень 1</div>
+                    <button id="btn-leave-queue" style="background:#FEE2E2; border:none; color:#DC2626; font-size:12px; font-weight:700; padding:6px 12px; border-radius:99px; cursor:pointer;">Вийти</button>
                 </div>
 
-                <div id="schedule-loading" class="loading-state">
-                    <div class="spinner"></div>
-                    <p>Завантаження розкладу...</p>
+                <!-- Live Queue Ranking List -->
+                <div class="section-header-row" style="margin-top:14px;">
+                    <span class="section-title">Список студентів</span>
+                    <button id="btn-next-student" style="background:none; border:none; color:#7C3AED; font-weight:700; font-size:13px; cursor:pointer;">➡️ Наступний</button>
                 </div>
 
-                <div id="schedule-list" class="schedule-list">
+                <div id="queue-empty" class="hidden" style="text-align:center; padding:20px 0; color:var(--text-muted); font-size:14px;">
+                    ☕ Черга порожня. Будьте першим!
+                </div>
+
+                <div class="queue-items-flow" id="queue-items-container">
+                    <!-- Queue items injected via JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 3: Розклад пар -->
+        <section id="tab-schedule" class="tab-content">
+            <div class="queue-mode-box">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                    <span class="section-title" id="schedule-day-title">Розклад на сьогодні</span>
+                    <div style="display:flex; gap:6px;">
+                        <button id="btn-day-today" class="subj-pill-badge" style="border:none; cursor:pointer; background:#F3E8FF; color:#6D28D9; font-weight:700; padding:4px 10px;">Сьогодні</button>
+                        <button id="btn-day-tomorrow" class="subj-pill-badge" style="border:none; cursor:pointer; background:#F1F5F9; color:#64748B; font-weight:700; padding:4px 10px;">Завтра</button>
+                    </div>
+                </div>
+
+                <div id="schedule-loading" class="hidden" style="text-align:center; padding:20px; color:var(--text-muted);">
+                    Завантаження розкладу...
+                </div>
+
+                <div class="tasks-list" id="schedule-items-container">
                     <!-- Schedule items injected via JS -->
                 </div>
-            </section>
+            </div>
+        </section>
 
-            <!-- TAB 3: ДЕДЛАЙНИ CLASSROOM -->
-            <section id="tab-deadlines" class="tab-content">
-                <div class="section-header">
-                    <h3>⏳ Активні завдання Google Classroom</h3>
-                    <span class="badge" id="deadlines-count">0</span>
-                </div>
-
-                <div id="deadlines-list" class="deadlines-list">
-                    <!-- Deadlines injected via JS -->
-                </div>
-            </section>
-        </main>
-
-        <!-- Bottom Tab Navigation Bar -->
-        <nav class="bottom-nav">
-            <button class="nav-item active" data-tab="tab-queue">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="8" y1="6" x2="21" y2="6"></line>
-                    <line x1="8" y1="12" x2="21" y2="12"></line>
-                    <line x1="8" y1="18" x2="21" y2="18"></line>
-                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
-                </svg>
-                <span>Черга</span>
+        <!-- 6. Sticky Bottom Action Button -->
+        <div class="bottom-action-wrapper">
+            <button class="primary-pill-btn" id="btn-primary-action">
+                <span id="btn-primary-action-text">🌱 Отметиться на занятии</span>
             </button>
-            <button class="nav-item" data-tab="tab-schedule">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                    <line x1="16" y1="2" x2="16" y2="6"></line>
-                    <line x1="8" y1="2" x2="8" y2="6"></line>
-                    <line x1="3" y1="10" x2="21" y2="10"></line>
-                </svg>
-                <span>Розклад</span>
-            </button>
-            <button class="nav-item" data-tab="tab-deadlines">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <polyline points="12 6 12 12 16 14"></polyline>
-                </svg>
-                <span>Дедлайни</span>
-            </button>
-        </nav>
+        </div>
     </div>
 
+    <!-- Script Controller -->
     <script src="/webapp/app.js"></script>
 </body>
 </html>

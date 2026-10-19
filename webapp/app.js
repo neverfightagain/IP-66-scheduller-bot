@@ -1,4 +1,4 @@
-// --- Telegram Mini App Frontend Controller ---
+// --- Telegram Mini App Frontend Controller (Pastel Campus Edition) ---
 document.addEventListener('DOMContentLoaded', () => {
     const tg = window.Telegram?.WebApp;
     if (tg) {
@@ -6,11 +6,12 @@ document.addEventListener('DOMContentLoaded', () => {
         tg.expand();
     }
 
-    // Extract user info from Telegram WebApp SDK or fallback for desktop/browser preview
+    // Extract user info from Telegram WebApp SDK or fallback for preview
     const tgUser = tg?.initDataUnsafe?.user;
     const currentUser = {
         id: tgUser?.id || 999001,
-        name: tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : 'Студент ІП-66',
+        name: tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : 'Саша',
+        firstName: tgUser?.first_name || 'Саша',
         username: tgUser?.username || 'student'
     };
 
@@ -24,87 +25,186 @@ document.addEventListener('DOMContentLoaded', () => {
     let selectedLabs = new Set();
     let currentQueue = [];
     let scheduleDay = 'today';
+    let currentTab = 'tab-overview';
     let pollInterval = null;
 
     // DOM Elements
-    const userAvatarEl = document.getElementById('user-avatar');
+    const btnCloseApp = document.getElementById('btn-close-app');
     const userGreetingEl = document.getElementById('user-greeting');
+    const heroSubtitleEl = document.getElementById('hero-subtitle');
+    const btnSync = document.getElementById('btn-sync');
+    const featuredCard = document.getElementById('featured-card');
+    const featuredStatusTag = document.getElementById('featured-status-tag');
+    const featuredTimePill = document.getElementById('featured-time-pill');
+    const featuredCardTitle = document.getElementById('featured-card-title');
+    const featuredCardMeta = document.getElementById('featured-card-meta');
+
+    const miniCardLeft = document.getElementById('mini-card-left');
+    const miniCardRight = document.getElementById('mini-card-right');
+
+    const segButtons = document.querySelectorAll('.seg-pill-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+    const overviewTasksList = document.getElementById('overview-tasks-list');
+
+    const btnPrimaryAction = document.getElementById('btn-primary-action');
+    const btnPrimaryActionText = document.getElementById('btn-primary-action-text');
+
+    // Queue Elements
+    const subjPills = document.querySelectorAll('.subj-pill-tab');
     const labsGridEl = document.getElementById('labs-grid');
     const priorityPreviewEl = document.getElementById('priority-preview');
     const previewTextEl = document.getElementById('preview-text');
-    const btnSubmitQueue = document.getElementById('btn-submit-queue');
-    const queueItemsContainer = document.getElementById('queue-items-container');
-    const queueEmptyEl = document.getElementById('queue-empty');
-    const myStatusCard = document.getElementById('my-status-card');
-    const myPosBadge = document.getElementById('my-pos-badge');
-    const myLabsLabel = document.getElementById('my-labs-label');
-    const myPrioLabel = document.getElementById('my-prio-label');
+    const myStatusBox = document.getElementById('my-status-box');
+    const myPosText = document.getElementById('my-pos-text');
+    const myLabsText = document.getElementById('my-labs-text');
     const btnLeaveQueue = document.getElementById('btn-leave-queue');
     const btnNextStudent = document.getElementById('btn-next-student');
-    const btnSync = document.getElementById('btn-sync');
+    const queueItemsContainer = document.getElementById('queue-items-container');
+    const queueEmptyEl = document.getElementById('queue-empty');
     const badgeOpCount = document.getElementById('badge-op-count');
     const badgeAsdCount = document.getElementById('badge-asd-count');
 
-    // Setup Header User Profile
-    if (userGreetingEl) userGreetingEl.textContent = `Привіт, ${currentUser.name.split(' ')[0]}!`;
-    if (userAvatarEl) {
-        userAvatarEl.textContent = currentUser.name.charAt(0).toUpperCase();
-        if (tgUser?.photo_url) {
-            userAvatarEl.style.backgroundImage = `url(${tgUser.photo_url})`;
-            userAvatarEl.style.backgroundSize = 'cover';
-            userAvatarEl.textContent = '';
-        }
+    // Schedule Elements
+    const btnDayToday = document.getElementById('btn-day-today');
+    const btnDayTomorrow = document.getElementById('btn-day-tomorrow');
+    const scheduleItemsContainer = document.getElementById('schedule-items-container');
+    const scheduleLoading = document.getElementById('schedule-loading');
+
+    // 1. Setup Header & Hero Greeting
+    if (userGreetingEl) {
+        userGreetingEl.textContent = `Привет, ${currentUser.firstName}! ✨`;
     }
 
-    // --- Tab Navigation ---
-    const navItems = document.querySelectorAll('.nav-item');
-    const tabContents = document.querySelectorAll('.tab-content');
+    if (btnCloseApp) {
+        btnCloseApp.addEventListener('click', () => {
+            if (tg) tg.close();
+        });
+    }
 
-    navItems.forEach(item => {
-        item.addEventListener('click', () => {
-            const targetTab = item.getAttribute('data-tab');
-            navItems.forEach(n => n.classList.remove('active'));
+    // 2. Default Tasks Mock (Exact match to screenshot reference)
+    let tasksState = [
+        { id: 't1', title: 'Лабораторная №3 по АСД', date: 'Сегодня, 23:59', checked: false },
+        { id: 't2', title: 'Расчётка по высшей математике', date: 'Завтра, 14:00', checked: true },
+        { id: 't3', title: 'Конспект по Базам Данных (Лекция 5)', date: '24 октября', checked: false }
+    ];
+
+    function renderTasksList() {
+        if (!overviewTasksList) return;
+        overviewTasksList.innerHTML = tasksState.map(t => `
+            <div class="task-item-card ${t.checked ? 'is-checked' : ''}" data-task-id="${t.id}">
+                <div class="custom-checkbox">
+                    <svg viewBox="0 0 24 24" fill="none">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                </div>
+                <div class="task-meta-block">
+                    <span class="task-title">${escapeHtml(t.title)}</span>
+                    <span class="task-due-date">${escapeHtml(t.date)}</span>
+                </div>
+            </div>
+        `).join('');
+
+        // Add toggle listeners
+        overviewTasksList.querySelectorAll('.task-item-card').forEach(el => {
+            el.addEventListener('click', () => {
+                const id = el.getAttribute('data-task-id');
+                const task = tasksState.find(item => item.id === id);
+                if (task) {
+                    task.checked = !task.checked;
+                    if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                    renderTasksList();
+                }
+            });
+        });
+    }
+
+    // 3. Tab Navigation
+    segButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.getAttribute('data-tab');
+            currentTab = targetTab;
+            segButtons.forEach(b => b.classList.remove('active'));
             tabContents.forEach(c => c.classList.remove('active'));
 
-            item.classList.add('active');
+            btn.classList.add('active');
             const targetEl = document.getElementById(targetTab);
             if (targetEl) targetEl.classList.add('active');
 
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
 
-            if (targetTab === 'tab-schedule') fetchSchedule(scheduleDay);
-            if (targetTab === 'tab-deadlines') fetchDeadlines();
+            updateBottomButtonState();
+
             if (targetTab === 'tab-queue') fetchQueue();
+            if (targetTab === 'tab-schedule') fetchSchedule(scheduleDay);
+            if (targetTab === 'tab-overview') renderTasksList();
         });
     });
 
-    // --- Subject Switcher (ОП / АСД) ---
-    const subjButtons = document.querySelectorAll('.subj-btn');
-    subjButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const subj = btn.getAttribute('data-subject');
-            if (subj === activeSubject) return;
+    function updateBottomButtonState() {
+        if (!btnPrimaryAction || !btnPrimaryActionText) return;
 
-            activeSubject = subj;
-            subjButtons.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+        if (currentTab === 'tab-overview') {
+            btnPrimaryActionText.textContent = '🌱 Отметиться на занятии';
+            btnPrimaryAction.disabled = false;
+        } else if (currentTab === 'tab-queue') {
+            const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
+            if (sorted.length === 0) {
+                btnPrimaryActionText.textContent = '✋ Зайняти чергу (оберіть лабу)';
+                btnPrimaryAction.disabled = true;
+            } else {
+                const labsText = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
+                btnPrimaryActionText.textContent = `🚀 Зайняти: ${labsText}`;
+                btnPrimaryAction.disabled = false;
+            }
+        } else if (currentTab === 'tab-schedule') {
+            btnPrimaryActionText.textContent = '🔗 Відкрити пару в Zoom';
+            btnPrimaryAction.disabled = false;
+        }
+    }
 
-            selectedLabs.clear();
-            renderLabsGrid();
-            updatePriorityPreview();
-            fetchQueue();
-
+    // Bottom Action Click Handler
+    if (btnPrimaryAction) {
+        btnPrimaryAction.addEventListener('click', async () => {
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-        });
-    });
 
-    // --- Multi-Select Labs Grid (1..9) ---
+            if (currentTab === 'tab-overview') {
+                if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                alert('✅ Вы успешно отметились на занятии!');
+            } else if (currentTab === 'tab-queue') {
+                await submitJoinQueue();
+            } else if (currentTab === 'tab-schedule') {
+                const firstLessonLink = document.querySelector('.lesson-join-link');
+                if (firstLessonLink && firstLessonLink.href) {
+                    window.open(firstLessonLink.href, '_blank');
+                } else {
+                    alert('Зараз немає активного посилання на пару');
+                }
+            }
+        });
+    }
+
+    // Mini cards click handlers
+    if (miniCardLeft) {
+        miniCardLeft.addEventListener('click', () => {
+            const queueBtn = document.querySelector('[data-tab="tab-queue"]');
+            if (queueBtn) queueBtn.click();
+        });
+    }
+    if (miniCardRight) {
+        miniCardRight.addEventListener('click', () => {
+            const schedBtn = document.querySelector('[data-tab="tab-schedule"]');
+            if (schedBtn) schedBtn.click();
+        });
+    }
+
+    // 4. Queue Logic: Multi-Select Labs Grid (1..9)
     function renderLabsGrid() {
+        if (!labsGridEl) return;
         labsGridEl.innerHTML = '';
         for (let i = 1; i <= 9; i++) {
             const btn = document.createElement('button');
             const isSelected = selectedLabs.has(i);
-            btn.className = `lab-btn ${isSelected ? 'selected' : ''}`;
+            btn.className = `lab-pill-btn ${isSelected ? 'selected' : ''}`;
             btn.innerHTML = `<span>${isSelected ? '✅' : '▫️'}</span><span>Лаба ${i}</span>`;
             btn.addEventListener('click', () => toggleLab(i));
             labsGridEl.appendChild(btn);
@@ -120,27 +220,45 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
         renderLabsGrid();
         updatePriorityPreview();
+        updateBottomButtonState();
     }
 
     function updatePriorityPreview() {
         const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
         if (sorted.length === 0) {
-            priorityPreviewEl.classList.add('hidden');
-            btnSubmitQueue.disabled = true;
-            btnSubmitQueue.innerHTML = '<span>✋ Зайняти чергу</span>';
+            if (priorityPreviewEl) priorityPreviewEl.classList.add('hidden');
             return;
         }
 
         const minLab = sorted[0];
         const labsText = sorted.length === 1 ? `Лаба ${minLab}` : `Лаби ${sorted.join(', ')}`;
-        previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⭐ Пріоритет: Лаба ${minLab} (найстаріша)`;
-        priorityPreviewEl.classList.remove('hidden');
-
-        btnSubmitQueue.disabled = false;
-        btnSubmitQueue.innerHTML = `<span>🚀 Зайняти чергу: ${labsText}</span>`;
+        if (previewTextEl) {
+            previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⭐ Пріоритет: Лаба ${minLab} (найстаріша)`;
+        }
+        if (priorityPreviewEl) priorityPreviewEl.classList.remove('hidden');
     }
 
-    // --- Fetch & Render Live Queue ---
+    // Subject Switcher in Queue Tab
+    subjPills.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const subj = btn.getAttribute('data-subject');
+            if (subj === activeSubject) return;
+
+            activeSubject = subj;
+            subjPills.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            selectedLabs.clear();
+            renderLabsGrid();
+            updatePriorityPreview();
+            updateBottomButtonState();
+            fetchQueue();
+
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+        });
+    });
+
+    // Fetch & Render Live Queue
     async function fetchQueue() {
         try {
             const res = await fetch(`/api/queue?subject=${encodeURIComponent(activeSubject)}&chat_id=${chatId}`);
@@ -150,30 +268,18 @@ document.addEventListener('DOMContentLoaded', () => {
             currentQueue = data.items || [];
             renderQueueList(currentQueue);
 
-            // Update subject badge count
             if (activeSubject === 'ОП' && badgeOpCount) badgeOpCount.textContent = currentQueue.length;
             if (activeSubject === 'АСД' && badgeAsdCount) badgeAsdCount.textContent = currentQueue.length;
 
-            // Check if current user is in queue
+            // My Status Card
             const meIndex = currentQueue.findIndex(item => item.user_id === currentUser.id);
             if (meIndex !== -1) {
                 const me = currentQueue[meIndex];
-                myStatusCard.classList.remove('hidden');
-                myPosBadge.textContent = `#${meIndex + 1}`;
-                myLabsLabel.textContent = me.lab_number || 'Лаба не вказана';
-                myPrioLabel.textContent = `⭐ Пріоритет: Лаба ${me.lab_priority || 1}`;
-
-                // Pre-fill user's defended labs if not modified yet
-                if (selectedLabs.size === 0 && me.lab_number) {
-                    const matches = me.lab_number.match(/\d+/g);
-                    if (matches) {
-                        matches.forEach(m => selectedLabs.add(parseInt(m)));
-                        renderLabsGrid();
-                        updatePriorityPreview();
-                    }
-                }
+                if (myStatusBox) myStatusBox.classList.remove('hidden');
+                if (myPosText) myPosText.textContent = `Ви #${meIndex + 1} у черзі (${activeSubject})!`;
+                if (myLabsText) myLabsText.textContent = `${me.lab_number || 'Лаба не вказана'} • ⭐ Пріоритет: Лаба ${me.lab_priority || 1}`;
             } else {
-                myStatusCard.classList.add('hidden');
+                if (myStatusBox) myStatusBox.classList.add('hidden');
             }
         } catch (err) {
             console.error('Queue fetch error:', err);
@@ -181,29 +287,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderQueueList(items) {
+        if (!queueItemsContainer) return;
+
         if (!items || items.length === 0) {
             queueItemsContainer.innerHTML = '';
-            queueEmptyEl.classList.remove('hidden');
+            if (queueEmptyEl) queueEmptyEl.classList.remove('hidden');
             return;
         }
 
-        queueEmptyEl.classList.add('hidden');
+        if (queueEmptyEl) queueEmptyEl.classList.add('hidden');
         queueItemsContainer.innerHTML = items.map((item, idx) => {
             const isMe = item.user_id === currentUser.id;
             const rank = idx + 1;
-            const medal = rank === 1 ? '🥇' : (rank === 2 ? '🥈' : (rank === 3 ? '🥉' : `#${rank}`));
-            const medalClass = rank === 1 ? 'gold' : '';
-            const initial = (item.user_name || 'С').charAt(0).toUpperCase();
-            const usernameStr = item.username ? `@${item.username}` : '';
-            const labBadge = item.lab_number ? `<span class="queue-lab-badge">${item.lab_number}</span>` : '';
+            const isGold = rank === 1;
+            const rankClass = isGold ? 'gold' : '';
+            const labBadge = item.lab_number ? `<span class="queue-lab-tag">${escapeHtml(item.lab_number)}</span>` : '';
 
             return `
-                <div class="queue-item ${isMe ? 'is-me' : ''}">
-                    <div class="queue-rank ${medalClass}">${medal}</div>
-                    <div class="queue-avatar">${initial}</div>
-                    <div class="queue-user-meta">
-                        <span class="queue-user-name">${escapeHtml(item.user_name)}${isMe ? ' (Ви)' : ''}</span>
-                        <span class="queue-user-handle">${escapeHtml(usernameStr)}</span>
+                <div class="queue-person-card ${isMe ? 'is-me' : ''}">
+                    <div class="queue-rank-badge ${rankClass}">#${rank}</div>
+                    <div class="queue-name-col">
+                        <span class="queue-name">${escapeHtml(item.user_name)}${isMe ? ' (Ви)' : ''}</span>
+                        <span style="font-size:12px; color:var(--text-muted);">${escapeHtml(item.username ? '@' + item.username : '')}</span>
                     </div>
                     ${labBadge}
                 </div>
@@ -211,14 +316,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
     }
 
-    // --- Queue Actions ---
-    btnSubmitQueue.addEventListener('click', async () => {
+    // Submit Join Queue
+    async function submitJoinQueue() {
         const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
         if (sorted.length === 0) return;
 
         const labLabel = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
-        btnSubmitQueue.disabled = true;
-
         try {
             const res = await fetch('/api/queue/join', {
                 method: 'POST',
@@ -236,155 +339,155 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.success) {
                 if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
                 await fetchQueue();
+                updateBottomButtonState();
             } else {
-                alert(data.message || 'Помилка запису');
+                alert(data.message || 'Помилка');
             }
         } catch (err) {
             console.error('Join error:', err);
-        } finally {
-            btnSubmitQueue.disabled = false;
         }
-    });
+    }
 
-    btnLeaveQueue.addEventListener('click', async () => {
-        if (!confirm(`Ви дійсно бажаєте вийти з черги ${activeSubject}?`)) return;
-        try {
-            const res = await fetch('/api/queue/leave', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    subject: activeSubject,
-                    user_id: currentUser.id
-                })
-            });
-            const data = await res.json();
-            if (data.success) {
-                selectedLabs.clear();
-                renderLabsGrid();
-                updatePriorityPreview();
-                if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
-                await fetchQueue();
-            }
-        } catch (err) {
-            console.error('Leave error:', err);
-        }
-    });
-
-    btnNextStudent.addEventListener('click', async () => {
-        try {
-            const res = await fetch('/api/queue/next', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    subject: activeSubject
-                })
-            });
-            const data = await res.json();
-            if (data.success) {
-                if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-                if (data.student) {
-                    alert(`🎯 Наступний на захист: ${data.student.user_name} (${data.student.lab_number})`);
-                } else {
-                    alert('Черга порожня!');
+    // Leave Queue
+    if (btnLeaveQueue) {
+        btnLeaveQueue.addEventListener('click', async () => {
+            if (!confirm(`Вийти з черги ${activeSubject}?`)) return;
+            try {
+                const res = await fetch('/api/queue/leave', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        subject: activeSubject,
+                        user_id: currentUser.id
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    selectedLabs.clear();
+                    renderLabsGrid();
+                    updatePriorityPreview();
+                    updateBottomButtonState();
+                    if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+                    await fetchQueue();
                 }
-                await fetchQueue();
+            } catch (err) {
+                console.error('Leave error:', err);
             }
-        } catch (err) {
-            console.error('Next error:', err);
-        }
-    });
-
-    btnSync.addEventListener('click', () => {
-        if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-        fetchQueue();
-    });
-
-    // --- Schedule Tab Logic ---
-    const scheduleToggleBtns = document.querySelectorAll('.toggle-btn');
-    scheduleToggleBtns.forEach(b => {
-        b.addEventListener('click', () => {
-            scheduleToggleBtns.forEach(btn => btn.classList.remove('active'));
-            b.classList.add('active');
-            scheduleDay = b.getAttribute('data-day');
-            fetchSchedule(scheduleDay);
         });
-    });
+    }
+
+    // Next Student
+    if (btnNextStudent) {
+        btnNextStudent.addEventListener('click', async () => {
+            try {
+                const res = await fetch('/api/queue/next', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        subject: activeSubject
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+                    if (data.student) {
+                        alert(`🎯 Наступний: ${data.student.user_name} (${data.student.lab_number})`);
+                    } else {
+                        alert('Черга порожня!');
+                    }
+                    await fetchQueue();
+                }
+            } catch (err) {
+                console.error('Next error:', err);
+            }
+        });
+    }
+
+    // 5. Schedule Logic
+    if (btnDayToday) {
+        btnDayToday.addEventListener('click', () => {
+            scheduleDay = 'today';
+            btnDayToday.style.background = '#F3E8FF';
+            btnDayToday.style.color = '#6D28D9';
+            btnDayTomorrow.style.background = '#F1F5F9';
+            btnDayTomorrow.style.color = '#64748B';
+            fetchSchedule('today');
+        });
+    }
+
+    if (btnDayTomorrow) {
+        btnDayTomorrow.addEventListener('click', () => {
+            scheduleDay = 'tomorrow';
+            btnDayTomorrow.style.background = '#F3E8FF';
+            btnDayTomorrow.style.color = '#6D28D9';
+            btnDayToday.style.background = '#F1F5F9';
+            btnDayToday.style.color = '#64748B';
+            fetchSchedule('tomorrow');
+        });
+    }
 
     async function fetchSchedule(day) {
-        const loadingEl = document.getElementById('schedule-loading');
-        const listEl = document.getElementById('schedule-list');
-        const weekBadge = document.getElementById('schedule-week-badge');
-
-        if (loadingEl) loadingEl.classList.remove('hidden');
-        if (listEl) listEl.innerHTML = '';
+        if (scheduleLoading) scheduleLoading.classList.remove('hidden');
+        if (scheduleItemsContainer) scheduleItemsContainer.innerHTML = '';
 
         try {
             const res = await fetch(`/api/schedule?day=${day}`);
             const data = await res.json();
-            if (loadingEl) loadingEl.classList.add('hidden');
+            if (scheduleLoading) scheduleLoading.classList.add('hidden');
 
             if (!data.success || !data.lessons || data.lessons.length === 0) {
-                listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><p>У цей день пар немає! Відпочивайте.</p></div>';
+                if (scheduleItemsContainer) {
+                    scheduleItemsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">🎉 У цей день пар немає! Відпочивайте.</div>';
+                }
                 return;
             }
 
-            if (weekBadge) weekBadge.textContent = `Тиждень ${data.week} • ${data.day_name}`;
+            // Also update featured card with today's first lesson if on today
+            if (day === 'today' && data.lessons.length > 0) {
+                const first = data.lessons[0];
+                if (featuredCardTitle) featuredCardTitle.textContent = first.name || 'Алгоритми та структури даних';
+                if (featuredTimePill) featuredTimePill.textContent = first.time ? `${first.time}` : '10:15 - 11:45';
+                if (featuredCardMeta) featuredCardMeta.textContent = `${first.type || 'Пара'} • ${first.lecturer || 'Викладач'}`;
+            }
 
-            listEl.innerHTML = data.lessons.map(l => {
-                const linkBtn = l.link_url
-                    ? `<a href="${l.link_url}" target="_blank" class="lesson-join-btn">🔗 Приєднатися</a>`
-                    : '<span style="font-size:12px;color:var(--hint-color);">Посилання відсутнє</span>';
+            if (scheduleItemsContainer) {
+                scheduleItemsContainer.innerHTML = data.lessons.map(l => {
+                    const linkBtn = l.link_url
+                        ? `<a href="${l.link_url}" target="_blank" class="lesson-join-link" style="color:#7C3AED; font-weight:700; text-decoration:none; font-size:13px;">🔗 Приєднатися</a>`
+                        : `<span style="color:var(--text-muted); font-size:12px;">Без посилання</span>`;
 
-                return `
-                    <div class="schedule-card">
-                        <div class="lesson-header">
-                            <span class="lesson-time">Пара ${l.pair_number} (${l.time_start} - ${l.time_end})</span>
-                            <span class="lesson-type">${escapeHtml(l.type || 'Пара')}</span>
+                    return `
+                        <div class="task-item-card">
+                            <div class="task-meta-block">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <span style="font-size:12px; font-weight:700; color:#7C3AED;">${l.time || '10:15'} (${l.type || 'Пара'})</span>
+                                    ${linkBtn}
+                                </div>
+                                <span class="task-title" style="margin-top:4px;">${escapeHtml(l.name)}</span>
+                                <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')}</span>
+                            </div>
                         </div>
-                        <h4 class="lesson-title">${escapeHtml(l.subject)}</h4>
-                        <div class="lesson-teacher">👤 ${escapeHtml(l.teacher || 'Викладач не вказаний')}</div>
-                        ${linkBtn}
-                    </div>
-                `;
-            }).join('');
+                    `;
+                }).join('');
+            }
         } catch (err) {
-            if (loadingEl) loadingEl.classList.add('hidden');
-            listEl.innerHTML = '<div class="empty-state"><p>Не вдалося завантажити розклад</p></div>';
+            if (scheduleLoading) scheduleLoading.classList.add('hidden');
+            if (scheduleItemsContainer) {
+                scheduleItemsContainer.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Не вдалося завантажити розклад</div>';
+            }
         }
     }
 
-    // --- Deadlines Tab Logic ---
-    async function fetchDeadlines() {
-        const listEl = document.getElementById('deadlines-list');
-        const countBadge = document.getElementById('deadlines-count');
-        try {
-            const res = await fetch('/api/deadlines');
-            const data = await res.json();
-            if (!data.success || !data.deadlines || data.deadlines.length === 0) {
-                listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">✅</div><p>Активних дедлайнів немає. Все здано!</p></div>';
-                if (countBadge) countBadge.textContent = '0';
-                return;
-            }
-
-            if (countBadge) countBadge.textContent = data.total;
-
-            listEl.innerHTML = data.deadlines.map(d => {
-                const linkAttr = d.alternate_link ? `onclick="window.open('${d.alternate_link}', '_blank')"` : '';
-                return `
-                    <div class="deadline-card" ${linkAttr} style="${d.alternate_link ? 'cursor:pointer;' : ''}">
-                        <div class="deadline-meta">
-                            <span class="deadline-course">${escapeHtml(d.course_name || 'Предмет')}</span>
-                            <span class="deadline-due">⏰ ${d.due_time ? d.due_time.substring(0, 16) : 'Без дедлайну'}</span>
-                        </div>
-                        <h4 class="deadline-title">${escapeHtml(d.title)}</h4>
-                    </div>
-                `;
-            }).join('');
-        } catch (err) {
-            listEl.innerHTML = '<div class="empty-state"><p>Не вдалося завантажити дедлайни</p></div>';
-        }
+    // Sync button
+    if (btnSync) {
+        btnSync.addEventListener('click', () => {
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            fetchQueue();
+            fetchSchedule(scheduleDay);
+            renderTasksList();
+        });
     }
 
     function escapeHtml(text) {
@@ -395,13 +498,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Initialize UI
+    renderTasksList();
     renderLabsGrid();
     updatePriorityPreview();
+    updateBottomButtonState();
     fetchQueue();
+    fetchSchedule('today');
 
-    // Auto-polling for real-time queue updates every 4 seconds
+    // Auto-polling for live queue every 4 seconds
     pollInterval = setInterval(() => {
-        const queueTabActive = document.getElementById('tab-queue')?.classList.contains('active');
-        if (queueTabActive) fetchQueue();
+        if (currentTab === 'tab-queue') fetchQueue();
     }, 4000);
 });

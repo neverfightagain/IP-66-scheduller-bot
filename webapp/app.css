@@ -1,19 +1,40 @@
-/* --- Telegram Mini App Theme Variables & Base Styles --- */
+/* ==========================================================================
+   🌸 Pastel Campus Theme for Telegram Mini App (ІП-66)
+   Matches the exact pastel aesthetic: warm cream background, lilac & mint
+   accent cards, rounded pill geometry, clean typography & midnight button.
+   ========================================================================== */
+
 :root {
-    --bg-color: var(--tg-theme-bg-color, #0f172a);
-    --secondary-bg-color: var(--tg-theme-secondary-bg-color, #1e293b);
-    --text-color: var(--tg-theme-text-color, #f8fafc);
-    --hint-color: var(--tg-theme-hint-color, #94a3b8);
-    --link-color: var(--tg-theme-link-color, #38bdf8);
-    --button-color: var(--tg-theme-button-color, #2563eb);
-    --button-text-color: var(--tg-theme-button-text-color, #ffffff);
-    
-    --card-bg: var(--secondary-bg-color, #1e293b);
-    --border-color: rgba(255, 255, 255, 0.08);
-    --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    --accent-gold: #f59e0b;
-    --accent-green: #10b981;
-    --accent-red: #ef4444;
+    /* Exact Palette from Screenshot */
+    --bg-cream: #FAF8F5;
+    --text-primary: #141726;
+    --text-secondary: #6E7387;
+    --text-muted: #94A3B8;
+
+    /* Card Pastels */
+    --card-lilac-bg: #F3E8FF;
+    --card-lilac-tag: #7C3AED;
+    --card-lilac-pill-bg: rgba(255, 255, 255, 0.75);
+    --card-lilac-title: #2E1065;
+    --card-lilac-meta: #7E22CE;
+
+    --card-mint-bg: #EAF8F1;
+    --card-mint-label: #15803D;
+    --card-mint-stat: #065F46;
+    --card-mint-sub: #166534;
+
+    --card-yellow-bg: #FEF7DC;
+    --card-yellow-label: #B45309;
+    --card-yellow-title: #451A03;
+    --card-yellow-sub: #92400E;
+
+    --card-white-bg: #FFFFFF;
+    --card-border: #F1EDE6;
+    --checkbox-border: #CBD5E1;
+    --checkbox-checked: #6366F1;
+
+    --btn-midnight: #141726;
+    --btn-midnight-hover: #1E2338;
 }
 
 * {
@@ -21,619 +42,609 @@
     margin: 0;
     padding: 0;
     -webkit-tap-highlight-color: transparent;
-    user-select: none;
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background-color: var(--bg-color);
-    color: var(--text-color);
-    line-height: 1.5;
-    padding-bottom: 80px;
-    overflow-x: hidden;
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: var(--bg-cream);
+    color: var(--text-primary);
+    line-height: 1.4;
+    padding: 12px 18px 90px 18px;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
 }
 
 .app-container {
-    max-width: 600px;
+    width: 100%;
+    max-width: 440px;
     margin: 0 auto;
-    min-height: 100vh;
     display: flex;
     flex-direction: column;
 }
 
-/* --- Top Header --- */
-.app-header {
+/* --- 1. Top Bar --- */
+.top-nav-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
-    background: var(--card-bg);
-    border-bottom: 1px solid var(--border-color);
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    backdrop-filter: blur(12px);
+    padding: 8px 0 16px 0;
+    user-select: none;
 }
 
-.user-profile {
+.nav-text-btn {
+    background: none;
+    border: none;
+    color: #7E8B9B;
+    font-size: 14.5px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 8px;
+    transition: opacity 0.2s;
+}
+
+.nav-text-btn:active {
+    opacity: 0.6;
+}
+
+.top-nav-title {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 6px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #1E2235;
 }
 
-.user-avatar {
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    background: var(--primary-gradient);
-    color: #fff;
-    font-weight: 700;
-    font-size: 17px;
+.top-nav-title .flower-icon {
+    font-size: 16px;
+}
+
+.nav-more-btn {
+    background: none;
+    border: none;
+    color: #7E8B9B;
+    cursor: pointer;
+    padding: 4px 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
+    border-radius: 8px;
+    transition: opacity 0.2s;
 }
 
-.user-info {
+.nav-more-btn:active {
+    opacity: 0.6;
+}
+
+/* --- 2. Hero Greeting Section --- */
+.hero-section {
     display: flex;
-    flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
 }
 
-.user-greeting {
+.hero-text-block {
+    flex: 1;
+    padding-right: 12px;
+}
+
+.hero-greeting {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
+    line-height: 1.2;
+    margin-bottom: 5px;
+}
+
+.hero-subtitle {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    line-height: 1.35;
+}
+
+.hero-avatar-badge {
+    width: 52px;
+    height: 52px;
+    background: #FEF3C7;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(254, 243, 199, 0.7);
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+
+.hero-avatar-badge:active {
+    transform: scale(0.95);
+}
+
+.sticker-emoji {
+    font-size: 24px;
+}
+
+/* --- 3. Featured Card (Lilac) --- */
+.featured-card {
+    background: var(--card-lilac-bg);
+    border-radius: 24px;
+    padding: 20px 22px;
+    margin-bottom: 14px;
+    box-shadow: 0 4px 14px rgba(124, 58, 237, 0.06);
+    transition: transform 0.15s ease;
+    cursor: pointer;
+}
+
+.featured-card:active {
+    transform: scale(0.99);
+}
+
+.card-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.card-status-tag {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--card-lilac-tag);
+}
+
+.card-time-pill {
+    background: var(--card-lilac-pill-bg);
+    color: var(--card-lilac-tag);
+    font-size: 12.5px;
     font-weight: 700;
-    font-size: 16px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+}
+
+.featured-card-title {
+    font-size: 18.5px;
+    font-weight: 800;
+    color: var(--card-lilac-title);
+    line-height: 1.25;
+    margin-bottom: 6px;
     letter-spacing: -0.2px;
 }
 
-.user-group {
-    font-size: 12px;
-    color: var(--hint-color);
+.featured-card-meta {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--card-lilac-meta);
 }
 
-.icon-btn {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--border-color);
-    color: var(--text-color);
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
+/* --- 4. Two-Column Mini Cards --- */
+.mini-cards-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 22px;
+}
+
+.mini-card {
+    border-radius: 22px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 126px;
+    transition: transform 0.15s ease;
+    cursor: pointer;
+}
+
+.mini-card:active {
+    transform: scale(0.98);
+}
+
+.mint-card {
+    background: var(--card-mint-bg);
+    box-shadow: 0 4px 12px rgba(6, 95, 70, 0.04);
+}
+
+.mini-card-label {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.mint-card .mini-card-label {
+    color: var(--card-mint-label);
+}
+
+.mini-card-stat {
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1.05;
+    margin-bottom: 6px;
+    letter-spacing: -0.5px;
+}
+
+.mint-card .mini-card-stat {
+    color: var(--card-mint-stat);
+}
+
+.mini-card-sub {
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.mint-card .mini-card-sub {
+    color: var(--card-mint-sub);
+}
+
+.butter-card {
+    background: var(--card-yellow-bg);
+    box-shadow: 0 4px 12px rgba(180, 83, 9, 0.04);
+}
+
+.butter-card .mini-card-label {
+    color: var(--card-yellow-label);
+}
+
+.mini-card-stat-text {
+    font-size: 16.5px;
+    font-weight: 800;
+    color: var(--card-yellow-title);
+    line-height: 1.25;
+    margin-bottom: 6px;
+    letter-spacing: -0.2px;
+}
+
+.butter-card .mini-card-sub {
+    color: var(--card-yellow-sub);
+}
+
+/* --- Section Nav & Tabs --- */
+.section-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.section-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.2px;
+}
+
+.segmented-nav {
+    display: flex;
+    background: rgba(226, 232, 240, 0.45);
+    padding: 3px;
+    border-radius: 999px;
+    gap: 3px;
+    margin-bottom: 16px;
+    user-select: none;
+}
+
+.seg-pill-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 8px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.seg-pill-btn.active {
+    background: #FFFFFF;
+    color: var(--text-primary);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* --- 5. Tasks & Deadlines List Cards --- */
+.tasks-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 24px;
+}
+
+.task-item-card {
+    background: var(--card-white-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 20px;
+    padding: 16px 18px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 2px 8px rgba(20, 23, 38, 0.02);
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.task-item-card:active {
+    transform: scale(0.99);
+}
+
+.custom-checkbox {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    border: 1.8px solid var(--checkbox-border);
+    background: #FFFFFF;
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
+    flex-shrink: 0;
     transition: all 0.2s ease;
 }
 
-.icon-btn:active {
-    transform: scale(0.92);
+.custom-checkbox svg {
+    display: none;
+    width: 14px;
+    height: 14px;
+    stroke: #FFFFFF;
+    stroke-width: 3;
 }
 
-/* --- Content Container --- */
-.content-container {
-    padding: 16px;
+.task-item-card.is-checked .custom-checkbox {
+    background: var(--checkbox-checked);
+    border-color: var(--checkbox-checked);
+}
+
+.task-item-card.is-checked .custom-checkbox svg {
+    display: block;
+}
+
+.task-meta-block {
+    display: flex;
+    flex-direction: column;
     flex: 1;
 }
 
+.task-title {
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.3;
+    margin-bottom: 3px;
+    transition: all 0.2s ease;
+}
+
+.task-item-card.is-checked .task-title {
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+
+.task-due-date {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+/* --- Queue Section & Lab Picker --- */
 .tab-content {
     display: none;
-    animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tab-content.active {
     display: block;
+    animation: fadeIn 0.2s ease;
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(6px); }
+    from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* --- Subject Switcher (Pills) --- */
-.subject-switcher {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
+.queue-mode-box {
+    background: var(--card-white-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 22px;
+    padding: 18px 20px;
     margin-bottom: 16px;
+    box-shadow: 0 2px 10px rgba(20, 23, 38, 0.02);
 }
 
-.subj-btn {
-    background: var(--card-bg);
-    border: 1.5px solid var(--border-color);
-    border-radius: 14px;
-    padding: 12px 14px;
-    color: var(--text-color);
+.subj-pills-row {
     display: flex;
-    align-items: center;
     gap: 8px;
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-    position: relative;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-.subj-btn.active {
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.12);
-    color: #60a5fa;
-}
-
-.subj-icon {
-    font-size: 18px;
-}
-
-.subj-name {
-    flex: 1;
-    text-align: left;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.badge {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-color);
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 700;
-}
-
-.subj-btn.active .badge {
-    background: #2563eb;
-    color: #fff;
-}
-
-/* --- Cards --- */
-.card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 16px;
-    margin-bottom: 16px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-}
-
-.card-title {
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.card-subtitle {
-    font-size: 13px;
-    color: var(--hint-color);
     margin-bottom: 14px;
 }
 
-/* --- My Status Card --- */
-.my-status-card {
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(30, 41, 59, 0.8) 100%);
-    border: 1.5px solid rgba(59, 130, 246, 0.3);
-}
-
-.status-header {
+.subj-pill-tab {
+    flex: 1;
+    background: #F1F5F9;
+    border: 1px solid transparent;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text-secondary);
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
 }
 
-.status-label {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--hint-color);
+.subj-pill-tab.active {
+    background: #F3E8FF;
+    color: #6D28D9;
+    border-color: #DDD6FE;
 }
 
-.status-pos {
-    font-size: 24px;
-    font-weight: 800;
-    color: #38bdf8;
+.subj-pill-badge {
+    background: rgba(0, 0, 0, 0.08);
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 99px;
 }
 
-.status-details {
-    display: flex;
-    justify-content: space-between;
-    font-size: 13px;
-    margin-bottom: 12px;
+.subj-pill-tab.active .subj-pill-badge {
+    background: #7C3AED;
+    color: #FFFFFF;
 }
 
-.status-labs {
-    font-weight: 700;
-    color: #f8fafc;
-}
-
-.status-prio {
-    color: var(--accent-gold);
-    font-weight: 600;
-}
-
-/* --- Lab Picker Grid --- */
-.labs-grid {
+/* Labs 1..9 Pastel Grid */
+.labs-grid-picker {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 8px;
-    margin-bottom: 14px;
+    margin: 14px 0;
 }
 
-.lab-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1.5px solid var(--border-color);
-    border-radius: 12px;
+.lab-pill-btn {
+    background: #FAF8F5;
+    border: 1.5px solid #F1EDE6;
+    border-radius: 14px;
     padding: 12px 6px;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-color);
-    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    color: #475569;
     display: flex;
-    flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 4px;
+    cursor: pointer;
     transition: all 0.15s ease;
 }
 
-.lab-btn:active {
-    transform: scale(0.94);
-}
-
-.lab-btn.selected {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: #10b981;
-    color: #34d399;
-}
-
-.priority-preview {
-    background: rgba(245, 158, 11, 0.12);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    border-radius: 10px;
-    padding: 8px 12px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #fbbf24;
-    margin-bottom: 14px;
-    text-align: center;
-}
-
-/* --- Buttons --- */
-.btn {
-    border: none;
-    border-radius: 12px;
-    font-family: inherit;
-    font-weight: 700;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    transition: all 0.2s ease;
-}
-
-.btn-primary {
-    background: var(--button-color);
-    color: var(--button-text-color);
-    padding: 14px 18px;
-    font-size: 15px;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
-}
-
-.btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-}
-
-.btn-primary:active:not(:disabled) {
+.lab-pill-btn.selected {
+    background: #EAF8F1;
+    border-color: #86EFAC;
+    color: #065F46;
     transform: scale(0.98);
 }
 
-.btn-secondary {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-color);
-    padding: 8px 14px;
-}
-
-.btn-sm {
-    font-size: 13px;
-    border-radius: 8px;
-}
-
-.btn-block {
-    width: 100%;
-}
-
-.btn-text {
-    background: none;
-    border: none;
-    color: var(--link-color);
+.queue-prio-banner {
+    background: #FEF7DC;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 12.5px;
     font-weight: 600;
-    font-size: 13px;
-    cursor: pointer;
-    padding: 4px 8px;
-}
-
-/* --- Live Queue List --- */
-.queue-list-section {
-    margin-top: 10px;
-}
-
-.section-header {
+    color: #92400E;
+    margin-bottom: 12px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
+    gap: 6px;
 }
 
-.section-header h3 {
-    font-size: 16px;
-    font-weight: 700;
-}
-
-.queue-list {
+.queue-items-flow {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
-.queue-item {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    padding: 12px 14px;
+.queue-person-card {
+    background: var(--card-white-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 12px 16px;
     display: flex;
     align-items: center;
     gap: 12px;
-    transition: all 0.2s ease;
 }
 
-.queue-item.is-me {
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.08);
+.queue-person-card.is-me {
+    border-color: #86EFAC;
+    background: #F0FDF4;
 }
 
-.queue-rank {
-    font-size: 16px;
-    font-weight: 800;
+.queue-rank-badge {
     width: 28px;
-    text-align: center;
-    color: var(--hint-color);
-}
-
-.queue-rank.gold {
-    color: var(--accent-gold);
-    font-size: 20px;
-}
-
-.queue-avatar {
-    width: 36px;
-    height: 36px;
+    height: 28px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.08);
+    background: #F1F5F9;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: 700;
-    font-size: 14px;
 }
 
-.queue-user-meta {
+.queue-rank-badge.gold {
+    background: #FEF3C7;
+    color: #D97706;
+}
+
+.queue-name-col {
     flex: 1;
     display: flex;
     flex-direction: column;
 }
 
-.queue-user-name {
-    font-weight: 700;
+.queue-name {
     font-size: 14px;
-}
-
-.queue-user-handle {
-    font-size: 12px;
-    color: var(--hint-color);
-}
-
-.queue-lab-badge {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    padding: 4px 8px;
-    border-radius: 8px;
-    font-size: 12px;
     font-weight: 700;
+    color: var(--text-primary);
 }
 
-.empty-state {
-    text-align: center;
-    padding: 30px 20px;
-    color: var(--hint-color);
-}
-
-.empty-icon {
-    font-size: 36px;
-    margin-bottom: 8px;
-}
-
-/* --- Schedule Tab --- */
-.schedule-controls {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
-}
-
-.day-toggle {
-    display: flex;
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    padding: 3px;
-}
-
-.toggle-btn {
-    background: none;
-    border: none;
-    padding: 6px 14px;
-    border-radius: 9px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--hint-color);
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-
-.toggle-btn.active {
-    background: var(--button-color);
-    color: #fff;
-}
-
-.week-info {
-    font-size: 13px;
+.queue-lab-tag {
+    background: #F3E8FF;
+    color: #6D28D9;
+    font-size: 11.5px;
     font-weight: 700;
-    color: var(--hint-color);
+    padding: 4px 10px;
+    border-radius: 99px;
 }
 
-.schedule-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 16px;
-    margin-bottom: 12px;
-}
-
-.lesson-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
-}
-
-.lesson-time {
-    font-size: 13px;
-    font-weight: 700;
-    color: #38bdf8;
-}
-
-.lesson-type {
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.08);
-}
-
-.lesson-title {
-    font-size: 16px;
-    font-weight: 700;
-    margin-bottom: 4px;
-}
-
-.lesson-teacher {
-    font-size: 13px;
-    color: var(--hint-color);
-    margin-bottom: 12px;
-}
-
-.lesson-join-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: #10b981;
-    color: #fff;
-    padding: 8px 14px;
-    border-radius: 10px;
-    text-decoration: none;
-    font-weight: 700;
-    font-size: 13px;
-    transition: transform 0.15s ease;
-}
-
-.lesson-join-btn:active {
-    transform: scale(0.96);
-}
-
-/* --- Deadlines Tab --- */
-.deadline-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    padding: 14px;
-    margin-bottom: 10px;
-}
-
-.deadline-meta {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 6px;
-    font-size: 12px;
-}
-
-.deadline-course {
-    font-weight: 700;
-    color: #38bdf8;
-}
-
-.deadline-due {
-    font-weight: 700;
-    color: var(--accent-red);
-}
-
-.deadline-title {
-    font-size: 15px;
-    font-weight: 600;
-    margin-bottom: 8px;
-}
-
-/* --- Bottom Nav --- */
-.bottom-nav {
+/* --- 6. Sticky Bottom Action Button --- */
+.bottom-action-wrapper {
     position: fixed;
-    bottom: 0;
+    bottom: 16px;
     left: 0;
     right: 0;
-    background: var(--card-bg);
-    border-top: 1px solid var(--border-color);
     display: flex;
-    justify-content: space-around;
-    padding: 8px 0 calc(8px + env(safe-area-inset-bottom, 0px));
-    z-index: 100;
-    backdrop-filter: blur(12px);
+    justify-content: center;
+    padding: 0 18px;
+    z-index: 50;
+    pointer-events: none;
 }
 
-.nav-item {
-    background: none;
+.primary-pill-btn {
+    pointer-events: auto;
+    width: 100%;
+    max-width: 440px;
+    height: 54px;
+    background: var(--btn-midnight);
+    color: #FFFFFF;
+    border-radius: 999px;
     border: none;
-    color: var(--hint-color);
+    font-size: 15.5px;
+    font-weight: 700;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    font-weight: 600;
+    justify-content: center;
+    gap: 8px;
+    box-shadow: 0 10px 24px rgba(20, 23, 38, 0.28);
     cursor: pointer;
-    transition: color 0.15s ease;
-    width: 60px;
+    transition: transform 0.15s ease, background-color 0.2s;
+    user-select: none;
 }
 
-.nav-item.active {
-    color: #3b82f6;
+.primary-pill-btn:active {
+    transform: scale(0.97);
+    background: var(--btn-midnight-hover);
+}
+
+.primary-pill-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
 }
 
 .hidden {
     display: none !important;
-}
-
-.spinner {
-    width: 28px;
-    height: 28px;
-    border: 3px solid rgba(255, 255, 255, 0.1);
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin: 0 auto 10px;
-}
-
-@keyframes spin {
-    to { transform: rotate(360deg); }
 }

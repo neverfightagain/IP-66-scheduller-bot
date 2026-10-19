@@ -52,7 +52,7 @@ class TestWebAppServer(AioHTTPTestCase):
         resp = await self.client.request("GET", "/app")
         self.assertEqual(resp.status, 200)
         text = await resp.text()
-        self.assertIn("ІП-66 Студентський Портал", text)
+        self.assertIn("Мой Кампус", text)
         self.assertIn("telegram-web-app.js", text)
 
     async def test_api_queue_flow(self):
