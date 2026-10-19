@@ -304,6 +304,10 @@ async def init_db():
             await db.execute("ALTER TABLE assignments ADD COLUMN ai_summary TEXT;")
         except Exception:
             pass
+        try:
+            await db.execute("ALTER TABLE assignments ADD COLUMN alternate_link TEXT;")
+        except Exception:
+            pass
 
         # 4. Таблица обработанных видео с лекциями (YouTube)
         await db.execute("""
@@ -657,14 +661,15 @@ async def add_assignment_db(
     due_date: str,
     description: str = "",
     ai_summary: str = "",
-    status: str = "active"
+    status: str = "active",
+    alternate_link: str = ""
 ) -> bool:
-    """Додати або оновити дедлайн завдання (з підтримкою AI-вижимки)."""
+    """Додати або оновити дедлайн завдання (з підтримкою AI-вижимки та посилання)."""
     async with get_db() as db:
         await db.execute("""
-            INSERT OR REPLACE INTO assignments (id, course_id, title, due_date, description, ai_summary, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (assignment_id, course_name, title, due_date, description, ai_summary, status))
+            INSERT OR REPLACE INTO assignments (id, course_id, title, due_date, description, ai_summary, status, alternate_link)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (assignment_id, course_name, title, due_date, description, ai_summary, status, alternate_link))
         await db.commit()
         return True
 
@@ -696,25 +701,43 @@ async def cleanup_past_assignments_db():
 async def get_active_assignments_db() -> list[dict]:
     """Получить все активные задания, отсортированные по дедлайну."""
     async with get_db() as db:
-        async with db.execute("""
-            SELECT id, course_id, title, description, ai_summary, due_date, status
-            FROM assignments
-            WHERE status = 'active'
-            ORDER BY due_date ASC
-        """) as cursor:
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+        try:
+            async with db.execute("""
+                SELECT id, course_id, title, description, ai_summary, due_date, status, alternate_link
+                FROM assignments
+                WHERE status = 'active'
+                ORDER BY due_date ASC
+            """) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception:
+            async with db.execute("""
+                SELECT id, course_id, title, description, ai_summary, due_date, status
+                FROM assignments
+                WHERE status = 'active'
+                ORDER BY due_date ASC
+            """) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
 
 
 async def get_all_assignments_map_db() -> dict[str, dict]:
     """Отримати мапу ВСІХ завдань (активних і архівованих) для запобігання повторних викликів AI."""
     async with get_db() as db:
-        async with db.execute("""
-            SELECT id, course_id, title, description, ai_summary, due_date, status
-            FROM assignments
-        """) as cursor:
-            rows = await cursor.fetchall()
-            return {row["id"]: dict(row) for row in rows}
+        try:
+            async with db.execute("""
+                SELECT id, course_id, title, description, ai_summary, due_date, status, alternate_link
+                FROM assignments
+            """) as cursor:
+                rows = await cursor.fetchall()
+                return {row["id"]: dict(row) for row in rows}
+        except Exception:
+            async with db.execute("""
+                SELECT id, course_id, title, description, ai_summary, due_date, status
+                FROM assignments
+            """) as cursor:
+                rows = await cursor.fetchall()
+                return {row["id"]: dict(row) for row in rows}
 
 
 async def delete_assignment_db(assignment_id: str) -> bool:

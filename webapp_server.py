@@ -195,6 +195,47 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             day_param = request.query.get("day", "today").strip().lower()
             now_kyiv = datetime.now(KYIV_TZ)
 
+            if day_param == "week":
+                monday = now_kyiv.date() - timedelta(days=now_kyiv.weekday())
+                week_days = []
+                current_week_num = 1
+                all_week_lessons = []
+                for day_offset in range(6):  # Пн, Вв, Ср, Чт, Пт, Сб (без неділі)
+                    cur_date = monday + timedelta(days=day_offset)
+                    w_num, d_name, day_lessons = await get_lessons_for_date(KPI_GROUP_ID, cur_date)
+                    current_week_num = w_num
+                    enriched_day_lessons = []
+                    for l in day_lessons:
+                        lname = l.get("name", "")
+                        ltype = l.get("type", "")
+                        link_info = get_lesson_link_info(lname, ltype)
+                        item = {
+                            **l,
+                            "day_name": d_name,
+                            "date": cur_date.strftime("%Y-%m-%d"),
+                            "link_url": link_info.get("url", "").strip(),
+                            "link_comment": link_info.get("comment", "").strip()
+                        }
+                        enriched_day_lessons.append(item)
+                        all_week_lessons.append(item)
+
+                    week_days.append({
+                        "date": cur_date.strftime("%Y-%m-%d"),
+                        "date_formatted": cur_date.strftime("%d.%m"),
+                        "day_name": d_name,
+                        "lessons": enriched_day_lessons,
+                        "is_today": cur_date == now_kyiv.date()
+                    })
+
+                return json_response_cors({
+                    "success": True,
+                    "mode": "week",
+                    "week": current_week_num,
+                    "days": week_days,
+                    "lessons": all_week_lessons,
+                    "total": len(all_week_lessons)
+                })
+
             if day_param == "tomorrow":
                 target_date = (now_kyiv + timedelta(days=1)).date()
             else:
@@ -216,6 +257,7 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
 
             return json_response_cors({
                 "success": True,
+                "mode": "day",
                 "date": target_date.strftime("%Y-%m-%d"),
                 "day_name": day_name,
                 "week": week_num,
@@ -267,8 +309,11 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 elif any(m in course_raw for m in ["Мат", "Матем", "ЛААГ"]):
                     course_clean = "Вища математика"
 
+                alt_link = a.get("alternate_link") or "https://classroom.google.com"
+
                 clean_deadlines.append({
                     **a,
+                    "alternate_link": alt_link,
                     "course_clean": course_clean,
                     "due_time": due_dt.strftime("%Y-%m-%d %H:%M"),
                     "due_formatted": due_dt.strftime("%d.%m о %H:%M")

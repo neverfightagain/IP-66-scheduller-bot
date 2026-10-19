@@ -18,7 +18,7 @@
         <section class="hero-section" style="padding-top: 10px;">
             <div class="hero-text-block">
                 <h1 class="hero-greeting" id="user-greeting">Привіт, студент! ✨</h1>
-                <p class="hero-subtitle" id="hero-subtitle">Завантаження розкладу та черг...</p>
+                <p class="hero-subtitle" id="hero-subtitle">Група ІП-66 • ФІОТ</p>
             </div>
             
             <div class="hero-actions-col">
@@ -36,17 +36,7 @@
             </div>
         </section>
 
-        <!-- 2. Динамічна бузкова картка поточної/наступної пари -->
-        <section class="featured-card" id="featured-card" role="button" tabindex="0">
-            <div class="card-top-row">
-                <span class="card-status-tag" id="featured-status-tag">Розклад пар</span>
-                <span class="card-time-pill" id="featured-time-pill">Сьогодні</span>
-            </div>
-            <h2 class="featured-card-title" id="featured-card-title">Завантаження...</h2>
-            <p class="featured-card-meta" id="featured-card-meta">Натисніть для перегляду посилання</p>
-        </section>
-
-        <!-- 3. Дві інтерактивні пастельні міні-картки: Черга ОП (М'ятна) та Черга АСД (Пісочна) -->
+        <!-- 2. Дві інтерактивні пастельні міні-картки: Черга ОП (М'ятна) та Черга АСД (Пісочна) -->
         <section class="mini-cards-grid">
             <!-- Ліва картка: М'ятна (Черга ОП) -->
             <div class="mini-card mint-card" id="mini-card-op" role="button" tabindex="0">
@@ -63,17 +53,11 @@
             </div>
         </section>
 
-        <!-- 4. Перемикач розділів (Капсульні таби) -->
+        <!-- 3. Перемикач розділів (Капсульні таби: Черга / Розклад / Дедлайни) -->
         <div class="segmented-nav">
-            <button class="seg-pill-btn active" data-tab="tab-queue">
-                ✋ Жива черга
-            </button>
-            <button class="seg-pill-btn" data-tab="tab-schedule">
-                📅 Розклад пар
-            </button>
-            <button class="seg-pill-btn" data-tab="tab-deadlines">
-                ⏳ Актуальні дедлайни
-            </button>
+            <button class="seg-pill-btn active" data-tab="tab-queue">Черга</button>
+            <button class="seg-pill-btn" data-tab="tab-schedule">Розклад</button>
+            <button class="seg-pill-btn" data-tab="tab-deadlines">Дедлайни</button>
         </div>
 
         <!-- РОЗДІЛ 1: Жива черга на захист (ОП / АСД) -->
@@ -126,7 +110,7 @@
                 </div>
 
                 <div id="queue-empty" class="hidden" style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">
-                    ☕ Черга наразі порожня. Будьте першим!
+                    🎉 Черга наразі порожня. Будьте першим!
                 </div>
 
                 <div class="queue-items-flow" id="queue-items-container">
@@ -138,11 +122,12 @@
         <!-- РОЗДІЛ 2: Розклад пар (Клікабельні картки з відкриттям модалки та лінка) -->
         <section id="tab-schedule" class="tab-content">
             <div class="queue-mode-box">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <div class="schedule-header-row">
                     <span class="section-title" id="schedule-day-title">Розклад на сьогодні</span>
-                    <div style="display:flex; gap:6px;">
-                        <button id="btn-day-today" class="subj-pill-badge" style="border:none; cursor:pointer; background:#F3E8FF; color:#6D28D9; font-weight:700; padding:6px 12px; border-radius:99px;">Сьогодні</button>
-                        <button id="btn-day-tomorrow" class="subj-pill-badge" style="border:none; cursor:pointer; background:#F1F5F9; color:#64748B; font-weight:700; padding:6px 12px; border-radius:99px;">Завтра</button>
+                    <div class="schedule-filter-pills">
+                        <button id="btn-day-today" class="sched-pill-btn active">Сьогодні</button>
+                        <button id="btn-day-tomorrow" class="sched-pill-btn">Завтра</button>
+                        <button id="btn-day-week" class="sched-pill-btn">Тиждень</button>
                     </div>
                 </div>
 
@@ -164,7 +149,7 @@
         <section id="tab-deadlines" class="tab-content">
             <div class="queue-mode-box">
                 <div class="section-header-row" style="margin-bottom:10px;">
-                    <span class="section-title">Актуальні дедлайни</span>
+                    <span class="section-title">Дедлайни</span>
                     <span class="subj-pill-badge" id="deadlines-count-badge">0</span>
                 </div>
 

@@ -201,7 +201,8 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                         due_date=due_date_str,
                         description=desc,
                         ai_summary=ai_sum,
-                        status=status
+                        status=status,
+                        alternate_link=alt_link
                     )
                 else:
                     # АБСОЛЮТНО НОВЕ ЗАВДАННЯ: викликаємо Gemini рівно 1 раз
@@ -223,7 +224,8 @@ async def sync_classroom_tasks(bot=None, delete_demo_on_success: bool = True) ->
                         due_date=due_date_str,
                         description=desc,
                         ai_summary=ai_sum,
-                        status=status
+                        status=status,
+                        alternate_link=alt_link
                     )
                     existing_assignments_map[cw_id] = {"ai_summary": ai_sum, "status": status}
 

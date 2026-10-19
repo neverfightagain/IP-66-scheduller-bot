@@ -130,12 +130,22 @@ class TestWebAppServer(AioHTTPTestCase):
         self.assertIn("Жива черга на захист: ОП", args[0])
 
     async def test_api_schedule_and_deadlines(self):
-        # GET /api/schedule
+        # GET /api/schedule?day=today
         resp_sched = await self.client.request("GET", "/api/schedule?day=today")
         self.assertEqual(resp_sched.status, 200)
         data_sched = await resp_sched.json()
         self.assertTrue(data_sched["success"])
         self.assertIn("lessons", data_sched)
+        self.assertEqual(data_sched["mode"], "day")
+
+        # GET /api/schedule?day=week
+        resp_week = await self.client.request("GET", "/api/schedule?day=week")
+        self.assertEqual(resp_week.status, 200)
+        data_week = await resp_week.json()
+        self.assertTrue(data_week["success"])
+        self.assertEqual(data_week["mode"], "week")
+        self.assertIn("days", data_week)
+        self.assertEqual(len(data_week["days"]), 6)  # Пн..Сб
 
         # GET /api/deadlines
         resp_dead = await self.client.request("GET", "/api/deadlines")
@@ -143,6 +153,8 @@ class TestWebAppServer(AioHTTPTestCase):
         data_dead = await resp_dead.json()
         self.assertTrue(data_dead["success"])
         self.assertIn("deadlines", data_dead)
+        for dl in data_dead["deadlines"]:
+            self.assertIn("alternate_link", dl)
 
 
 if __name__ == "__main__":
