@@ -927,3 +927,157 @@ async def cb_cache_refresh(callback: CallbackQuery):
     except Exception as e:
         await callback.answer(f"⚠️ Campus API недоступний: {e}. Використовується старий кеш.", show_alert=True)
 
+
+# ==========================================
+# СИСТЕМА РОЗПОДІЛУ ВАРІАНТІВ І ТЕМ (/claim)
+# ==========================================
+
+def format_claims_view(subject: str, claims: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
+    """Форматування списку розподілу варіантів/тем та кнопок управління."""
+    clean_subj = subject.strip()
+    header = f"📌 <b>Розподіл варіантів і тем: {clean_subj}</b>\n"
+    if not claims:
+        text = f"{header}\n<i>Наразі ніхто не закріпив за собою жодного варіанту чи теми.</i>\n\nЩоб зайняти, надішліть:\n<code>/claim {clean_subj} | Номер_або_тема</code>"
+    else:
+        text = f"{header}\n"
+        for c in claims:
+            user_display = c["user_name"]
+            if c.get("username"):
+                user_display += f" (@{c['username']})"
+            text += f"• <b>Варіант/тема {c['variant_or_topic']}</b>: {user_display}\n"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🆓 Вільні варіанти (1-30)", callback_data=f"clm:free:{clean_subj}"),
+                InlineKeyboardButton(text="❌ Звільнити мій", callback_data=f"clm:unclaim:{clean_subj}"),
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Оновити", callback_data=f"clm:refresh:{clean_subj}"),
+            ]
+        ]
+    )
+    return text, kb
+
+
+@router.message(Command("claim"))
+async def cmd_claim(message: Message):
+    from database import claim_topic_db, get_claims_by_subject_db
+    raw = message.text.replace("/claim", "", 1).strip()
+    parts = [p.strip() for p in raw.split("|")] if "|" in raw else raw.split(maxsplit=1)
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        await safe_answer(
+            message,
+            "ℹ️ <b>Формат закріплення варіанту чи теми:</b>\n"
+            "<code>/claim &lt;Предмет&gt; | &lt;Номер варіанту або Назва теми&gt;</code>\n\n"
+            "Приклад:\n"
+            "<code>/claim АСД | 7</code>\n"
+            "<code>/claim ООП | Патерн Singleton та Factory</code>"
+        )
+        return
+
+    subject = parts[0]
+    variant = parts[1]
+    user = message.from_user
+
+    ok, msg, holder = await claim_topic_db(
+        chat_id=message.chat.id,
+        subject=subject,
+        variant_or_topic=variant,
+        user_id=user.id,
+        user_name=user.full_name,
+        username=user.username
+    )
+
+    claims = await get_claims_by_subject_db(message.chat.id, subject)
+    text, kb = format_claims_view(subject, claims)
+    await safe_answer(message, f"{'✅' if ok else '⚠️'} {msg}\n\n" + text, reply_markup=kb)
+
+
+@router.message(Command("unclaim"))
+async def cmd_unclaim(message: Message):
+    from database import unclaim_topic_db, get_claims_by_subject_db
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await safe_answer(message, "ℹ️ Вкажіть предмет: <code>/unclaim &lt;Предмет&gt;</code>")
+        return
+
+    subject = parts[1].strip()
+    ok = await unclaim_topic_db(message.chat.id, subject, message.from_user.id)
+    msg = f"✅ Ви успішно звільнили свій варіант з предмету «{subject}»." if ok else f"ℹ️ Ви не мали закріпленого варіанту з предмету «{subject}»."
+
+    claims = await get_claims_by_subject_db(message.chat.id, subject)
+    text, kb = format_claims_view(subject, claims)
+    await safe_answer(message, f"{msg}\n\n" + text, reply_markup=kb)
+
+
+@router.message(Command("claims"))
+async def cmd_claims(message: Message):
+    from database import get_claims_by_subject_db
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await safe_answer(message, "ℹ️ Вкажіть назву предмету:\n<code>/claims &lt;Предмет&gt;</code> (наприклад, <code>/claims АСД</code>)")
+        return
+
+    subject = parts[1].strip()
+    claims = await get_claims_by_subject_db(message.chat.id, subject)
+    text, kb = format_claims_view(subject, claims)
+    await safe_answer(message, text, reply_markup=kb)
+
+
+@router.message(Command("free_variants"))
+async def cmd_free_variants(message: Message):
+    from database import get_free_variants_db
+    raw = message.text.replace("/free_variants", "", 1).strip()
+    parts = raw.split()
+    if not parts:
+        await safe_answer(message, "ℹ️ Вкажіть назву предмету:\n<code>/free_variants &lt;Предмет&gt; [кількість=30]</code>")
+        return
+
+    subject = parts[0]
+    max_v = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+    free_nums = await get_free_variants_db(message.chat.id, subject, max_variants=max_v)
+
+    if not free_nums:
+        await safe_answer(message, f"❌ Усі варіанти з 1 по {max_v} з предмету «{subject}» вже зайняті!")
+    else:
+        list_str = ", ".join(str(n) for n in free_nums)
+        await safe_answer(
+            message,
+            f"🆓 <b>Вільні варіанти з «{subject}» (з 1 по {max_v}):</b>\n\n{list_str}\n\n"
+            f"💡 <i>Щоб зайняти, напишіть:</i>\n<code>/claim {subject} | {free_nums[0]}</code>"
+        )
+
+
+@router.callback_query(F.data.startswith("clm:"))
+async def cb_claims_actions(callback: CallbackQuery):
+    from database import unclaim_topic_db, get_claims_by_subject_db, get_free_variants_db
+    data = callback.data.split(":")
+    if len(data) < 3:
+        await callback.answer()
+        return
+
+    action = data[1]
+    subject = data[2]
+    chat_id = callback.message.chat.id
+    user = callback.from_user
+
+    if action == "unclaim":
+        ok = await unclaim_topic_db(chat_id, subject, user.id)
+        await callback.answer("Варіант звільнено" if ok else "У вас не було закріпленого варіанту", show_alert=False)
+    elif action == "refresh":
+        await callback.answer("Дані оновлено", show_alert=False)
+    elif action == "free":
+        free_nums = await get_free_variants_db(chat_id, subject, max_variants=30)
+        free_str = ", ".join(str(n) for n in free_nums[:15])
+        if len(free_nums) > 15:
+            free_str += "..."
+        await callback.answer(f"Вільні (1-30): {free_str}" if free_nums else "Всі варіанти зайняті!", show_alert=True)
+        return
+
+    claims = await get_claims_by_subject_db(chat_id, subject)
+    text, kb = format_claims_view(subject, claims)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
