@@ -378,7 +378,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!btnPrimaryAction || !btnPrimaryActionText) return;
 
         if (currentTab === 'tab-queue') {
-            const myItem = currentQueue.find(item => item.user_id === currentUser.id);
+            const myItem = currentQueue.find(item => isMeItem(item));
             if (myItem) {
                 const myIdx = currentQueue.indexOf(myItem) + 1;
                 btnPrimaryActionText.textContent = `✅ Ви у черзі #${myIdx} (${activeSubject})`;
@@ -415,7 +415,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
 
             if (currentTab === 'tab-queue') {
-                const myItem = currentQueue.find(item => item.user_id === currentUser.id);
+                const myItem = currentQueue.find(item => isMeItem(item));
                 if (myItem) {
                     showToast(`Ви вже у черзі ${activeSubject} на позиції #${currentQueue.indexOf(myItem) + 1}!`);
                     return;
@@ -543,6 +543,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (subjTabOp) subjTabOp.addEventListener('click', () => switchQueueSubject('ОП'));
     if (subjTabAsd) subjTabAsd.addEventListener('click', () => switchQueueSubject('АСД'));
 
+    function isMeItem(item) {
+        if (!item) return false;
+        if (currentUser.id && item.user_id && item.user_id === currentUser.id) return true;
+        if (currentUser.username && item.username && currentUser.username.toLowerCase() === item.username.toLowerCase()) return true;
+        if (currentUser.name && item.user_name && currentUser.name.toLowerCase() === item.user_name.toLowerCase()) return true;
+        if (currentUser.realName && item.user_name) {
+            const surname = currentUser.realName.toLowerCase().split(' ')[0];
+            if (item.user_name.toLowerCase().includes(surname)) return true;
+        }
+        return false;
+    }
+
     // Отримання черги
     async function fetchQueue() {
         try {
@@ -569,7 +581,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fetchOtherQueueCount(otherSubj);
 
             // Статус користувача в черзі
-            const meIndex = currentQueue.findIndex(item => item.user_id === currentUser.id);
+            const meIndex = currentQueue.findIndex(item => isMeItem(item));
             if (meIndex !== -1) {
                 const me = currentQueue[meIndex];
                 if (myStatusBox) myStatusBox.classList.remove('hidden');
@@ -617,7 +629,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (queueEmptyEl) queueEmptyEl.classList.add('hidden');
         queueItemsContainer.innerHTML = items.map((item, idx) => {
-            const isMe = item.user_id === currentUser.id;
+            const isMe = isMeItem(item);
             const rank = idx + 1;
             const isGold = rank === 1;
             const rankClass = isGold ? 'gold' : '';
@@ -672,6 +684,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnLeaveQueue) {
         btnLeaveQueue.addEventListener('click', async () => {
             if (!confirm(`Ви дійсно бажаєте вийти з черги ${activeSubject}?`)) return;
+            const myItem = currentQueue.find(item => isMeItem(item));
+            const uidToLeave = myItem ? myItem.user_id : currentUser.id;
             try {
                 const res = await fetch('/api/queue/leave', {
                     method: 'POST',
@@ -679,7 +693,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({
                         chat_id: chatId,
                         subject: activeSubject,
-                        user_id: currentUser.id
+                        user_id: uidToLeave
                     })
                 });
                 const data = await res.json();
