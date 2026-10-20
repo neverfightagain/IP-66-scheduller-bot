@@ -334,7 +334,13 @@ async def check_new_classroom_tasks(bot: Bot):
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Настроить и запустить планировщик задач."""
-    scheduler = AsyncIOScheduler(timezone=KYIV_TZ)
+    scheduler = AsyncIOScheduler(
+        timezone=KYIV_TZ,
+        job_defaults={
+            "misfire_grace_time": 3600,
+            "coalesce": True,
+        }
+    )
 
     # 1. Час ранкового дайджесту для навчальних будніх днів (08:00)
     # Навчальні дні групи ІП-66: понеділок, вівторок, четвер, п'ятниця, субота
