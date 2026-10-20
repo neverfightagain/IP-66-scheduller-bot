@@ -132,6 +132,27 @@ async def main():
 
     asyncio.create_task(run_startup_syncs())
 
+    # Фоновий самопінг для захисту від засинання Render Free Tier
+    async def run_keep_alive():
+        await asyncio.sleep(60)  # Чекаємо запуску веб-сервера
+        ping_url = f"{WEBAPP_URL}/health" if WEBAPP_URL else None
+        if not ping_url or "localhost" in ping_url or "127.0.0.1" in ping_url:
+            return
+        logger.info(f"Активуємо Keep-Alive пінгер для Render: {ping_url}")
+        import aiohttp
+        while True:
+            try:
+                await asyncio.sleep(600)  # кожні 10 хвилин (таймаут сну Render - 15 хв)
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+                    async with session.get(ping_url) as resp:
+                        logger.debug(f"Keep-Alive ping status: {resp.status}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e_ping:
+                logger.debug(f"Keep-Alive ping note: {e_ping}")
+
+    asyncio.create_task(run_keep_alive())
+
     # Удаляем вебхуки и запускаем поллинг МИТТЄВО
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info(f"Бот @{me.username} запущений і очікує повідомлень...")

@@ -149,6 +149,7 @@ async def process_scheduled_deletions(bot: Bot):
 
 async def send_morning_digest(bot: Bot):
     """Отправить утренний дайджест во все подписанные чаты и топики и запланировать его автоудаление после окончания пар."""
+    global sent_alerts
     from database import get_subscribed_chats_db, add_scheduled_deletion_db
     targets = await get_subscribed_chats_db()
     if not targets:
@@ -157,7 +158,10 @@ async def send_morning_digest(bot: Bot):
 
     await refresh_today_cache()
     now_dt = datetime.now(KYIV_TZ)
-    end_dt = calculate_lessons_end_datetime(_today_cached_lessons, now_dt.date())
+    today = now_dt.date()
+    sent_alerts.add(f"morning_digest_{today.isoformat()}")
+
+    end_dt = calculate_lessons_end_datetime(_today_cached_lessons, today)
     delete_time_str = end_dt.strftime("%H:%M")
 
     text, kb = format_morning_digest(
@@ -200,6 +204,14 @@ async def check_upcoming_lessons(bot: Bot):
     if _today_cache_date != today:
         sent_alerts.clear()
         await refresh_today_cache()
+
+    # 2. Catch-up: якщо о 08:00 сервер перезапускався або спав на Render — відправляємо розклад
+    digest_key = f"morning_digest_{today.isoformat()}"
+    if now.hour >= 8 and now.hour < 16 and digest_key not in sent_alerts:
+        if _today_cached_lessons:
+            sent_alerts.add(digest_key)
+            logger.info(f"Catch-up: виявлено пропущений ранковий дайджест на {today}, надсилаємо зараз...")
+            asyncio.create_task(send_morning_digest(bot))
 
     from database import get_subscribed_chats_db
     targets = await get_subscribed_chats_db()
@@ -335,6 +347,8 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=CronTrigger(day_of_week="mon,tue,thu,fri,sat", hour=digest_hour, minute=digest_minute, timezone=KYIV_TZ),
         args=[bot],
         name="morning_digest",
+        misfire_grace_time=7200,
+        coalesce=True,
     )
 
     # 2. Проверка приближения пары каждую минуту
@@ -343,6 +357,8 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=IntervalTrigger(minutes=1, timezone=KYIV_TZ),
         args=[bot],
         name="check_upcoming_lessons",
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # 3. Обновление кэша в 06:00 каждое утро
@@ -350,6 +366,8 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         refresh_today_cache,
         trigger=CronTrigger(hour=6, minute=0, timezone=KYIV_TZ),
         name="daily_cache_refresh",
+        misfire_grace_time=7200,
+        coalesce=True,
     )
 
     # 4. Вечерний дайджест дедлайнов в 21:00 каждый день (включая выходные)
@@ -358,6 +376,8 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=CronTrigger(day_of_week="mon-sun", hour=21, minute=0, timezone=KYIV_TZ),
         args=[bot],
         name="evening_digest",
+        misfire_grace_time=7200,
+        coalesce=True,
     )
 
     # 5. Утренний дайджест дедлайнов выходного дня в 10:00 (среда и воскресенье — дни без пар)
