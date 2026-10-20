@@ -367,7 +367,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${!link ? '<div style="color:var(--text-secondary); font-size:13px;">ℹ️ Посилання на онлайн-заняття ще не збережено старостою.</div>' : ''}
             `,
             linkUrl: link,
-            linkText: '🚀 Приєднатися (Zoom / Teams / Meet)'
+            linkText: '🚀 Приєднатися (Zoom / Teams)'
         });
     }
 
@@ -455,7 +455,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
                 if (sorted.length === 0) {
-                    showToast("⚠️ Оберіть номер лаби для захисту у сітці 1..9!");
+                    showToast("⚠️ Оберіть номер лаби для захисту у сітці 1-9!");
                     if (labsGridEl) labsGridEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     return;
                 }
