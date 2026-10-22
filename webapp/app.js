@@ -191,6 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const queueListTitle = document.getElementById('queue-list-title');
     const badgeOpCount = document.getElementById('badge-op-count');
     const badgeAsdCount = document.getElementById('badge-asd-count');
+    const badgeEngCount = document.getElementById('badge-eng-count');
 
     // Schedule Elements
     const btnDayToday = document.getElementById('btn-day-today');
@@ -2474,6 +2475,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderEnglishBoards() {
         if (!engBoardsList) return;
+        const totalEngGroups = (englishBoards || []).reduce((sum, b) => sum + (b.groups?.length || 0), 0);
+        if (badgeEngCount) badgeEngCount.textContent = totalEngGroups;
+
         if (!englishBoards || englishBoards.length === 0) {
             engBoardsList.innerHTML = '';
             if (engEmptyMsg) engEmptyMsg.classList.remove('hidden');

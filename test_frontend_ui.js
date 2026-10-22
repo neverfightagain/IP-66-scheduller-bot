@@ -168,7 +168,7 @@ const elementIds = [
     'mini-card-op', 'mini-card-asd', 'mini-op-stat', 'mini-op-sub', 'mini-asd-stat', 'mini-asd-sub',
     'subj-tab-op', 'subj-tab-asd', 'subj-tab-eng', 'queue-op-asd-view', 'labs-grid', 'priority-preview', 'preview-text',
     'my-status-box', 'my-pos-text', 'my-labs-text', 'btn-leave-queue', 'btn-next-student',
-    'queue-items-container', 'queue-empty', 'queue-list-title', 'badge-op-count', 'badge-asd-count',
+    'queue-items-container', 'queue-empty', 'queue-list-title', 'badge-op-count', 'badge-asd-count', 'badge-eng-count',
     'btn-day-today', 'btn-day-tomorrow', 'btn-day-week', 'schedule-items-container', 'schedule-loading',
     'schedule-day-title', 'deadlines-items-container', 'deadlines-count-badge',
     'subjects-tab-op', 'subjects-tab-asd', 'subject-progress-hero', 'subject-hero-title',
@@ -903,8 +903,10 @@ async function runTests() {
     assert.ok(!englishProjectsContainer.classList.contains('hidden'), 'English projects container must be visible again');
     assert.ok(bottomWrapperEl.classList.contains('hidden'), 'Bottom action wrapper must be hidden again');
 
-    // 13.2: Verify board rendering
+    // 13.2: Verify board rendering & pill badge count
     const engBoardsList = getOrCreateElement('eng-boards-list');
+    const badgeEngCount = getOrCreateElement('badge-eng-count');
+    assert.strictEqual(String(badgeEngCount.textContent), '1', 'English pill badge count must match total groups count across boards');
     assert.ok(engBoardsList.innerHTML.includes('English Presentation Project: Tech Topics'), 'Must render board title');
     assert.ok(engBoardsList.innerHTML.includes('Cloud Native Microservices'), 'Must render initial topic');
     assert.ok(engBoardsList.innerHTML.includes('Олександр Староста'), 'Must render existing member in group 10');
