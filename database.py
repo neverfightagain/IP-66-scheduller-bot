@@ -906,6 +906,42 @@ async def remove_scheduled_deletion_db(deletion_id: int):
         await db.execute("DELETE FROM scheduled_deletions WHERE id = ?", (deletion_id,))
         await db.commit()
 
+async def has_alert_been_sent_db(alert_key: str) -> bool:
+    """Перевіряє, чи було надіслано сповіщення з даним ключем (персистентно в БД)."""
+    async with get_db() as db:
+        # 1. Перевіряємо в app_settings
+        async with db.execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (f"sent_alert:{alert_key}",)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return True
+
+        # 2. Додатковий захист для ранкового дайджесту через scheduled_deletions
+        if alert_key.startswith("morning_digest_"):
+            date_part = alert_key.replace("morning_digest_", "").strip()
+            if date_part:
+                async with db.execute(
+                    "SELECT id FROM scheduled_deletions WHERE tag = 'morning_digest' AND delete_at LIKE ? LIMIT 1",
+                    (f"{date_part}%",)
+                ) as cur:
+                    del_row = await cur.fetchone()
+                    if del_row:
+                        return True
+    return False
+
+
+async def mark_alert_sent_db(alert_key: str) -> None:
+    """Записує ключ надісланого сповіщення в app_settings."""
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO app_settings (key, value)
+            VALUES (?, '1')
+            ON CONFLICT(key) DO UPDATE SET value = '1'
+        """, (f"sent_alert:{alert_key}",))
+        await db.commit()
+
 
 # ==========================================
 # ЖИВА ЧЕРГА НА ЗАХИСТ ЛАБОРАТОРНИХ

@@ -6,7 +6,7 @@
     <title>ІП-66 Портал</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/webapp/app.css?v=2.9">
+    <link rel="stylesheet" href="/webapp/app.css?v=3.0">
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -270,8 +270,8 @@
                     <div style="font-size:13.5px; font-weight:700; color:var(--text-primary); margin-bottom:10px;">
                         📅 Розклад на дату
                     </div>
-                    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
-                        <input type="date" id="admin-schedule-date" class="admin-input" style="flex:1;">
+                    <div class="admin-date-row">
+                        <input type="date" id="admin-schedule-date" class="admin-input">
                         <button class="admin-pill-sm active" id="btn-admin-date-today">Сьогодні</button>
                         <button class="admin-pill-sm" id="btn-admin-date-tomorrow">Завтра</button>
                     </div>
@@ -387,6 +387,6 @@
     <!-- Toast сповіщення -->
     <div id="toast" class="toast-popup hidden"></div>
 
-    <script src="/webapp/app.js?v=2.9"></script>
+    <script src="/webapp/app.js?v=3.0"></script>
 </body>
 </html>

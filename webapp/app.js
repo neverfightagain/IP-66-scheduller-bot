@@ -1778,6 +1778,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const cancBadge = isCanc ? '<span class="badge-cancelled">🚫 Скасовано</span>' : '';
                 const cancReason = (isCanc && l.cancel_reason) ? `<div class="cancel-reason-callout">⚠️ Причина: ${escapeHtml(l.cancel_reason)}</div>` : '';
 
+                const badgesRowHtml = (isCustom || isCanc)
+                    ? `<div class="admin-card-badges">${customBadge}${cancBadge}</div>`
+                    : '';
+
                 const actionBtn = isCanc
                     ? `<button class="admin-btn admin-btn-restore btn-admin-act-uncancel" data-pair="${l.pair_number}">↩️ Відновити</button>`
                     : `<button class="admin-btn admin-btn-cancel btn-admin-act-cancel" data-pair="${l.pair_number}" data-name="${escapeHtml(l.name)}">🚫 Скасувати</button>`;
@@ -1793,16 +1797,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 return `
                     <div class="admin-lesson-card ${isCanc ? 'lesson-cancelled' : ''}">
                         <div class="admin-card-head">
-                            <div class="admin-card-tags">
-                                <span class="admin-card-time">Пара ${l.pair_number} • ${l.time} (${escapeHtml(l.type || 'Пара')})</span>
-                                ${customBadge}
-                                ${cancBadge}
-                            </div>
+                            <span class="admin-card-time">Пара ${l.pair_number} • ${l.time} (${escapeHtml(l.type || 'Пара')})</span>
                             <div class="admin-card-actions">
                                 ${actionBtn}
                                 ${deleteBtn}
                             </div>
                         </div>
+                        ${badgesRowHtml}
                         <div class="admin-card-title">${escapeHtml(l.name)}</div>
                         <div class="admin-card-footer">
                             <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">

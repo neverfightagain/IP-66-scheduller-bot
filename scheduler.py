@@ -177,21 +177,34 @@ async def process_scheduled_deletions(bot: Bot):
 async def send_morning_digest(bot: Bot):
     """Отправить утренний дайджест во все подписанные чаты и топики и запланировать его автоудаление после окончания пар."""
     global sent_alerts
-    from database import get_subscribed_chats_db, add_scheduled_deletion_db
+    from database import (
+        get_subscribed_chats_db,
+        add_scheduled_deletion_db,
+        has_alert_been_sent_db,
+        mark_alert_sent_db,
+        get_cancelled_pairs_for_date_db
+    )
+    now_dt = datetime.now(KYIV_TZ)
+    today = now_dt.date()
+    digest_key = f"morning_digest_{today.isoformat()}"
+
+    if digest_key in sent_alerts or await has_alert_been_sent_db(digest_key):
+        logger.info(f"Ранковий дайджест на {today} вже було надіслано раніше. Пропускаємо.")
+        sent_alerts.add(digest_key)
+        return
+
     targets = await get_subscribed_chats_db()
     if not targets:
         logger.info("Немає підписаних чатів для ранкового дайджесту.")
         return
 
     await refresh_today_cache()
-    now_dt = datetime.now(KYIV_TZ)
-    today = now_dt.date()
-    sent_alerts.add(f"morning_digest_{today.isoformat()}")
+    sent_alerts.add(digest_key)
+    await mark_alert_sent_db(digest_key)
 
     end_dt = calculate_lessons_end_datetime(_today_cached_lessons, today)
     delete_time_str = end_dt.strftime("%H:%M")
 
-    from database import get_cancelled_pairs_for_date_db
     cancelled_pairs = await get_cancelled_pairs_for_date_db(today.isoformat())
 
     text, kb = format_morning_digest(
@@ -238,11 +251,16 @@ async def check_upcoming_lessons(bot: Bot):
 
     # 2. Catch-up: якщо о 08:00 сервер перезапускався або спав на Render — відправляємо розклад
     digest_key = f"morning_digest_{today.isoformat()}"
-    if now.hour >= 8 and now.hour < 16 and digest_key not in sent_alerts:
-        if _today_cached_lessons:
+    from database import has_alert_been_sent_db, mark_alert_sent_db
+    if now.hour == 8 and now.minute <= 30 and digest_key not in sent_alerts:
+        if not await has_alert_been_sent_db(digest_key):
+            if _today_cached_lessons:
+                sent_alerts.add(digest_key)
+                await mark_alert_sent_db(digest_key)
+                logger.info(f"Catch-up: виявлено пропущений ранковий дайджест на {today}, надсилаємо зараз...")
+                asyncio.create_task(send_morning_digest(bot))
+        else:
             sent_alerts.add(digest_key)
-            logger.info(f"Catch-up: виявлено пропущений ранковий дайджест на {today}, надсилаємо зараз...")
-            asyncio.create_task(send_morning_digest(bot))
 
     from database import get_subscribed_chats_db
     targets = await get_subscribed_chats_db()
@@ -271,7 +289,8 @@ async def check_upcoming_lessons(bot: Bot):
             # Захищає від пропуску нагадування при секундних лагах черги на сервері
             if (target_minutes - 2.5) <= diff_minutes <= (target_minutes + 0.8):
                 alert_key = f"{today.isoformat()}_{lesson['time']}_{lesson['name']}_{target_minutes}"
-                if alert_key in sent_alerts:
+                if alert_key in sent_alerts or await has_alert_been_sent_db(alert_key):
+                    sent_alerts.add(alert_key)
                     continue
 
                 # Перевірка, чи не скасована пара старостою або викладачем
@@ -302,6 +321,7 @@ async def check_upcoming_lessons(bot: Bot):
                         asyncio.create_task(delete_message_after_delay(bot, cid, sent_msg.message_id, delay_seconds=20 * 60))
 
                 sent_alerts.add(alert_key)
+                await mark_alert_sent_db(alert_key)
                 logger.info(f"Надіслано сповіщення за {target_minutes} хв: {lesson['name']} ({lesson['time']})")
 
 
