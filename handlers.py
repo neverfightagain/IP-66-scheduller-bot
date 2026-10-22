@@ -236,7 +236,7 @@ async def cmd_start(message: Message):
         subj_suffix = f" ({target_subj})" if target_subj else ""
         text = (
             f"👋 Привіт, <b>{escape_html_text(display_first_name)}</b>!\n\n"
-            f"🚀 Твій персональний доступ до <b>ІП-66 Портал (Mini App)</b> готовий.\n"
+            f"🚀 Твій персональний доступ до <b>IP-66 Hub</b> готовий.\n"
             f"У додатку доступні живі черги{subj_suffix}, швидкий запис на здачу лаб, розклад занять та актуальні дедлайни.\n\n"
             f"👇 <b>Натисни кнопку нижче, щоб відкрити:</b>"
         )
@@ -244,7 +244,7 @@ async def cmd_start(message: Message):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="🚀 Відкрити ІП-66 Портал (Mini App)",
+                        text="🚀 Відкрити IP-66 Hub",
                         web_app=WebAppInfo(url=app_full_url)
                     )
                 ]
@@ -312,13 +312,13 @@ async def cmd_app(message: Message):
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="🚀 Відкрити в Telegram Mini App", url=deep_link)
+                    InlineKeyboardButton(text="🚀 Відкрити IP-66 Hub", url=deep_link)
                 ]
             ]
         )
         await safe_answer(
             message,
-            "📱 <b>ІП-66 Портал & Жива Черга</b>\n\n"
+            "📱 <b>IP-66 Hub & Жива Черга</b>\n\n"
             "Щоб відкрити Mini App з повною синхронізацією твого Telegram-профілю, перейди в особисті повідомлення з ботом:",
             reply_markup=kb
         )
@@ -339,7 +339,7 @@ async def cmd_app(message: Message):
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="🚀 Відкрити ІП-66 Портал (Mini App)", web_app=WebAppInfo(url=app_url))
+                    InlineKeyboardButton(text="🚀 Відкрити IP-66 Hub", web_app=WebAppInfo(url=app_url))
                 ]
             ]
         )
@@ -890,21 +890,17 @@ def format_queues_hub_view(op_items: list[dict], asd_items: list[dict], chat_id:
             text += f"<i>...та ще {len(asd_items) - 5} студентів у черзі</i>\n"
         text += "\n"
 
-    text += "👇 <i>Оберіть чергу або відкрийте персональний Mini App:</i>"
+    text += "💡 <i>Щоб зайняти або змінити чергу, скористайтеся додатком <b>IP-66 Hub</b> 👇</i>"
 
     app_url = f"{WEBAPP_URL}/app?chat_id={chat_id}"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                make_webapp_button("📱 Відкрити в Telegram Mini App", app_url, chat_id=chat_id),
+                make_webapp_button("📱 Відкрити IP-66 Hub", app_url, chat_id=chat_id),
             ],
             [
                 InlineKeyboardButton(text=f"💻 Черга ОП ({len(op_items)})", callback_data="q:view:ОП"),
                 InlineKeyboardButton(text=f"🧮 Черга АСД ({len(asd_items)})", callback_data="q:view:АСД"),
-            ],
-            [
-                InlineKeyboardButton(text="✋ Зайняти ОП", callback_data="q:pick:ОП:hub"),
-                InlineKeyboardButton(text="✋ Зайняти АСД", callback_data="q:pick:АСД:hub"),
             ],
             [
                 InlineKeyboardButton(text="🔄 Оновити обидві черги", callback_data="q:hub_refresh"),
@@ -1004,33 +1000,24 @@ def format_queue_view(subject: str, queue_items: list[dict], chat_id: int = 0) -
             text += f"{badge}<b>{user_display}</b>{lab_info}\n"
         text += "\n💡 <i>Пріоритет: старіші практичні роботи спливають нагору черги.</i>"
 
+    text += "\n💡 <i>Щоб зайняти або змінити чергу, скористайтеся додатком <b>IP-66 Hub</b> 👇</i>"
+
     other_subj = "АСД" if clean_subj == "ОП" else "ОП"
     other_icon = "🧮" if clean_subj == "ОП" else "💻"
 
     app_url = f"{WEBAPP_URL}/app?chat_id={chat_id}&subject={clean_subj}"
     kb_rows = [
         [
-            make_webapp_button("📱 Відкрити в Telegram Mini App", app_url, chat_id=chat_id, subject=clean_subj),
+            make_webapp_button("📱 Відкрити IP-66 Hub", app_url, chat_id=chat_id, subject=clean_subj),
         ],
         [
-            InlineKeyboardButton(text="✋ Зайняти чергу", callback_data=f"q:pick:{clean_subj}"),
-            InlineKeyboardButton(text="🚪 Вийти", callback_data=f"q:leave:{clean_subj}"),
-        ],
-        [
+            InlineKeyboardButton(text=f"{other_icon} Черга {other_subj}", callback_data=f"q:view:{other_subj}"),
             InlineKeyboardButton(text="🔄 Оновити", callback_data=f"q:refresh:{clean_subj}"),
-            InlineKeyboardButton(text="🧹 Очистити чергу", callback_data=f"q:clear:{clean_subj}"),
+        ],
+        [
+            InlineKeyboardButton(text="🏠 Усі черги", callback_data="q:hub"),
         ]
     ]
-
-    if clean_subj in ("ОП", "АСД"):
-        kb_rows.append([
-            InlineKeyboardButton(text=f"{other_icon} До черги {other_subj}", callback_data=f"q:view:{other_subj}"),
-            InlineKeyboardButton(text="🏠 Усі черги", callback_data="q:hub"),
-        ])
-    else:
-        kb_rows.append([
-            InlineKeyboardButton(text="🏠 Усі черги", callback_data="q:hub"),
-        ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     return text, kb
@@ -1058,24 +1045,7 @@ async def cmd_queue(message: Message):
         await set_queue_message_id_db(message.chat.id, msg.message_id, subject)
 
 
-@router.message(Command("queue_op", "op"))
-async def cmd_queue_op(message: Message):
-    from database import get_active_queue_db, set_queue_message_id_db
-    items = await get_active_queue_db(message.chat.id, "ОП")
-    text, kb = format_queue_view("ОП", items, chat_id=message.chat.id)
-    msg = await safe_answer(message, text, reply_markup=kb)
-    if msg:
-        await set_queue_message_id_db(message.chat.id, msg.message_id, "ОП")
 
-
-@router.message(Command("queue_asd", "asd"))
-async def cmd_queue_asd(message: Message):
-    from database import get_active_queue_db, set_queue_message_id_db
-    items = await get_active_queue_db(message.chat.id, "АСД")
-    text, kb = format_queue_view("АСД", items, chat_id=message.chat.id)
-    msg = await safe_answer(message, text, reply_markup=kb)
-    if msg:
-        await set_queue_message_id_db(message.chat.id, msg.message_id, "АСД")
 
 
 @router.message(Command("sync_queue", "sync_queues"))
@@ -1109,90 +1079,7 @@ async def cmd_sync_queue(message: Message, bot: Bot):
         await safe_answer(message, err_text)
 
 
-@router.message(Command("join_op"))
-async def cmd_join_op(message: Message):
-    from database import join_queue_db, get_active_queue_db
-    lab_number = extract_command_args(message.text)
-    if not lab_number:
-        items = await get_active_queue_db(message.chat.id, "ОП")
-        user_item = next((it for it in items if it["user_id"] == message.from_user.id), None)
-        preselected = []
-        if user_item and user_item.get("lab_number"):
-            preselected = [int(x) for x in re.findall(r'\d+', user_item["lab_number"])]
-        text, kb = format_lab_picker_view("ОП", selected_labs=preselected)
-        await safe_answer(message, text, reply_markup=kb)
-        return
 
-    user = message.from_user
-    ok, msg, pos = await join_queue_db(message.chat.id, "ОП", user.id, user.full_name, user.username, lab_number, append=True)
-    items = await get_active_queue_db(message.chat.id, "ОП")
-    text, kb = format_queue_view("ОП", items, chat_id=message.chat.id)
-    await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
-
-
-@router.message(Command("join_asd"))
-async def cmd_join_asd(message: Message):
-    from database import join_queue_db, get_active_queue_db
-    lab_number = extract_command_args(message.text)
-    if not lab_number:
-        items = await get_active_queue_db(message.chat.id, "АСД")
-        user_item = next((it for it in items if it["user_id"] == message.from_user.id), None)
-        preselected = []
-        if user_item and user_item.get("lab_number"):
-            preselected = [int(x) for x in re.findall(r'\d+', user_item["lab_number"])]
-        text, kb = format_lab_picker_view("АСД", selected_labs=preselected)
-        await safe_answer(message, text, reply_markup=kb)
-        return
-
-    user = message.from_user
-    ok, msg, pos = await join_queue_db(message.chat.id, "АСД", user.id, user.full_name, user.username, lab_number, append=True)
-    items = await get_active_queue_db(message.chat.id, "АСД")
-    text, kb = format_queue_view("АСД", items, chat_id=message.chat.id)
-    await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
-
-
-@router.message(Command("join_queue"))
-async def cmd_join_queue(message: Message):
-    from database import join_queue_db, get_active_queue_db
-    raw = extract_command_args(message.text)
-    parts = [p.strip() for p in raw.split("|")] if "|" in raw else raw.split(maxsplit=1)
-    subject = normalize_queue_subject(parts[0]) if len(parts) > 0 and parts[0] else "ОП"
-    lab_number = parts[1] if len(parts) > 1 else ""
-
-    if not lab_number:
-        items = await get_active_queue_db(message.chat.id, subject)
-        user_item = next((it for it in items if it["user_id"] == message.from_user.id), None)
-        preselected = []
-        if user_item and user_item.get("lab_number"):
-            preselected = [int(x) for x in re.findall(r'\d+', user_item["lab_number"])]
-        text, kb = format_lab_picker_view(subject, selected_labs=preselected)
-        await safe_answer(message, text, reply_markup=kb)
-        return
-
-    user = message.from_user
-    ok, msg, pos = await join_queue_db(message.chat.id, subject, user.id, user.full_name, user.username, lab_number, append=True)
-    items = await get_active_queue_db(message.chat.id, subject)
-    text, kb = format_queue_view(subject, items, chat_id=message.chat.id)
-    await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
-
-
-@router.message(Command("leave_queue", "leave_op", "leave_asd"))
-async def cmd_leave_queue(message: Message):
-    from database import leave_queue_db, get_active_queue_db
-    cmd = message.text.split()[0].lower()
-    if "op" in cmd:
-        subject = "ОП"
-    elif "asd" in cmd:
-        subject = "АСД"
-    else:
-        arg = extract_command_args(message.text)
-        subject = normalize_queue_subject(arg) if arg else "ОП"
-
-    ok = await leave_queue_db(message.chat.id, subject, message.from_user.id)
-    msg = f"✅ Ви вийшли з черги {subject}." if ok else f"ℹ️ Вас не було в черзі {subject}."
-    items = await get_active_queue_db(message.chat.id, subject)
-    text, kb = format_queue_view(subject, items, chat_id=message.chat.id)
-    await safe_answer(message, f"{msg}\n\n" + text, reply_markup=kb)
 
 
 @router.message(Command("next_in_queue", "next_op", "next_asd"))

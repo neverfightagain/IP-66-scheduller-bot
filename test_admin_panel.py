@@ -208,6 +208,40 @@ class AdminPanelTestCase(AioHTTPTestCase):
         data = await resp.json()
         self.assertEqual(len(data.get("items", [])), 0)
 
+    @unittest_run_loop
+    async def test_broadcast_schedule_notification(self):
+        from unittest.mock import AsyncMock
+        from webapp_server import broadcast_schedule_change_notification
+        from aiogram import Bot
+
+        mock_bot = AsyncMock(spec=Bot)
+        mock_bot.send_message = AsyncMock(return_value=AsyncMock(message_id=1234))
+
+        # 1. In test mode -> only owner receives DM with test badge
+        await database.set_admin_test_mode_db(True)
+        await broadcast_schedule_change_notification(mock_bot, "Тестове сповіщення")
+        self.assertTrue(mock_bot.send_message.called)
+        call_args = mock_bot.send_message.call_args[1]
+        self.assertEqual(call_args["chat_id"], OWNER_ID)
+        self.assertIn("Тест-режим: сповіщення бачите тільки ви", call_args["text"])
+        self.assertIn("Тестове сповіщення", call_args["text"])
+
+        # 2. In production mode (test_mode = False) -> all subscribed chats receive it
+        await database.set_admin_test_mode_db(False)
+        await database.add_subscription_db(chat_id=-1001234567890)
+        mock_bot.send_message.reset_mock()
+
+        await broadcast_schedule_change_notification(mock_bot, "Бойове сповіщення")
+        self.assertTrue(mock_bot.send_message.called)
+        sent_chat_ids = [call[1]["chat_id"] for call in mock_bot.send_message.call_args_list]
+        self.assertIn(-1001234567890, sent_chat_ids)
+        sent_texts = [call[1]["text"] for call in mock_bot.send_message.call_args_list]
+        self.assertTrue(any("Бойове сповіщення" in t for t in sent_texts))
+        self.assertFalse(any("Тест-режим" in t for t in sent_texts))
+
+        # Re-enable test mode for safety
+        await database.set_admin_test_mode_db(True)
+
 
 if __name__ == "__main__":
     unittest.main()

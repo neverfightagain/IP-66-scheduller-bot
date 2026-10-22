@@ -1346,16 +1346,26 @@ async def cancel_pair_db(
         return True
 
 
-async def uncancel_pair_db(date_str: str, pair_number: int) -> bool:
-    """Відновити скасовану пару (зняти скасування)."""
+async def uncancel_pair_db(date_str: str, pair_number: int) -> dict | bool:
+    """Відновити скасовану пару (зняти скасування). Повертає дані скасованої пари або False."""
     clean_date = date_str.strip()
     async with get_db() as db:
-        cursor = await db.execute("""
+        async with db.execute("""
+            SELECT date, pair_number, subject, reason
+            FROM cancelled_pairs
+            WHERE date = ? AND pair_number = ?
+        """, (clean_date, pair_number)) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return False
+            cancelled_info = dict(row)
+
+        await db.execute("""
             DELETE FROM cancelled_pairs
             WHERE date = ? AND pair_number = ?
         """, (clean_date, pair_number))
         await db.commit()
-        return cursor.rowcount > 0
+        return cancelled_info
 
 
 async def get_cancelled_pairs_for_date_db(date_str: str) -> dict[int, dict]:
@@ -2213,17 +2223,27 @@ async def get_custom_lessons_for_date_db(date_str: str) -> list[dict]:
             return [dict(r) for r in rows]
 
 
-async def delete_custom_lesson_db(lesson_id: int | str) -> bool:
-    """Видалити додаткову або перенесену пару за її ID."""
+async def delete_custom_lesson_db(lesson_id: int | str) -> dict | None:
+    """Видалити додаткову або перенесену пару за її ID. Повертає дані видаленої пари або None."""
     try:
         lid = int(str(lesson_id).strip())
     except (ValueError, TypeError):
-        return False
+        return None
 
     async with get_db() as db:
-        cur = await db.execute("DELETE FROM custom_lessons WHERE id = ?", (lid,))
+        async with db.execute("""
+            SELECT id, date, pair_number, name, type, lecturer, time
+            FROM custom_lessons
+            WHERE id = ?
+        """, (lid,)) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            lesson_info = dict(row)
+
+        await db.execute("DELETE FROM custom_lessons WHERE id = ?", (lid,))
         await db.commit()
-        return cur.rowcount > 0
+        return lesson_info
 
 
 

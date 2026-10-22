@@ -66,7 +66,7 @@ async def main():
     try:
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
-                text="📱 ІП-66 Портал",
+                text="📱 IP-66 Hub",
                 web_app=WebAppInfo(url=f"{WEBAPP_URL}/app")
             )
         )

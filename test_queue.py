@@ -158,25 +158,35 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Алгоритми та структури даних (АСД)", hub_text)
         self.assertIn("Марія Марієнко", hub_text)
 
-        # Перевірка наявності кнопок навігації в Hub
+        # Перевірка тексту та наявності кнопок навігації в Hub
+        self.assertIn("IP-66 Hub", hub_text)
         button_callbacks = [b.callback_data for row in hub_kb.inline_keyboard for b in row]
         self.assertIn("q:view:ОП", button_callbacks)
         self.assertIn("q:view:АСД", button_callbacks)
-        self.assertIn("q:pick:ОП:hub", button_callbacks)
-        self.assertIn("q:pick:АСД:hub", button_callbacks)
+        self.assertIn("q:hub_refresh", button_callbacks)
+        self.assertNotIn("q:pick:ОП:hub", button_callbacks)
+        self.assertNotIn("q:pick:АСД:hub", button_callbacks)
 
         # Перевірка наявності швидкого перемикання між ОП та АСД в окремих чергах
         op_text, op_kb = format_queue_view("ОП", op_items)
+        self.assertIn("IP-66 Hub", op_text)
         op_buttons = [b.callback_data for row in op_kb.inline_keyboard for b in row]
         self.assertIn("q:view:АСД", op_buttons)
-        self.assertIn("q:pick:ОП", op_buttons)
+        self.assertIn("q:refresh:ОП", op_buttons)
         self.assertIn("q:hub", op_buttons)
+        self.assertNotIn("q:pick:ОП", op_buttons)
+        self.assertNotIn("q:leave:ОП", op_buttons)
+        self.assertNotIn("q:clear:ОП", op_buttons)
 
         asd_text, asd_kb = format_queue_view("АСД", asd_items)
+        self.assertIn("IP-66 Hub", asd_text)
         asd_buttons = [b.callback_data for row in asd_kb.inline_keyboard for b in row]
         self.assertIn("q:view:ОП", asd_buttons)
-        self.assertIn("q:pick:АСД", asd_buttons)
+        self.assertIn("q:refresh:АСД", asd_buttons)
         self.assertIn("q:hub", asd_buttons)
+        self.assertNotIn("q:pick:АСД", asd_buttons)
+        self.assertNotIn("q:leave:АСД", asd_buttons)
+        self.assertNotIn("q:clear:АСД", asd_buttons)
 
         # Очищення
         await clear_queue_db(self.chat_id, "ОП")
@@ -503,7 +513,7 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
         mock_msg.answer.assert_called_once()
         sent_text, kwargs = mock_msg.answer.call_args[0][0], mock_msg.answer.call_args[1]
         self.assertIn("Привіт", sent_text)
-        self.assertIn("ІП-66 Портал", sent_text)
+        self.assertIn("IP-66 Hub", sent_text)
         reply_markup = kwargs.get("reply_markup")
         self.assertIsNotNone(reply_markup)
         tma_btn = reply_markup.inline_keyboard[0][0]

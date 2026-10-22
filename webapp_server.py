@@ -1,10 +1,12 @@
 import os
 import json
+import asyncio
 import logging
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from aiohttp import web
 from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup
 
 from config import (
     BASE_DIR,
@@ -13,7 +15,10 @@ from config import (
     TURSO_DATABASE_URL,
     SQLITE_CLOUD_URL,
     WEBAPP_URL,
+    OWNER_ID,
 )
+from handlers import make_webapp_button
+from scheduler import safe_send_message, refresh_today_cache
 from database import (
     get_subscribed_chats_db,
     get_active_queue_db,
@@ -82,6 +87,40 @@ async def sync_queue_message_in_chat(bot: Bot | None, chat_id: int, subject: str
     except Exception as e:
         logger.debug(f"Не вдалося оновити повідомлення черги в чаті {chat_id}: {e}")
         return False
+
+
+async def broadcast_schedule_change_notification(bot: Bot | None, text: str):
+    """
+    Розсилає сповіщення про зміну в розкладі з урахуванням режиму тестування (test_mode).
+    - Якщо test_mode == True: надсилає тільки Власнику в ЛС (OWNER_ID) з поміткою про тест.
+    - Якщо test_mode == False: розсилає у всі підписані чати/топіки.
+    """
+    if bot is None:
+        return
+
+    try:
+        test_mode = await get_admin_test_mode_db()
+        app_url = f"{WEBAPP_URL}/app"
+
+        if test_mode:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                make_webapp_button("📱 Відкрити IP-66 Hub", app_url, chat_id=OWNER_ID)
+            ]])
+            test_text = f"🧪 <i>[Тест-режим: сповіщення бачите тільки ви]</i>\n\n{text}"
+            await safe_send_message(bot, OWNER_ID, test_text, reply_markup=kb)
+            logger.info("Надіслано сповіщення про зміну розкладу у тест-режимі (тільки власнику).")
+        else:
+            targets = await get_subscribed_chats_db()
+            for target in targets:
+                cid = target["chat_id"]
+                tid = target.get("thread_id")
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    make_webapp_button("📱 Відкрити IP-66 Hub", app_url, chat_id=cid)
+                ]])
+                await safe_send_message(bot, cid, text, reply_markup=kb, message_thread_id=tid)
+            logger.info(f"Розіслано сповіщення про зміну розкладу у {len(targets)} чатів.")
+    except Exception as e:
+        logger.error(f"Помилка при розсилці сповіщення про зміну розкладу: {e}")
 
 
 def create_webapp_app(bot: Bot | None = None) -> web.Application:
@@ -631,8 +670,26 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 reason=reason,
                 cancelled_by=admin_name
             )
+            if ok:
+                try:
+                    await refresh_today_cache()
+                except Exception:
+                    pass
+
+                pair_time = PAIR_TIMES.get(pair_number, "")
+                subject_str = subject or f"Пара №{pair_number}"
+                reason_str = reason or "Причина не вказана"
+                msg_text = (
+                    f"🚫 <b>Пару скасовано!</b>\n\n"
+                    f"📅 <b>Дата:</b> {date_str}\n"
+                    f"🔢 <b>Пара:</b> №{pair_number} ({pair_time})\n"
+                    f"📘 <b>Дисципліна:</b> {subject_str}\n"
+                    f"💬 <b>Причина:</b> {reason_str}"
+                )
+                asyncio.create_task(broadcast_schedule_change_notification(bot, msg_text))
+
             return json_response_cors({
-                "success": ok,
+                "success": bool(ok),
                 "message": f"Пару №{pair_number} на {date_str} скасовано",
                 "date": date_str,
                 "pair_number": pair_number
@@ -653,8 +710,24 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 return json_response_cors({"success": False, "error": "date is required"}, status=400)
 
             ok = await uncancel_pair_db(date_str=date_str, pair_number=pair_number)
+            if ok:
+                try:
+                    await refresh_today_cache()
+                except Exception:
+                    pass
+
+                pair_time = PAIR_TIMES.get(pair_number, "")
+                subj_str = (ok.get("subject") if isinstance(ok, dict) and ok.get("subject") else f"Пара №{pair_number}")
+                msg_text = (
+                    f"↩️ <b>Пару відновлено в розкладі!</b>\n\n"
+                    f"📅 <b>Дата:</b> {date_str}\n"
+                    f"🔢 <b>Пара:</b> №{pair_number} ({pair_time})\n"
+                    f"📘 <b>Дисципліна:</b> {subj_str}"
+                )
+                asyncio.create_task(broadcast_schedule_change_notification(bot, msg_text))
+
             return json_response_cors({
-                "success": ok,
+                "success": bool(ok),
                 "message": f"Скасування пари №{pair_number} знято" if ok else "Пара не була скасована",
                 "date": date_str,
                 "pair_number": pair_number
@@ -692,6 +765,26 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 comment=comment,
                 created_by=admin_name
             )
+            if new_id:
+                try:
+                    await refresh_today_cache()
+                except Exception:
+                    pass
+
+                pair_time = PAIR_TIMES.get(pair_number, "")
+                lecturer_str = lecturer or "Не вказаний"
+                link_line = f"\n🔗 <a href='{link_url}'>Посилання на пару</a>" if link_url else ""
+                comment_line = f"\n💬 <b>Коментар:</b> {comment}" if comment else ""
+                msg_text = (
+                    f"🟣 <b>Додано нову пару / перенесення!</b>\n\n"
+                    f"📅 <b>Дата:</b> {date_str}\n"
+                    f"🔢 <b>Пара:</b> №{pair_number} ({pair_time}) • {lesson_type}\n"
+                    f"📘 <b>Дисципліна:</b> {name}\n"
+                    f"👤 <b>Викладач:</b> {lecturer_str}"
+                    f"{link_line}{comment_line}"
+                )
+                asyncio.create_task(broadcast_schedule_change_notification(bot, msg_text))
+
             return json_response_cors({
                 "success": True,
                 "id": new_id,
@@ -711,8 +804,26 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 return json_response_cors({"success": False, "error": "id is required"}, status=400)
 
             ok = await delete_custom_lesson_db(lesson_id)
+            if ok:
+                try:
+                    await refresh_today_cache()
+                except Exception:
+                    pass
+
+                del_date = ok.get("date", "") if isinstance(ok, dict) else ""
+                del_pair_num = ok.get("pair_number", 1) if isinstance(ok, dict) else 1
+                del_time = (ok.get("time") or PAIR_TIMES.get(del_pair_num, "")) if isinstance(ok, dict) else ""
+                del_name = ok.get("name", f"Пара #{lesson_id}") if isinstance(ok, dict) else f"Пара #{lesson_id}"
+                msg_text = (
+                    f"🗑 <b>Додаткову пару видалено з розкладу</b>\n\n"
+                    f"📅 <b>Дата:</b> {del_date}\n"
+                    f"🔢 <b>Пара:</b> №{del_pair_num} ({del_time})\n"
+                    f"📘 <b>Дисципліна:</b> {del_name}"
+                )
+                asyncio.create_task(broadcast_schedule_change_notification(bot, msg_text))
+
             return json_response_cors({
-                "success": ok,
+                "success": bool(ok),
                 "message": "Пару успішно видалено" if ok else "Пару не знайдено"
             })
         except Exception as e:
