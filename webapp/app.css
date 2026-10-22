@@ -572,6 +572,19 @@ body {
     box-shadow: 0 2px 10px rgba(20, 23, 38, 0.02);
 }
 
+.zdachi-subject-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 14px;
+    width: 100%;
+}
+
+.zdachi-subject-grid #subj-tab-eng {
+    grid-column: 1 / -1;
+    width: 100%;
+}
+
 .subj-pills-row {
     display: flex;
     gap: 8px;
@@ -2006,4 +2019,43 @@ body {
 .eng-teammate-pill.selected {
     background: #7C3AED;
     color: #FFFFFF;
+}
+
+/* Responsive adjustments & overflow containment */
+.eng-board-card, .eng-group-card {
+    overflow: hidden;
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+textarea.admin-input, .eng-text-input {
+    resize: vertical;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+}
+
+.btn-generate-qa {
+    width: 100%;
+    height: auto !important;
+    min-height: 44px;
+    padding: 10px 14px !important;
+    font-size: 13.5px !important;
+    white-space: normal !important;
+    line-height: 1.25 !important;
+    text-align: center;
+    box-sizing: border-box;
+}
+
+.eng-material-box {
+    box-sizing: border-box;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.eng-file-picker-label {
+    box-sizing: border-box;
+    max-width: 100%;
+    min-width: 0;
 }

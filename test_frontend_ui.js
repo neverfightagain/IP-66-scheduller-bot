@@ -166,18 +166,18 @@ function getOrCreateElement(id, tag = 'div') {
 const elementIds = [
     'user-greeting', 'hero-subtitle', 'user-avatar-badge', 'user-avatar-text', 'btn-sync',
     'mini-card-op', 'mini-card-asd', 'mini-op-stat', 'mini-op-sub', 'mini-asd-stat', 'mini-asd-sub',
-    'subj-tab-op', 'subj-tab-asd', 'labs-grid', 'priority-preview', 'preview-text',
+    'subj-tab-op', 'subj-tab-asd', 'subj-tab-eng', 'queue-op-asd-view', 'labs-grid', 'priority-preview', 'preview-text',
     'my-status-box', 'my-pos-text', 'my-labs-text', 'btn-leave-queue', 'btn-next-student',
     'queue-items-container', 'queue-empty', 'queue-list-title', 'badge-op-count', 'badge-asd-count',
     'btn-day-today', 'btn-day-tomorrow', 'btn-day-week', 'schedule-items-container', 'schedule-loading',
     'schedule-day-title', 'deadlines-items-container', 'deadlines-count-badge',
-    'subjects-tab-op', 'subjects-tab-asd', 'subjects-tab-eng', 'subject-progress-hero', 'subject-hero-title',
+    'subjects-tab-op', 'subjects-tab-asd', 'subject-progress-hero', 'subject-hero-title',
     'subject-hero-term', 'subject-score-badge', 'subject-progress-bar-fill', 'subject-progress-percent',
     'subject-progress-status', 'subject-works-container',
     'english-projects-container', 'eng-admin-card', 'btn-eng-toggle-admin-form', 'eng-admin-form-body',
     'eng-board-title-input', 'eng-board-desc-input', 'eng-board-max-members-input', 'eng-board-topics-input',
     'btn-eng-create-board', 'eng-loading', 'eng-empty-msg', 'eng-boards-list',
-    'btn-primary-action', 'btn-primary-action-text', 'toast',
+    'btn-primary-action', 'btn-primary-action-text', 'toast', 'bottom-action-wrapper',
     'modal-backdrop', 'modal-sheet', 'modal-tag', 'modal-title', 'modal-time', 'modal-body-content',
     'modal-primary-link', 'btn-close-modal',
     // Admin panel elements
@@ -217,12 +217,17 @@ const btnDateTomorrow = getOrCreateElement('btn-admin-date-tomorrow', 'button');
 btnDateTomorrow.classList.add('admin-pill-sm');
 
 // English project elements initial state matching index.html
-const subjectsTabEng = getOrCreateElement('subjects-tab-eng', 'button');
-subjectsTabEng.classList.add('subj-pill-tab', 'hidden');
-subjectsTabEng.setAttribute('data-subject', 'Англійська');
+const subjTabEng = getOrCreateElement('subj-tab-eng', 'button');
+subjTabEng.classList.add('subj-pill-tab', 'hidden');
+subjTabEng.setAttribute('data-subject', 'Англійська');
+
+const queueOpAsdView = getOrCreateElement('queue-op-asd-view', 'div');
 
 const englishProjectsContainer = getOrCreateElement('english-projects-container', 'div');
 englishProjectsContainer.classList.add('hidden');
+
+const bottomWrapperEl = getOrCreateElement('bottom-action-wrapper', 'div');
+bottomWrapperEl.classList.add('bottom-action-wrapper');
 
 // Navigation segmented buttons & tab contents
 const segQueue = new MockElement('seg-queue', 'button');
@@ -414,7 +419,11 @@ const sandbox = {
                     success: true,
                     students: [
                         { telegram_id: 8735281894, telegram_username: 'sinch', real_name: 'Сінчіневіч Максим Ігорович' },
-                        { telegram_id: 12345, telegram_username: 'starosta_user', real_name: 'Олександр Староста' }
+                        { telegram_id: 12345, telegram_username: 'starosta_user', real_name: 'Олександр Староста' },
+                        { telegram_id: null, telegram_username: null, real_name: 'Коваль Петро Іванович' },
+                        { telegram_id: null, telegram_username: null, real_name: 'Мельник Олена Сергіївна' },
+                        { telegram_id: null, telegram_username: null, real_name: 'Шевченко Тарас Григорович' },
+                        { telegram_id: null, telegram_username: null, real_name: 'Куратор Петренко' }
                     ]
                 })
             };
@@ -847,7 +856,7 @@ async function runTests() {
     }
 
     // Admin/Owner sees the English tab regardless of test mode
-    assert.ok(!subjectsTabEng.classList.contains('hidden'), 'English tab pill must be visible for Admin/Owner');
+    assert.ok(!subjTabEng.classList.contains('hidden'), 'English tab pill must be visible for Admin/Owner');
 
     // 12.2: Verify API isolation for non-admin student when test_mode is active
     const studentBoardsReq = await sandbox.fetch('/api/projects/boards?subject=Англійська&user_id=777000&username=random_student');
@@ -865,25 +874,34 @@ async function runTests() {
     // ==========================================
     // TEST 13: English Projects collaboration, teammate selection, and AI Q&A defense generation
     // ==========================================
-    // 13.1: Switch to Subjects tab, then click English tab
-    segSubjects.click();
-    subjectsTabEng.click();
+    // 13.1: In Zdachi (Queue) tab, click English tab
+    segQueue.click();
+    subjTabEng.click();
     await new Promise(r => setTimeout(r, 60));
 
-    assert.ok(subjectsTabEng.classList.contains('active'), 'English tab pill must be active');
-    const subjectsTabOp = getOrCreateElement('subjects-tab-op');
-    const subjectsTabAsd = getOrCreateElement('subjects-tab-asd');
-    assert.ok(!subjectsTabOp.classList.contains('active'), 'OP tab must not be active');
-    assert.ok(!subjectsTabAsd.classList.contains('active'), 'ASD tab must not be active');
+    assert.ok(subjTabEng.classList.contains('active'), 'English tab pill must be active');
+    const subjTabOp = getOrCreateElement('subj-tab-op');
+    const subjTabAsd = getOrCreateElement('subj-tab-asd');
+    assert.ok(!subjTabOp.classList.contains('active'), 'OP tab must not be active');
+    assert.ok(!subjTabAsd.classList.contains('active'), 'ASD tab must not be active');
 
-    const progressHero = getOrCreateElement('subject-progress-hero');
-    const worksContainer = getOrCreateElement('subject-works-container');
-    assert.ok(progressHero.classList.contains('hidden'), 'Progress hero must be hidden when English tab is selected');
-    assert.ok(worksContainer.classList.contains('hidden'), 'Works container must be hidden when English tab is selected');
+    assert.ok(queueOpAsdView.classList.contains('hidden'), 'Queue OP/ASD view must be hidden when English is selected');
     assert.ok(!englishProjectsContainer.classList.contains('hidden'), 'English projects container must be visible');
+    assert.ok(bottomWrapperEl.classList.contains('hidden'), 'Bottom action wrapper must be hidden when English is selected');
 
-    // Bottom action button reflects English mode
-    assert.strictEqual(btnActionText.textContent, '🔄 Оновити групи (Англ)');
+    // Switch to OP tab and verify toggle
+    subjTabOp.click();
+    await new Promise(r => setTimeout(r, 60));
+    assert.ok(!queueOpAsdView.classList.contains('hidden'), 'Queue OP/ASD view must be visible when OP is selected');
+    assert.ok(englishProjectsContainer.classList.contains('hidden'), 'English projects container must be hidden when OP is selected');
+    assert.ok(!bottomWrapperEl.classList.contains('hidden'), 'Bottom action wrapper must be visible when OP is selected');
+
+    // Switch back to English
+    subjTabEng.click();
+    await new Promise(r => setTimeout(r, 60));
+    assert.ok(queueOpAsdView.classList.contains('hidden'), 'Queue OP/ASD view must be hidden again');
+    assert.ok(!englishProjectsContainer.classList.contains('hidden'), 'English projects container must be visible again');
+    assert.ok(bottomWrapperEl.classList.contains('hidden'), 'Bottom action wrapper must be hidden again');
 
     // 13.2: Verify board rendering
     const engBoardsList = getOrCreateElement('eng-boards-list');
@@ -891,7 +909,50 @@ async function runTests() {
     assert.ok(engBoardsList.innerHTML.includes('Cloud Native Microservices'), 'Must render initial topic');
     assert.ok(engBoardsList.innerHTML.includes('Олександр Староста'), 'Must render existing member in group 10');
 
-    // 13.3: User joins Group 10
+    // 13.3: Teammate selection & validation (Bug 1 & Bug 2)
+    const toggleCreateBtn = engBoardsList.querySelectorAll('.btn-toggle-create-group')[0];
+    assert.ok(toggleCreateBtn, 'Must have toggle create group button');
+    toggleCreateBtn.click();
+    await new Promise(r => setTimeout(r, 60));
+
+    const teammatesContainer = getOrCreateElement('eng-teammates-1');
+    assert.ok(teammatesContainer, 'Must have teammates selector container');
+    const pills = teammatesContainer.querySelectorAll('.eng-teammate-pill');
+    assert.ok(pills.length >= 3, 'Must render teammate pills for candidate students');
+
+    // Verify curator was filtered out
+    const pillTexts = pills.map(p => p.textContent);
+    assert.ok(!pillTexts.some(t => t.toLowerCase().includes('куратор')), 'Curators must NOT appear in teammates list');
+    // Verify patronymics omitted (formatted as Surname Name)
+    assert.ok(pillTexts.includes('Коваль Петро'), 'Must format full name without patronymic');
+    assert.ok(pillTexts.includes('Мельник Олена'), 'Must format full name without patronymic');
+
+    // Select first teammate
+    const labelEl = elements['eng-teammates-label-1'] || getOrCreateElement('eng-teammates-label-1');
+    pills[0].click();
+    assert.ok(labelEl.textContent.includes('обрано: 1 з 2'), 'Label must reflect 1 selected teammate');
+
+    // Select second teammate
+    pills[1].click();
+    assert.ok(labelEl.textContent.includes('обрано: 2 з 2'), 'Label must reflect 2 selected teammates');
+
+    // Try selecting third teammate (max limit is 2 for board max_members = 3)
+    pills[2].click();
+    assert.ok(!pills[2].classList.contains('selected'), 'Third teammate must not be selected due to limit');
+    assert.ok(labelEl.textContent.includes('обрано: 2 з 2'), 'Label must remain at 2 selected');
+
+    // Deselect first teammate
+    pills[0].click();
+    assert.ok(!pills[0].classList.contains('selected'), 'First teammate must be deselected');
+    assert.ok(labelEl.textContent.includes('обрано: 1 з 2'), 'Label must reflect 1 selected teammate');
+
+    // Cancel create panel
+    const cancelBtn = engBoardsList.querySelectorAll('.btn-cancel-new-group')[0];
+    assert.ok(cancelBtn, 'Cancel new group button must exist');
+    cancelBtn.click();
+    await new Promise(r => setTimeout(r, 60));
+
+    // 13.4: User joins Group 10
     const joinBtns = engBoardsList.querySelectorAll('.btn-join-group');
     assert.ok(joinBtns.length > 0, 'Must have at least one join button');
     joinBtns[0].click();
@@ -902,8 +963,9 @@ async function runTests() {
 
     // Re-render happens after join: user 8735281894 is now in group 10
     assert.ok(engBoardsList.innerHTML.includes('Сінчіневіч Максим'), 'Must display current user in group 10');
+    assert.ok(engBoardsList.innerHTML.includes('🤖 Згенерувати Q&A (English AI)'), 'Button text must match initial state');
 
-    // 13.4: Verify user in group sees upload materials & AI generator section
+    // 13.5: Verify user in group sees upload materials & AI generator section
     const generateBtn = engBoardsList.querySelectorAll('.btn-generate-qa')[0];
     assert.ok(generateBtn, 'Group member must have AI Generate Q&A button');
 
@@ -916,12 +978,13 @@ async function runTests() {
     const genReq = networkRequests.find(r => r.url.includes('/api/projects/groups/upload_and_generate'));
     assert.ok(genReq, 'Clicking generate button must call /api/projects/groups/upload_and_generate');
 
-    // 13.5: Verify AI Q&A cards rendered in UI
+    // 13.6: Verify AI Q&A cards rendered in UI and button text updated
     assert.ok(engBoardsList.innerHTML.includes('What is cloud architecture?'), 'Rendered HTML must contain AI Question');
     assert.ok(engBoardsList.innerHTML.includes('elasticity'), 'Rendered HTML must contain AI Tip');
     assert.ok(engBoardsList.innerHTML.includes('Why containerize?'), 'Rendered HTML must contain AI Question 2');
+    assert.ok(engBoardsList.innerHTML.includes('🔄 Перегенерувати Q&A (English AI)'), 'Button text must indicate re-generation after Q&A is generated');
 
-    // 13.6: Verify Lecturer Export button
+    // 13.7: Verify Lecturer Export button
     const exportBtns = engBoardsList.querySelectorAll('.btn-export-board');
     assert.ok(exportBtns.length > 0, 'Export for lecturer button must exist');
 

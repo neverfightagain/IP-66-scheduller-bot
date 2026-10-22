@@ -176,6 +176,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Queue Elements
     const subjTabOp = document.getElementById('subj-tab-op');
     const subjTabAsd = document.getElementById('subj-tab-asd');
+    const subjTabEng = document.getElementById('subj-tab-eng');
+    const queueOpAsdView = document.getElementById('queue-op-asd-view');
     const labsGridEl = document.getElementById('labs-grid');
     const priorityPreviewEl = document.getElementById('priority-preview');
     const previewTextEl = document.getElementById('preview-text');
@@ -213,7 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const subjectProgressPercent = document.getElementById('subject-progress-percent');
     const subjectProgressStatus = document.getElementById('subject-progress-status');
     const subjectWorksContainer = document.getElementById('subject-works-container');
-    const subjectsTabEng = document.getElementById('subjects-tab-eng');
+    const subjectsTabEng = subjTabEng || document.getElementById('subjects-tab-eng');
     const englishProjectsContainer = document.getElementById('english-projects-container');
     const engAdminCard = document.getElementById('eng-admin-card');
     const btnEngToggleAdminForm = document.getElementById('btn-eng-toggle-admin-form');
@@ -480,7 +482,18 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Ховаємо нижню плаваючу кнопку, коли відкрита адмінка або в розкладі немає активної пари
+        if (targetTab === 'tab-queue') {
+            const queueOpAsdViewEl = document.getElementById('queue-op-asd-view');
+            if (activeSubject === 'Англійська') {
+                if (queueOpAsdViewEl) queueOpAsdViewEl.classList.add('hidden');
+                if (englishProjectsContainer) englishProjectsContainer.classList.remove('hidden');
+            } else {
+                if (queueOpAsdViewEl) queueOpAsdViewEl.classList.remove('hidden');
+                if (englishProjectsContainer) englishProjectsContainer.classList.add('hidden');
+            }
+        }
+
+        // Ховаємо нижню плаваючу кнопку, коли відкрита адмінка, або в розкладі немає активної пари, або в черзі вибрано «Англійська»
         const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
         if (bottomWrapper) {
             if (targetTab === 'tab-admin') {
@@ -492,6 +505,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     bottomWrapper.classList.add('hidden');
                 }
+            } else if (targetTab === 'tab-queue' && activeSubject === 'Англійська') {
+                bottomWrapper.classList.add('hidden');
             } else {
                 bottomWrapper.classList.remove('hidden');
             }
@@ -507,7 +522,13 @@ document.addEventListener('DOMContentLoaded', () => {
             switchToTab(targetTab);
             if (targetTab === 'tab-schedule') fetchSchedule(scheduleDay);
             if (targetTab === 'tab-deadlines') fetchDeadlines();
-            if (targetTab === 'tab-queue') fetchQueue();
+            if (targetTab === 'tab-queue') {
+                if (activeSubject === 'Англійська') {
+                    fetchEnglishBoards();
+                } else {
+                    fetchQueue();
+                }
+            }
             if (targetTab === 'tab-subjects') fetchSubjectsOverview();
         });
     });
@@ -541,6 +562,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!btnPrimaryAction || !btnPrimaryActionText) return;
 
         if (currentTab === 'tab-queue') {
+            const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
+            if (activeSubject === 'Англійська') {
+                if (bottomWrapper) bottomWrapper.classList.add('hidden');
+                return;
+            }
             const myItem = currentQueue.find(item => isMeItem(item));
             if (myItem) {
                 const myIdx = currentQueue.indexOf(myItem) + 1;
@@ -633,6 +659,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
 
             if (currentTab === 'tab-queue') {
+            const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
+            if (activeSubject === 'Англійська') {
+                if (bottomWrapper) bottomWrapper.classList.add('hidden');
+                return;
+            }
                 const myItem = currentQueue.find(item => isMeItem(item));
                 if (myItem) {
                     const currentLabNums = new Set(((myItem.lab_number || '').match(/\d+/g) || []).map(Number));
@@ -800,31 +831,42 @@ document.addEventListener('DOMContentLoaded', () => {
         if (priorityPreviewEl) priorityPreviewEl.classList.remove('hidden');
     }
 
-    // Перемикач предметів черги (ОП / АСД)
+    // Перемикач предметів черги (ОП / АСД / Англійська)
     function switchQueueSubject(subj) {
         if (subj === activeSubject) return;
         activeSubject = subj;
 
-        if (subj === 'ОП') {
-            subjTabOp.classList.add('active');
-            subjTabAsd.classList.remove('active');
-        } else {
-            subjTabAsd.classList.add('active');
-            subjTabOp.classList.remove('active');
-        }
+        if (subjTabOp) subjTabOp.classList.toggle('active', subj === 'ОП');
+        if (subjTabAsd) subjTabAsd.classList.toggle('active', subj === 'АСД');
+        if (subjTabEng) subjTabEng.classList.toggle('active', subj === 'Англійська');
 
-        if (queueListTitle) queueListTitle.textContent = `Список черги (${activeSubject})`;
-        userHasManuallyEditedLabs[activeSubject] = false;
-        selectedLabs.clear();
-        renderLabsGrid();
-        updatePriorityPreview();
-        updateBottomButtonState();
-        fetchQueue();
-        fetchStudentDefenses();
+        const queueOpAsdViewEl = document.getElementById('queue-op-asd-view');
+        const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
+
+        if (subj === 'Англійська') {
+            if (queueOpAsdViewEl) queueOpAsdViewEl.classList.add('hidden');
+            if (englishProjectsContainer) englishProjectsContainer.classList.remove('hidden');
+            if (bottomWrapper) bottomWrapper.classList.add('hidden');
+            fetchEnglishBoards();
+        } else {
+            if (queueOpAsdViewEl) queueOpAsdViewEl.classList.remove('hidden');
+            if (englishProjectsContainer) englishProjectsContainer.classList.add('hidden');
+            if (bottomWrapper && currentTab === 'tab-queue') bottomWrapper.classList.remove('hidden');
+
+            if (queueListTitle) queueListTitle.textContent = `Список черги (${activeSubject})`;
+            userHasManuallyEditedLabs[activeSubject] = false;
+            selectedLabs.clear();
+            renderLabsGrid();
+            updatePriorityPreview();
+            updateBottomButtonState();
+            fetchQueue();
+            fetchStudentDefenses();
+        }
     }
 
     if (subjTabOp) subjTabOp.addEventListener('click', () => switchQueueSubject('ОП'));
     if (subjTabAsd) subjTabAsd.addEventListener('click', () => switchQueueSubject('АСД'));
+    if (subjTabEng) subjTabEng.addEventListener('click', () => switchQueueSubject('Англійська'));
 
     function isMeItem(item) {
         if (!item) return false;
@@ -1665,14 +1707,12 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (_) {}
     }
 
-    // Слухачі подій перемикання дисциплін (ОП vs АСД vs Англійська)
+    // Слухачі подій перемикання дисциплін у вкладці Предмети (ОП vs АСД)
     if (subjectsTabOp) {
         subjectsTabOp.addEventListener('click', () => {
             activeSubjectsSubj = 'ОП';
             subjectsTabOp.classList.add('active');
             subjectsTabAsd.classList.remove('active');
-            if (subjectsTabEng) subjectsTabEng.classList.remove('active');
-            if (englishProjectsContainer) englishProjectsContainer.classList.add('hidden');
             if (subjectProgressHero) subjectProgressHero.classList.remove('hidden');
             if (subjectWorksContainer) subjectWorksContainer.classList.remove('hidden');
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
@@ -1685,26 +1725,10 @@ document.addEventListener('DOMContentLoaded', () => {
             activeSubjectsSubj = 'АСД';
             subjectsTabAsd.classList.add('active');
             subjectsTabOp.classList.remove('active');
-            if (subjectsTabEng) subjectsTabEng.classList.remove('active');
-            if (englishProjectsContainer) englishProjectsContainer.classList.add('hidden');
             if (subjectProgressHero) subjectProgressHero.classList.remove('hidden');
             if (subjectWorksContainer) subjectWorksContainer.classList.remove('hidden');
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
             renderSubjectsView();
-            updateBottomButtonState();
-        });
-    }
-    if (subjectsTabEng) {
-        subjectsTabEng.addEventListener('click', () => {
-            activeSubjectsSubj = 'Англійська';
-            subjectsTabEng.classList.add('active');
-            subjectsTabOp.classList.remove('active');
-            subjectsTabAsd.classList.remove('active');
-            if (subjectProgressHero) subjectProgressHero.classList.add('hidden');
-            if (subjectWorksContainer) subjectWorksContainer.classList.add('hidden');
-            if (englishProjectsContainer) englishProjectsContainer.classList.remove('hidden');
-            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-            fetchEnglishBoards();
             updateBottomButtonState();
         });
     }
@@ -1958,8 +1982,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/api/students');
             const data = await res.json();
             if (data.students && Array.isArray(data.students)) {
+                const filtered = data.students.filter(s => !(s.real_name || '').toLowerCase().includes('куратор'));
                 sel.innerHTML = '<option value="">Оберіть студента зі списку групи...</option>' +
-                    data.students.map(s => {
+                    filtered.map(s => {
                         const uname = s.telegram_username ? `@${escapeHtml(s.telegram_username)}` : 'без username';
                         return `<option value="${s.telegram_id || ''}" data-username="${escapeHtml(s.telegram_username || '')}" data-realname="${escapeHtml(s.real_name)}">
                             ${escapeHtml(s.real_name)} (${uname})
@@ -2075,6 +2100,14 @@ document.addEventListener('DOMContentLoaded', () => {
                                             ? 'Адмінку бачите тільки ви. Доступ для старости та замів заблоковано.'
                                             : 'Доступ до адмінки відкрито для призначених старости та замів.';
                                     }
+                                    const engTabPill = subjTabEng || document.getElementById('subj-tab-eng') || subjectsTabEng;
+                                    if (engTabPill) {
+                                        if (currentUser.isAdmin || !newMode) {
+                                            engTabPill.classList.remove('hidden');
+                                        } else {
+                                            engTabPill.classList.add('hidden');
+                                        }
+                                    }
                                     showToast(newMode ? '🔒 Особистий тест-режим увімкнено' : '🔓 Доступ відкрито для старостату');
                                 }
                             } catch (_) {
@@ -2103,12 +2136,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentUser.isOwner = false;
             }
 
-            // Оновлення видимості вкладки «🇬🇧 Англ» відповідно до test_mode
-            if (subjectsTabEng) {
+            // Оновлення видимості кнопки «🇬🇧 Англ» відповідно до test_mode
+            const engTabPill = subjTabEng || document.getElementById('subj-tab-eng') || subjectsTabEng;
+            if (engTabPill) {
                 if (currentUser.isAdmin || !data.test_mode) {
-                    subjectsTabEng.classList.remove('hidden');
+                    engTabPill.classList.remove('hidden');
                 } else {
-                    subjectsTabEng.classList.add('hidden');
+                    engTabPill.classList.add('hidden');
+                    if (activeSubject === 'Англійська') {
+                        switchQueueSubject('ОП');
+                    }
                 }
             }
             if (engAdminCard) {
@@ -2370,7 +2407,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/api/students');
             const data = await res.json();
             if (data.success && Array.isArray(data.students)) {
-                studentsRosterCache = data.students;
+                studentsRosterCache = data.students.filter(st => !(st.real_name || '').toLowerCase().includes('куратор'));
             }
         } catch (_) {}
         return studentsRosterCache;
@@ -2487,7 +2524,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <input type="text" id="eng-input-topic-${board.id}" class="admin-input" placeholder="Тема вашого виступу англійською (напр. Microservices Architecture)">
                         
                         <div>
-                            <div style="font-size:11.5px; font-weight:700; color:var(--text-secondary); margin-bottom:4px;">
+                            <div id="eng-teammates-label-${board.id}" style="font-size:11.5px; font-weight:700; color:var(--text-secondary); margin-bottom:4px;">
                                 👥 Оберіть напарників (до ${board.max_members - 1} чол.):
                             </div>
                             <div class="eng-teammates-selector" id="eng-teammates-${board.id}">
@@ -2546,9 +2583,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         const isMe = (currentUser.id && m.user_id && String(m.user_id) === String(currentUser.id)) ||
                                      (currentUser.realName && m.user_name && m.user_name.includes(currentUser.realName));
                         const icon = isLeader ? '👑' : '👤';
+                        const memberDisplayName = formatQueueName(m.user_name || m.real_name || '');
                         html += `
                             <span class="eng-member-chip ${isLeader ? 'leader' : ''} ${isMe ? 'is-me' : ''}">
-                                ${icon} ${escapeHtml(m.user_name)}${isMe ? ' (Ви)' : ''}
+                                ${icon} ${escapeHtml(memberDisplayName)}${isMe ? ' (Ви)' : ''}
                             </span>
                         `;
                     });
@@ -2590,8 +2628,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                                 <textarea class="admin-input eng-text-input" id="eng-text-${g.id}" rows="3" placeholder="Введіть або вставте текст виступу, тези або слайди англійською...">${escapeHtml(g.content_text || '')}</textarea>
 
-                                <button class="primary-pill-btn btn-generate-qa" data-group-id="${g.id}" data-topic="${escapeHtml(g.topic_title)}" style="height:46px; font-size:13.5px; background:linear-gradient(135deg, #7C3AED, #4F46E5);">
-                                    🤖 Згенерувати питання та відповіді (English AI)
+                                <button class="primary-pill-btn btn-generate-qa" data-group-id="${g.id}" data-topic="${escapeHtml(g.topic_title)}" style="height:auto; min-height:44px; font-size:13.5px; background:linear-gradient(135deg, #7C3AED, #4F46E5); white-space:normal; line-height:1.25;">
+                                    ${hasAi ? '🔄 Перегенерувати Q&A (English AI)' : '🤖 Згенерувати Q&A (English AI)'}
                                 </button>
 
                                 <!-- AI Questions & Answers list -->
@@ -2651,6 +2689,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         engBoardsList.querySelectorAll('.btn-cancel-new-group').forEach(btn => {
             btn.addEventListener('click', () => {
+                const bId = parseInt(btn.getAttribute('data-board-id'));
+                if (bId) selectedTeammatesMap.delete(bId);
                 activeCreateGroupBoardId = null;
                 renderEnglishBoards();
             });
@@ -2668,7 +2708,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
-                const teammates = Array.from(selectedTeammatesMap.get(bId) || []);
+                const tmVal = selectedTeammatesMap.get(bId);
+                const teammates = tmVal instanceof Map ? Array.from(tmVal.values()) : Array.from(tmVal || []);
                 btn.disabled = true;
                 btn.textContent = '⏳ Створення групи...';
 
@@ -2861,7 +2902,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const prevText = btn.textContent;
                 btn.disabled = true;
-                btn.textContent = '⏳ ШІ генерує питання (Gemini / Groq)...';
+                btn.textContent = '⏳ ШІ генерує Q&A (Gemini / Groq)...';
                 if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
 
                 try {
@@ -2914,18 +2955,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const board = englishBoards.find(b => b.id === boardId);
         const maxTeammates = Math.max(1, (board?.max_members || 3) - 1);
+        const labelEl = document.getElementById(`eng-teammates-label-${boardId}`);
 
-        if (!selectedTeammatesMap.has(boardId)) {
-            selectedTeammatesMap.set(boardId, new Set());
+        if (!selectedTeammatesMap.has(boardId) || !(selectedTeammatesMap.get(boardId) instanceof Map)) {
+            selectedTeammatesMap.set(boardId, new Map());
         }
-        const selectedSet = selectedTeammatesMap.get(boardId);
+        const teammatesMap = selectedTeammatesMap.get(boardId);
+
+        function updateLabel() {
+            if (labelEl) {
+                labelEl.textContent = `👥 Оберіть напарників (обрано: ${teammatesMap.size} з ${maxTeammates}):`;
+            }
+        }
+        updateLabel();
 
         const currentNameLower = (currentUser.realName || currentUser.name || '').toLowerCase().trim();
 
-        // Фільтруємо самого користувача
+        // Фільтруємо кураторів і самого користувача
         const candidates = studentsRosterCache.filter(st => {
             const stName = (st.real_name || '').toLowerCase().trim();
-            return stName && !stName.includes(currentNameLower) && !currentNameLower.includes(stName);
+            return stName && !stName.includes('куратор') && !stName.includes(currentNameLower) && !currentNameLower.includes(stName);
         });
 
         if (candidates.length === 0) {
@@ -2935,27 +2984,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
         candidates.forEach(st => {
             const pill = document.createElement('div');
-            const isSel = Array.from(selectedSet).some(s => s.user_id === st.telegram_id || s.user_name === st.real_name);
+            const key = st.real_name;
+            const isSel = teammatesMap.has(key);
             pill.className = `eng-teammate-pill ${isSel ? 'selected' : ''}`;
-            pill.textContent = st.short_name || st.real_name;
+            pill.textContent = formatQueueName(st.real_name) || st.short_name || st.real_name;
 
             pill.addEventListener('click', () => {
-                const matchObj = Array.from(selectedSet).find(s => s.user_id === st.telegram_id || s.user_name === st.real_name);
-                if (matchObj) {
-                    selectedSet.delete(matchObj);
+                if (teammatesMap.has(key)) {
+                    teammatesMap.delete(key);
                     pill.classList.remove('selected');
                 } else {
-                    if (selectedSet.size >= maxTeammates) {
-                        showToast(`Максимум ${maxTeammates} напарників для цієї групи!`);
+                    if (teammatesMap.size >= maxTeammates) {
+                        showToast(`Максимум учасників у групі: ${board?.max_members || 3} (разом з вами)`);
                         return;
                     }
-                    selectedSet.add({
+                    teammatesMap.set(key, {
                         user_id: st.telegram_id || null,
-                        user_name: st.real_name,
-                        username: st.username || ''
+                        username: st.username || st.telegram_username || '',
+                        real_name: formatQueueName(st.real_name),
+                        user_name: formatQueueName(st.real_name)
                     });
                     pill.classList.add('selected');
                 }
+                updateLabel();
                 if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
             });
             container.appendChild(pill);
@@ -3253,6 +3304,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Автоматичне фонове оновлення черги кожні 4 секунди
     pollInterval = setInterval(() => {
         if (currentTab === 'tab-queue') {
+            const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
+            if (activeSubject === 'Англійська') {
+                if (bottomWrapper) bottomWrapper.classList.add('hidden');
+                return;
+            }
             fetchQueue();
         }
     }, 4000);

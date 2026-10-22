@@ -6,7 +6,7 @@
     <title>IP-66 Hub</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/webapp/app.css?v=3.2">
+    <link rel="stylesheet" href="/webapp/app.css?v=3.3">
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -59,19 +59,19 @@
             </div>
         </section>
 
-        <!-- 3. Перемикач розділів (Капсульні таби: Черга / Розклад / Дедлайни / Предмети) -->
+        <!-- 3. Перемикач розділів (Капсульні таби: Здачі / Розклад / Дедлайни / Предмети) -->
         <div class="segmented-nav">
-            <button class="seg-pill-btn active" data-tab="tab-queue">✋ Черга</button>
+            <button class="seg-pill-btn active" data-tab="tab-queue">✋ Здачі</button>
             <button class="seg-pill-btn" data-tab="tab-schedule">📅 Розклад</button>
             <button class="seg-pill-btn" data-tab="tab-deadlines">⏳ Дедлайни</button>
             <button class="seg-pill-btn" data-tab="tab-subjects">📚 Предмети</button>
         </div>
 
-        <!-- РОЗДІЛ 1: Жива черга на захист (ОП / АСД) -->
+        <!-- РОЗДІЛ 1: Жива черга на захист та Проекти (ОП / АСД / Англійська) -->
         <section id="tab-queue" class="tab-content active">
             <div class="queue-mode-box">
-                <!-- Перемикач предметів ОП / АСД -->
-                <div class="subj-pills-row">
+                <!-- Перемикач предметів здачі: Верхній ряд ОП та АСД, нижній ряд Англ на всю ширину -->
+                <div class="zdachi-subject-grid" style="margin-bottom:14px;">
                     <button class="subj-pill-tab active" data-subject="ОП" id="subj-tab-op">
                         <span>💻 ОП</span>
                         <span class="subj-pill-badge" id="badge-op-count">0</span>
@@ -80,44 +80,96 @@
                         <span>🧮 АСД</span>
                         <span class="subj-pill-badge" id="badge-asd-count">0</span>
                     </button>
+                    <button class="subj-pill-tab hidden" data-subject="Англійська" id="subj-tab-eng">
+                        <span>🇬🇧 Англ</span>
+                        <span class="subj-pill-hint" style="font-size:11px; font-weight:700; color:#7C3AED; margin-left:6px;">Групи & AI</span>
+                    </button>
                 </div>
 
-                <!-- Вибір практичних / лабораторних робіт 1..9 -->
-                <div class="picker-header">
-                    <span style="font-size:13.5px; font-weight:700; color:var(--text-primary);">
-                        🎯 Оберіть роботи для здачі:
-                    </span>
-                </div>
-
-                <div class="labs-grid-picker" id="labs-grid">
-                    <!-- Заповнюється динамічно JS (кнопки 1..9) -->
-                </div>
-
-                <!-- Плашка розрахованого пріоритету -->
-                <div id="priority-preview" class="queue-prio-banner hidden">
-                    <span id="preview-text">🎯 Обрано: Лаби 1, 4 • ⭐ Пріоритет: Лаба 1</span>
-                </div>
-
-                <!-- Плашка статусу, якщо студент вже в черзі -->
-                <div id="my-status-box" class="hidden" style="background:#F0FDF4; border:1.5px solid #86EFAC; border-radius:16px; padding:12px 16px; margin:12px 0; display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <div style="font-weight:800; font-size:14px; color:#15803D;" id="my-pos-text">Ви #1 у черзі!</div>
-                        <div style="font-size:12px; font-weight:600; color:#166534;" id="my-labs-text">Лаби 1, 4</div>
+                <!-- Контейнер черги ОП / АСД -->
+                <div id="queue-op-asd-view">
+                    <!-- Вибір практичних / лабораторних робіт 1..9 -->
+                    <div class="picker-header">
+                        <span style="font-size:13.5px; font-weight:700; color:var(--text-primary);">
+                            🎯 Оберіть роботи для здачі:
+                        </span>
                     </div>
-                    <button id="btn-leave-queue" style="background:#FEE2E2; border:none; color:#DC2626; font-size:12.5px; font-weight:700; padding:6px 14px; border-radius:99px; cursor:pointer;">Вийти</button>
+
+                    <div class="labs-grid-picker" id="labs-grid">
+                        <!-- Заповнюється динамічно JS (кнопки 1..9) -->
+                    </div>
+
+                    <!-- Плашка розрахованого пріоритету -->
+                    <div id="priority-preview" class="queue-prio-banner hidden">
+                        <span id="preview-text">🎯 Обрано: Лаби 1, 4 • ⭐ Пріоритет: Лаба 1</span>
+                    </div>
+
+                    <!-- Плашка статусу, якщо студент вже в черзі -->
+                    <div id="my-status-box" class="hidden" style="background:#F0FDF4; border:1.5px solid #86EFAC; border-radius:16px; padding:12px 16px; margin:12px 0; display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div style="font-weight:800; font-size:14px; color:#15803D;" id="my-pos-text">Ви #1 у черзі!</div>
+                            <div style="font-size:12px; font-weight:600; color:#166534;" id="my-labs-text">Лаби 1, 4</div>
+                        </div>
+                        <button id="btn-leave-queue" style="background:#FEE2E2; border:none; color:#DC2626; font-size:12.5px; font-weight:700; padding:6px 14px; border-radius:99px; cursor:pointer;">Вийти</button>
+                    </div>
+
+                    <!-- Список черги -->
+                    <div class="section-header-row" style="margin-top:16px;">
+                        <span class="section-title" id="queue-list-title">Список черги (ОП)</span>
+                    </div>
+
+                    <div id="queue-empty" class="hidden" style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">
+                        🎉 Черга наразі порожня. Будьте першим!
+                    </div>
+
+                    <div class="queue-items-flow" id="queue-items-container">
+                        <!-- Студенти в черзі підвантажуються динамічно -->
+                    </div>
                 </div>
 
-                <!-- Список черги -->
-                <div class="section-header-row" style="margin-top:16px;">
-                    <span class="section-title" id="queue-list-title">Список черги (ОП)</span>
-                </div>
+                <!-- Контейнер проектних груп з англійської мови -->
+                <div id="english-projects-container" class="hidden">
+                    <!-- Адмін-панель створення нового борду (видно тільки адміну/старості) -->
+                    <div id="eng-admin-card" class="admin-card hidden" style="background:var(--card-white-bg); border:1.5px solid var(--card-border); border-radius:16px; padding:14px; margin-bottom:14px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <span style="font-size:13.5px; font-weight:700; color:#7C3AED;">
+                                ➕ Створити набір груп з Англійської
+                            </span>
+                            <button class="admin-pill-sm" id="btn-eng-toggle-admin-form" style="padding:4px 10px; font-size:11.5px;">
+                                ▾ Розгорнути
+                            </button>
+                        </div>
+                        <div id="eng-admin-form-body" class="hidden" style="display:flex; flex-direction:column; gap:8px;">
+                            <input type="text" id="eng-board-title-input" class="admin-input" placeholder="Назва (напр. Presentation / Speaking Project)">
+                            <input type="text" id="eng-board-desc-input" class="admin-input" placeholder="Опис, вимоги або дедлайн (необов'язково)">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:12px; font-weight:700; color:var(--text-secondary); white-space:nowrap;">Макс. в групі:</span>
+                                <select id="eng-board-max-members-input" class="admin-input" style="width:110px;">
+                                    <option value="2">2 чол.</option>
+                                    <option value="3" selected>3 чол.</option>
+                                    <option value="4">4 чол.</option>
+                                    <option value="5">5 чол.</option>
+                                </select>
+                            </div>
+                            <textarea id="eng-board-topics-input" class="admin-input" rows="3" placeholder="Список тем (кожна тема з нового рядка або через кому)"></textarea>
+                            <button class="primary-pill-btn" id="btn-eng-create-board" style="margin-top:4px;">
+                                💾 Створити набір груп
+                            </button>
+                        </div>
+                    </div>
 
-                <div id="queue-empty" class="hidden" style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">
-                    🎉 Черга наразі порожня. Будьте першим!
-                </div>
+                    <!-- Стан завантаження / Повідомлення -->
+                    <div id="eng-loading" class="hidden" style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">
+                        Завантаження проектів з англійської...
+                    </div>
+                    <div id="eng-empty-msg" class="hidden" style="text-align:center; padding:28px 14px; background:#FFFFFF; border:1.5px dashed var(--card-border); border-radius:16px; color:var(--text-secondary); font-size:13.5px; margin-bottom:14px;">
+                        🎉 Наразі немає активних проектних наборів з англійської мови.
+                    </div>
 
-                <div class="queue-items-flow" id="queue-items-container">
-                    <!-- Студенти в черзі підвантажуються динамічно -->
+                    <!-- Контейнер для списку проектних бордів -->
+                    <div id="eng-boards-list">
+                        <!-- Динамічно заповнюється JS -->
+                    </div>
                 </div>
             </div>
         </section>
@@ -186,9 +238,6 @@
                     <button class="subj-pill-tab" data-subject="АСД" id="subjects-tab-asd">
                         <span>🧮 АСД</span> <span class="subj-pill-hint">Практичні</span>
                     </button>
-                    <button class="subj-pill-tab hidden" data-subject="Англійська" id="subjects-tab-eng">
-                        <span>🇬🇧 Англ</span> <span class="subj-pill-hint">Групи & AI</span>
-                    </button>
                 </div>
 
                 <!-- Картка зведеного прогресу студента -->
@@ -212,51 +261,6 @@
                 <!-- Список робіт (Практикуми 1-8 для ОП або Практичні 1-8 для АСД) -->
                 <div class="tasks-list" id="subject-works-container" style="margin-top:14px;">
                     <!-- Генерується динамічно JS -->
-                </div>
-
-                <!-- РОЗДІЛ 4.1: Англійська мова (Проектні набори, міні-групи та AI Q&A) -->
-                <div id="english-projects-container" class="hidden">
-                    <!-- Адмін-панель створення нового борду (видно тільки адміну/старості) -->
-                    <div id="eng-admin-card" class="admin-card hidden" style="background:var(--card-white-bg); border:1.5px solid var(--card-border); border-radius:16px; padding:14px; margin-bottom:14px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <span style="font-size:13.5px; font-weight:700; color:#7C3AED;">
-                                ➕ Створити набір груп з Англійської
-                            </span>
-                            <button class="admin-pill-sm" id="btn-eng-toggle-admin-form" style="padding:4px 10px; font-size:11.5px;">
-                                ▾ Розгорнути
-                            </button>
-                        </div>
-                        <div id="eng-admin-form-body" class="hidden" style="display:flex; flex-direction:column; gap:8px;">
-                            <input type="text" id="eng-board-title-input" class="admin-input" placeholder="Назва (напр. Presentation / Speaking Project)">
-                            <input type="text" id="eng-board-desc-input" class="admin-input" placeholder="Опис, вимоги або дедлайн (необов'язково)">
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <span style="font-size:12px; font-weight:700; color:var(--text-secondary); white-space:nowrap;">Макс. в групі:</span>
-                                <select id="eng-board-max-members-input" class="admin-input" style="width:110px;">
-                                    <option value="2">2 чол.</option>
-                                    <option value="3" selected>3 чол.</option>
-                                    <option value="4">4 чол.</option>
-                                    <option value="5">5 чол.</option>
-                                </select>
-                            </div>
-                            <textarea id="eng-board-topics-input" class="admin-input" rows="3" placeholder="Список тем (кожна тема з нового рядка або через кому)"></textarea>
-                            <button class="primary-pill-btn" id="btn-eng-create-board" style="margin-top:4px;">
-                                💾 Створити набір груп
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Стан завантаження / Повідомлення -->
-                    <div id="eng-loading" class="hidden" style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">
-                        Завантаження проектів з англійської...
-                    </div>
-                    <div id="eng-empty-msg" class="hidden" style="text-align:center; padding:28px 14px; background:#FFFFFF; border:1.5px dashed var(--card-border); border-radius:16px; color:var(--text-secondary); font-size:13.5px; margin-bottom:14px;">
-                        🎉 Наразі немає активних проектних наборів з англійської мови.
-                    </div>
-
-                    <!-- Контейнер для списку проектних бордів -->
-                    <div id="eng-boards-list">
-                        <!-- Динамічно заповнюється JS -->
-                    </div>
                 </div>
             </div>
         </section>
@@ -447,6 +451,6 @@
     <!-- Toast сповіщення -->
     <div id="toast" class="toast-popup hidden"></div>
 
-    <script src="/webapp/app.js?v=3.2"></script>
+    <script src="/webapp/app.js?v=3.3"></script>
 </body>
 </html>

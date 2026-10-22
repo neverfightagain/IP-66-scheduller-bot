@@ -558,6 +558,7 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     async def handle_api_students_get(request):
         try:
             students = await get_all_students_db()
+            students = [s for s in students if "куратор" not in (s.get("real_name") or "").lower()]
             return json_response_cors({
                 "success": True,
                 "students": students,
