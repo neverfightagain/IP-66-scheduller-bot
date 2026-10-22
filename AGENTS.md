@@ -81,8 +81,16 @@ For any non-trivial feature, bug fix, or refactoring:
 
 ## 3. Subagents Roster & Invocation
 
-| Subagent Name | Role | Primary Tools | Execution Context |
-| :--- | :--- | :--- | :--- |
-| `architect` | System Architect | `read_file`, `run_command`, `search_web` | Code exploration, RFC / Blueprint creation |
-| `coder` | Senior Implementer | `write_file`, `edit_file`, `read_file`, `run_command` | Production code changes, bug fixing |
-| `qa_tester` | QA Test Specialist | `run_command`, `write_file`, `edit_file`, `read_file` | Automated tests writing & execution |
+| Subagent Name | Role | Primary Tools | Execution Context | Target Model |
+| :--- | :--- | :--- | :--- | :--- |
+| `architect` | System Architect | `read_file`, `run_command`, `search_web` | Code exploration, RFC / Blueprint creation | `flash` (effort: high) |
+| `coder` | Senior Implementer | `write_file`, `edit_file`, `read_file`, `run_command` | Production code changes, bug fixing | `flash` (effort: high) |
+| `qa_tester` | QA Test Specialist | `run_command`, `write_file`, `edit_file`, `read_file` | Automated tests writing & execution | `flash` (effort: high) |
+| `ideator` | Product Ideator | `read_file`, `search_web` | Brainstorming features, UX improvements | `flash` (effort: medium) |
+
+---
+
+## 4. Models & Allocation Policy
+
+- **Orchestrator (Main Agent)**: Argon / Flagship Model (selected in session settings). Directs the workflow, maintains high-level context, and interacts with the user.
+- **Subagents**: Configured via `invoke_subagent(Model="flash")`. Operates rapidly with specified reasoning effort levels.
