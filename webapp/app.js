@@ -104,6 +104,18 @@ document.addEventListener('DOMContentLoaded', () => {
         photoUrl: tgUser?.photo_url || ''
     };
 
+    // Миттєве відновлення кешованої ідентичності студента з localStorage
+    try {
+        const cachedIdKey = 'ip66_student_identity_' + (currentUser.id || 'me');
+        const cachedId = localStorage.getItem(cachedIdKey);
+        if (cachedId) {
+            const parsed = JSON.parse(cachedId);
+            if (parsed.realName) currentUser.realName = parsed.realName;
+            if (parsed.name) currentUser.name = parsed.name;
+            if (parsed.firstName) currentUser.firstName = parsed.firstName;
+        }
+    } catch (_) {}
+
     // Стан додатку
     let activeSubject = ['ОП', 'АСД'].includes(initialSubject) ? initialSubject : 'ОП';
     let selectedLabs = new Set();
@@ -114,6 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let scheduleDay = 'today';
     let currentTab = 'tab-queue';
     let pollInterval = null;
+    let userHasManuallyEditedLabs = { 'ОП': false, 'АСД': false };
 
     // Збереження виконаних дедлайнів у localStorage окремо для кожного студента
     function getCompletedDeadlinesKey() {
@@ -314,6 +327,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentUser.name = data.short_name || formatQueueName(data.real_name);
                 const firstName = data.first_name || extractFirstName(data.real_name);
                 currentUser.firstName = firstName;
+                try {
+                    const cachedIdKey = 'ip66_student_identity_' + (currentUser.id || 'me');
+                    localStorage.setItem(cachedIdKey, JSON.stringify({
+                        realName: currentUser.realName,
+                        name: currentUser.name,
+                        firstName: currentUser.firstName
+                    }));
+                } catch (_) {}
                 if (userGreetingEl) {
                     userGreetingEl.textContent = `Привіт, ${firstName}! ✨`;
                 }
@@ -499,8 +520,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
                 if (sorted.length === 0) {
-                    toggleLab(1);
-                    showToast("🎯 Обрано Лабу 1. Натисніть ще раз, щоб підтвердити, або оберіть іншу!", 3000);
+                    if (myItem) {
+                        showToast("⚠️ Оберіть хоча б одну роботу або натисніть «Вийти»", 3000);
+                    } else {
+                        toggleLab(1);
+                        showToast("🎯 Обрано Лабу 1. Натисніть ще раз, щоб підтвердити, або оберіть іншу!", 3000);
+                    }
                     if (labsGridEl) labsGridEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     return;
                 }
@@ -590,8 +615,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="lab-btn-text">Лаба ${i}</span>
             `;
             btn.setAttribute('type', 'button');
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
+            btn.addEventListener('click', () => {
                 toggleLab(i);
             });
             labsGridEl.appendChild(btn);
@@ -800,6 +824,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const myItem = currentQueue.find(item => isMeItem(item));
         const targetUserId = (myItem && myItem.user_id) ? myItem.user_id : currentUser.id;
+        const targetUserName = (myItem && myItem.user_name) ? myItem.user_name : (currentUser.realName || currentUser.name);
         const labLabel = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
 
         if (btnPrimaryActionText) btnPrimaryActionText.textContent = "⏳ Збереження у черзі...";
@@ -813,7 +838,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     chat_id: chatId,
                     subject: activeSubject,
                     user_id: targetUserId,
-                    user_name: currentUser.name,
+                    user_name: targetUserName,
                     username: currentUser.username,
                     lab_number: labLabel,
                     append: false
@@ -823,7 +848,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.success) {
                 if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
                 showToast(`✅ Чергу ${activeSubject} оновлено! (${labLabel})`);
-                userHasManuallyEditedLabs[activeSubject] = true;
+                userHasManuallyEditedLabs[activeSubject] = false;
                 await fetchQueue();
             } else {
                 showToast(data.message || 'Помилка запису');

@@ -978,16 +978,47 @@ async def join_queue_db(
         clean_name = format_queue_name(clean_name)
 
     clean_uname = username.lstrip("@").strip().lower() if username else None
+    roster_id = None
+    try:
+        async with get_db() as db:
+            if user_id:
+                async with db.execute("SELECT id FROM students WHERE telegram_id = ? LIMIT 1", (user_id,)) as cur:
+                    r = await cur.fetchone()
+                    if r:
+                        roster_id = r["id"]
+            if not roster_id and clean_uname:
+                async with db.execute("SELECT id FROM students WHERE LOWER(telegram_username) = ? LIMIT 1", (clean_uname,)) as cur:
+                    r = await cur.fetchone()
+                    if r:
+                        roster_id = r["id"]
+    except Exception:
+        pass
 
     async with get_db() as db:
-        # Перевірка чи вже є у черзі (за user_id або username)
-        if clean_uname:
+        # Перевірка чи вже є у черзі (за user_id, roster_id або username)
+        if clean_uname and roster_id:
+            async with db.execute("""
+                SELECT id, user_id, lab_number, lab_priority FROM lab_queues
+                WHERE chat_id = ? AND subject = ? 
+                  AND (user_id = ? OR user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
+                ORDER BY id ASC LIMIT 1
+            """, (chat_id, subject_clean, user_id, roster_id, clean_uname)) as cursor:
+                existing = await cursor.fetchone()
+        elif clean_uname:
             async with db.execute("""
                 SELECT id, user_id, lab_number, lab_priority FROM lab_queues
                 WHERE chat_id = ? AND subject = ? 
                   AND (user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
                 ORDER BY id ASC LIMIT 1
             """, (chat_id, subject_clean, user_id, clean_uname)) as cursor:
+                existing = await cursor.fetchone()
+        elif roster_id:
+            async with db.execute("""
+                SELECT id, user_id, lab_number, lab_priority FROM lab_queues
+                WHERE chat_id = ? AND subject = ? 
+                  AND (user_id = ? OR user_id = ?)
+                ORDER BY id ASC LIMIT 1
+            """, (chat_id, subject_clean, user_id, roster_id)) as cursor:
                 existing = await cursor.fetchone()
         else:
             async with db.execute("""
@@ -1079,13 +1110,41 @@ async def leave_queue_db(chat_id: int, subject: str, user_id: int, username: str
     """Видалити студента з черги (фізичне повне видалення з бази даних)."""
     subject_clean = (subject or "ОП").strip()
     clean_uname = username.lstrip("@").strip().lower() if username else None
+    roster_id = None
+    try:
+        async with get_db() as db:
+            if user_id:
+                async with db.execute("SELECT id FROM students WHERE telegram_id = ? LIMIT 1", (user_id,)) as cur:
+                    r = await cur.fetchone()
+                    if r:
+                        roster_id = r["id"]
+            if not roster_id and clean_uname:
+                async with db.execute("SELECT id FROM students WHERE LOWER(telegram_username) = ? LIMIT 1", (clean_uname,)) as cur:
+                    r = await cur.fetchone()
+                    if r:
+                        roster_id = r["id"]
+    except Exception:
+        pass
+
     async with get_db() as db:
-        if clean_uname:
+        if clean_uname and roster_id:
+            cursor = await db.execute("""
+                DELETE FROM lab_queues
+                WHERE chat_id = ? AND subject = ? 
+                  AND (user_id = ? OR user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
+            """, (chat_id, subject_clean, user_id, roster_id, clean_uname))
+        elif clean_uname:
             cursor = await db.execute("""
                 DELETE FROM lab_queues
                 WHERE chat_id = ? AND subject = ? 
                   AND (user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
             """, (chat_id, subject_clean, user_id, clean_uname))
+        elif roster_id:
+            cursor = await db.execute("""
+                DELETE FROM lab_queues
+                WHERE chat_id = ? AND subject = ? 
+                  AND (user_id = ? OR user_id = ?)
+            """, (chat_id, subject_clean, user_id, roster_id))
         else:
             cursor = await db.execute("""
                 DELETE FROM lab_queues

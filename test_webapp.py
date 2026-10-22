@@ -202,6 +202,123 @@ class TestWebAppServer(AioHTTPTestCase):
         data_q = await resp_q.json()
         self.assertEqual(data_q["items"][0]["user_name"], "Шевченко Тарас")
 
+    async def test_dynamic_queue_priority_and_multi_lab_updates(self):
+        # 1. Студент 1 (Максим, id=101) записується на Лабу 5
+        resp1 = await self.client.request("POST", "/api/queue/join", json={
+            "chat_id": self.chat_id,
+            "subject": self.subject,
+            "user_id": 101,
+            "user_name": "Максим Сінчіневіч",
+            "username": "sinch",
+            "lab_number": "Лаба 5"
+        })
+        self.assertEqual(resp1.status, 200)
+        data1 = await resp1.json()
+        self.assertTrue(data1["success"])
+        self.assertEqual(data1["position"], 1)
+
+        # 2. Студент 2 (Дмитро, id=102) також записується на Лабу 5 (пріоритет 5, після Максима)
+        resp2 = await self.client.request("POST", "/api/queue/join", json={
+            "chat_id": self.chat_id,
+            "subject": self.subject,
+            "user_id": 102,
+            "user_name": "Дмитро Сахнюк",
+            "username": "sahnyuk",
+            "lab_number": "Лаба 5"
+        })
+        data2 = await resp2.json()
+        self.assertTrue(data2["success"])
+        self.assertEqual(data2["position"], 2)
+
+        # 3. Студент 1 додає ще роботу: тепер здає "Лаби 5, 6"
+        # Пріоритет залишається 5 -> початкове місце #1 повинно ЗБЕРЕГТИСЯ!
+        resp1_up = await self.client.request("POST", "/api/queue/join", json={
+            "chat_id": self.chat_id,
+            "subject": self.subject,
+            "user_id": 101,
+            "user_name": "Максим Сінчіневіч",
+            "username": "sinch",
+            "lab_number": "Лаби 5, 6"
+        })
+        data1_up = await resp1_up.json()
+        self.assertTrue(data1_up["success"])
+        self.assertEqual(data1_up["position"], 1)
+
+        # Перевірка через GET /api/queue
+        q_resp = await self.client.request("GET", f"/api/queue?subject={self.subject}&chat_id={self.chat_id}")
+        q_data = await q_resp.json()
+        self.assertEqual(len(q_data["items"]), 2)
+        self.assertEqual(q_data["items"][0]["user_id"], 101)
+        self.assertEqual(q_data["items"][0]["lab_number"], "Лаби 5, 6")
+        self.assertEqual(q_data["items"][1]["user_id"], 102)
+
+        # 4. Студент 3 (Назар, id=103) записується на Лабу 4 (пріоритет 4)
+        # Оскільки пріоритет 4 кращий за 5, Назар стає першим (#1), Максим стає #2, Дмитро #3
+        resp3 = await self.client.request("POST", "/api/queue/join", json={
+            "chat_id": self.chat_id,
+            "subject": self.subject,
+            "user_id": 103,
+            "user_name": "Назар Архипович",
+            "username": "arhyp",
+            "lab_number": "Лаба 4"
+        })
+        data3 = await resp3.json()
+        self.assertEqual(data3["position"], 1)
+
+        # 5. КРАЙНІЙ ВИПАДОК: Студент 1 (Максим) прибирає Лабу 5 і залишає лише "Лаба 6"!
+        # Його пріоритет погіршується з 5 до 6!
+        # Він НЕ повинен залишатися попереду Дмитра (у якого пріоритет 5)!
+        # Максим повинен стати позаду Дмитра (#3)!
+        resp1_drop = await self.client.request("POST", "/api/queue/join", json={
+            "chat_id": self.chat_id,
+            "subject": self.subject,
+            "user_id": 101,
+            "user_name": "Максим Сінчіневіч",
+            "username": "sinch",
+            "lab_number": "Лаба 6"
+        })
+        data1_drop = await resp1_drop.json()
+        self.assertTrue(data1_drop["success"])
+        self.assertEqual(data1_drop["position"], 3)
+
+        q_after_drop = await self.client.request("GET", f"/api/queue?subject={self.subject}&chat_id={self.chat_id}")
+        items_drop = (await q_after_drop.json())["items"]
+        self.assertEqual(items_drop[0]["user_id"], 103)  # Назар (Лаба 4, пріоритет 4) - #1
+        self.assertEqual(items_drop[1]["user_id"], 102)  # Дмитро (Лаба 5, пріоритет 5) - #2
+        self.assertEqual(items_drop[2]["user_id"], 101)  # Максим (Лаба 6, пріоритет 6) - #3
+
+        # 6. Студент 1 додає Лабу 2: тепер "Лаби 2, 6"
+        # Пріоритет стає 2 (кращий за 4, 5, 6)!
+        # Максим повинен стрибнути на позицію #1!
+        resp1_boost = await self.client.request("POST", "/api/queue/join", json={
+            "chat_id": self.chat_id,
+            "subject": self.subject,
+            "user_id": 101,
+            "user_name": "Максим Сінчіневіч",
+            "username": "sinch",
+            "lab_number": "Лаби 2, 6"
+        })
+        data1_boost = await resp1_boost.json()
+        self.assertTrue(data1_boost["success"])
+        self.assertEqual(data1_boost["position"], 1)
+
+        q_after_boost = await self.client.request("GET", f"/api/queue?subject={self.subject}&chat_id={self.chat_id}")
+        items_boost = (await q_after_boost.json())["items"]
+        self.assertEqual(items_boost[0]["user_id"], 101)  # Максим (Лаби 2, 6) - #1
+        self.assertEqual(items_boost[1]["user_id"], 103)  # Назар (Лаба 4) - #2
+        self.assertEqual(items_boost[2]["user_id"], 102)  # Дмитро (Лаба 5) - #3
+
+    async def test_ui_frontend_simulation(self):
+        import subprocess
+        # Запуск повного тесту UI контролера через Node.js
+        result = subprocess.run(
+            ["node", "test_frontend_ui.js"],
+            capture_output=True,
+            text=True
+        )
+        self.assertEqual(result.returncode, 0, f"Frontend UI test failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+        self.assertIn("ALL UI TESTS PASSED", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

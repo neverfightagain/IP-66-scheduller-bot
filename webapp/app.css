@@ -625,20 +625,22 @@ body {
 /* Labs 1..9 Pastel Grid */
 .labs-grid-picker {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
     margin: 14px 0;
+    width: 100%;
 }
 
 .lab-pill-btn {
+    width: 100%;
     height: 46px;
     min-height: 46px;
     max-height: 46px;
     box-sizing: border-box;
     background: #FAF8F5;
-    border: 1.5px solid #F1EDE6;
+    border: 2px solid #F1EDE6;
     border-radius: 14px;
-    padding: 0 8px;
+    padding: 0 6px;
     font-size: 13.5px;
     font-weight: 700;
     color: #475569;
@@ -653,6 +655,7 @@ body {
     user-select: none;
     -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
 }
 
 .lab-pill-btn:active {
@@ -671,7 +674,7 @@ body {
 /* Робота в черзі, але користувач зняв з неї вибір (пунктир) */
 .lab-pill-btn.is-queued:not(.selected) {
     background: #FAF8F5;
-    border: 1.5px dashed #A5B4FC;
+    border: 2px dashed #A5B4FC;
     color: #6366F1;
 }
 
@@ -687,7 +690,7 @@ body {
 /* 3. Здана робота (якщо не обрана) */
 .lab-pill-btn.is-defended:not(.selected) {
     background: #F0FDF4;
-    border: 1.5px solid #BBF7D0;
+    border: 2px solid #BBF7D0;
     color: #166534;
 }
 
