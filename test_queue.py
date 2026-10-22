@@ -288,6 +288,39 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
 
         await clear_queue_db(self.chat_id, self.subject)
 
+    async def test_removing_earlier_lab_drops_priority_and_position(self):
+        # 1. Студент А здає Лабу 4 (пріоритет 4)
+        ok_a, _, pos_a = await join_queue_db(self.chat_id, self.subject, 999101, "Студент А", lab_number="Лаба 4")
+        self.assertTrue(ok_a)
+        self.assertEqual(pos_a, 1)
+
+        # 2. Студент Б обирає Лаби 1 та 5 (пріоритет 1!) -> стає на #1, А стає #2
+        ok_b, _, pos_b = await join_queue_db(self.chat_id, self.subject, 999102, "Студент Б", lab_number="Лаби 1, 5")
+        self.assertTrue(ok_b)
+        self.assertEqual(pos_b, 1)
+
+        items_step2 = await get_active_queue_db(self.chat_id, self.subject)
+        self.assertEqual(items_step2[0]["user_id"], 999102)
+        self.assertEqual(items_step2[0]["lab_priority"], 1)
+        self.assertEqual(items_step2[1]["user_id"], 999101)
+        self.assertEqual(items_step2[1]["lab_priority"], 4)
+
+        # 3. Студент Б прибирає Лабу 1 і лишає тільки Лабу 5 -> його новий пріоритет 5!
+        # Він НЕ повинен залишатися #1, він повинен поступитися Студенту А (Лаба 4) і стати #2!
+        ok_b_upd, msg_upd, pos_b_upd = await join_queue_db(
+            self.chat_id, self.subject, 999102, "Студент Б", lab_number="Лаба 5", append=False
+        )
+        self.assertTrue(ok_b_upd)
+        self.assertEqual(pos_b_upd, 2)  # Злетів на #2!
+
+        items_step3 = await get_active_queue_db(self.chat_id, self.subject)
+        self.assertEqual(items_step3[0]["user_id"], 999101) # А знову #1!
+        self.assertEqual(items_step3[0]["lab_priority"], 4)
+        self.assertEqual(items_step3[1]["user_id"], 999102) # Б тепер #2!
+        self.assertEqual(items_step3[1]["lab_priority"], 5)
+
+        await clear_queue_db(self.chat_id, self.subject)
+
     async def test_oldest_labs_surface_to_top(self):
         # 1. Студент з Лабою 4 стає в чергу
         ok1, _, pos1 = await join_queue_db(self.chat_id, self.subject, 401, "Андрій", lab_number="Лаба 4")

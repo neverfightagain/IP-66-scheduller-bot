@@ -321,6 +321,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     userAvatarText.textContent = firstName.charAt(0).toUpperCase();
                 }
                 fetchStudentDefenses();
+                fetchQueue();
+                updateBottomButtonState();
             }
         } catch (e) {
             // Резервний варіант: залишаємо Telegram-ім'я
@@ -427,11 +429,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         btnPrimaryAction.classList.remove('btn-action-update');
                     } else {
                         const labsText = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
-                        const isAdded = sorted.some(n => !currentLabNums.has(n));
-                        if (isAdded) {
-                            btnPrimaryActionText.textContent = `➕ Додати до черги: ${labsText} (місце #${myIdx} збережено)`;
+                        const oldNums = Array.from(currentLabNums);
+                        const oldMin = oldNums.length > 0 ? Math.min(...oldNums) : 999;
+                        const newMin = sorted[0];
+
+                        if (newMin > oldMin) {
+                            btnPrimaryActionText.textContent = `💾 Оновити чергу: ${labsText} (пріоритет: Лаба ${newMin})`;
                         } else {
-                            btnPrimaryActionText.textContent = `💾 Оновити чергу: ${labsText} (місце #${myIdx} збережено)`;
+                            const isAdded = sorted.some(n => !currentLabNums.has(n));
+                            if (isAdded) {
+                                btnPrimaryActionText.textContent = `➕ Додати до черги: ${labsText} (місце #${myIdx} збережено)`;
+                            } else {
+                                btnPrimaryActionText.textContent = `💾 Оновити чергу: ${labsText} (місце #${myIdx} збережено)`;
+                            }
                         }
                         btnPrimaryAction.classList.add('btn-action-update');
                     }
@@ -444,6 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     const labsText = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
                     btnPrimaryActionText.textContent = `🚀 Зайняти чергу: ${labsText}`;
+                    btnPrimaryAction.classList.add('btn-action-update');
                 }
             }
             btnPrimaryAction.disabled = false;
@@ -560,16 +571,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const isDefended = defendedLabNumbers.has(i);
 
             let icon = '▫️';
-            let tagHtml = '';
-
-            if (isQueued) {
-                icon = '⏳';
-                tagHtml = `<span class="lab-pill-tag">в черзі</span>`;
-            } else if (isSelected) {
-                icon = '✅';
+            if (isSelected) {
+                icon = isQueued ? '⏳' : '✅';
             } else if (isDefended) {
                 icon = '✓';
-                tagHtml = `<span class="lab-defended-check">✓</span>`;
+            } else if (isQueued) {
+                icon = '▫️';
             }
 
             const classes = ['lab-pill-btn'];
@@ -581,7 +588,6 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.innerHTML = `
                 <span class="lab-btn-icon">${icon}</span>
                 <span class="lab-btn-text">Лаба ${i}</span>
-                ${tagHtml}
             `;
             btn.setAttribute('type', 'button');
             btn.addEventListener('click', (e) => {
@@ -619,7 +625,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (previewTextEl) {
             if (myItem) {
                 const myIdx = currentQueue.indexOf(myItem) + 1;
-                previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⭐ Пріоритет: Лаба ${minLab} • 🔒 Місце #${myIdx} збережено`;
+                const oldNums = ((myItem.lab_number || '').match(/\d+/g) || []).map(Number);
+                const oldMin = oldNums.length > 0 ? Math.min(...oldNums) : 999;
+
+                if (minLab > oldMin) {
+                    previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⚠️ Пріоритет зміниться на Лабу ${minLab}`;
+                } else {
+                    previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⭐ Пріоритет: Лаба ${minLab} • 🔒 Місце #${myIdx} збережено`;
+                }
             } else {
                 previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⭐ Пріоритет: Лаба ${minLab} (найстаріша)`;
             }
@@ -655,12 +668,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function isMeItem(item) {
         if (!item) return false;
-        if (currentUser.id && item.user_id && item.user_id === currentUser.id) return true;
-        if (currentUser.username && item.username && currentUser.username.toLowerCase() === item.username.toLowerCase()) return true;
-        if (currentUser.name && item.user_name && currentUser.name.toLowerCase() === item.user_name.toLowerCase()) return true;
+        if (currentUser.id && item.user_id && String(item.user_id) === String(currentUser.id)) return true;
+        const cUname = (currentUser.username || '').replace(/^@/, '').toLowerCase().trim();
+        const iUname = (item.username || '').replace(/^@/, '').toLowerCase().trim();
+        if (cUname && iUname && cUname !== 'student' && cUname === iUname) return true;
         if (currentUser.realName && item.user_name) {
-            const surname = currentUser.realName.toLowerCase().split(' ')[0];
-            if (item.user_name.toLowerCase().includes(surname)) return true;
+            const surname = currentUser.realName.toLowerCase().trim().split(/\s+/)[0];
+            if (surname && item.user_name.toLowerCase().includes(surname)) return true;
+        }
+        if (currentUser.name && item.user_name) {
+            const cName = currentUser.name.toLowerCase().trim();
+            const iName = item.user_name.toLowerCase().trim();
+            if (cName !== 'студент' && (cName === iName || iName.includes(cName) || cName.includes(iName))) return true;
         }
         return false;
     }

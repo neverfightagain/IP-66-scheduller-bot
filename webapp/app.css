@@ -631,21 +631,21 @@ body {
 }
 
 .lab-pill-btn {
-    height: 48px;
-    min-height: 48px;
-    max-height: 48px;
+    height: 46px;
+    min-height: 46px;
+    max-height: 46px;
     box-sizing: border-box;
     background: #FAF8F5;
     border: 1.5px solid #F1EDE6;
     border-radius: 14px;
-    padding: 0 6px;
-    font-size: 13px;
+    padding: 0 8px;
+    font-size: 13.5px;
     font-weight: 700;
     color: #475569;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: 6px;
     cursor: pointer;
     transition: all 0.15s ease;
     white-space: nowrap;
@@ -653,71 +653,42 @@ body {
     user-select: none;
     -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
-    position: relative;
 }
 
 .lab-pill-btn:active {
     transform: scale(0.96);
 }
 
-/* 1. Стан у черзі: студент вже чекає на цю лабораторну роботу */
-.lab-pill-btn.is-queued {
+/* 1. Активна робота у черзі (обрана зараз та присутня у базі) */
+.lab-pill-btn.is-queued.selected {
     background: #EEF2FF;
     border: 2px solid #6366F1;
     color: #3730A3;
     font-weight: 800;
-    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.22);
 }
 
-.lab-pill-btn.is-queued .lab-btn-icon {
-    filter: drop-shadow(0 2px 4px rgba(99, 102, 241, 0.25));
+/* Робота в черзі, але користувач зняв з неї вибір (пунктир) */
+.lab-pill-btn.is-queued:not(.selected) {
+    background: #FAF8F5;
+    border: 1.5px dashed #A5B4FC;
+    color: #6366F1;
 }
 
-.lab-pill-btn .lab-pill-tag {
-    background: #6366F1;
-    color: #FFFFFF;
-    font-size: 9px;
-    font-weight: 800;
-    padding: 2px 5px;
-    border-radius: 6px;
-    letter-spacing: 0.2px;
-    margin-left: 2px;
-    line-height: 1.1;
-    display: inline-block;
-}
-
-/* 2. Стан вибору для додавання чи зміни черги */
-.lab-pill-btn.selected {
+/* 2. Новий вибір роботи для додавання до черги (зелений) */
+.lab-pill-btn.selected:not(.is-queued) {
     background: #EAF8F1;
     border: 2px solid #10B981;
     color: #065F46;
-    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.15);
+    font-weight: 800;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.22);
 }
 
-/* Якщо і в черзі, і обрано (активна комбінація) */
-.lab-pill-btn.is-queued.selected {
-    background: #EEF2FF;
-    border: 2px solid #4F46E5;
-    color: #312E81;
-    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.22);
-}
-
-/* 3. Стан зданої роботи */
-.lab-pill-btn.is-defended {
+/* 3. Здана робота (якщо не обрана) */
+.lab-pill-btn.is-defended:not(.selected) {
     background: #F0FDF4;
     border: 1.5px solid #BBF7D0;
     color: #166534;
-}
-
-.lab-pill-btn.is-defended:hover {
-    border-color: #86EFAC;
-}
-
-.lab-pill-btn .lab-defended-check {
-    color: #16A34A;
-    font-weight: 800;
-    font-size: 11px;
-    margin-left: 2px;
 }
 
 .lab-pill-btn .lab-btn-icon {
@@ -725,6 +696,7 @@ body {
     line-height: 1;
     display: inline-flex;
     align-items: center;
+    flex-shrink: 0;
 }
 
 .lab-pill-btn .lab-btn-text {

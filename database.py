@@ -1015,16 +1015,30 @@ async def join_queue_db(
                     else:
                         clean_lab = f"Лаби {', '.join(str(n) for n in combined_nums)}"
 
-            # Якщо передано новий номер лаби і він відрізняється — оновлюємо без втрати початкового місця (id зберігається!)
+            # Якщо передано новий номер лаби і він відрізняється — оновлюємо
             if clean_lab and (clean_lab != current_lab or priority != current_p):
-                await db.execute("""
-                    UPDATE lab_queues
-                    SET lab_number = ?, lab_priority = ?, user_id = ?, user_name = ?, username = ?
-                    WHERE id = ?
-                """, (clean_lab, priority, user_id, clean_name, username, existing_id))
-                await db.commit()
+                # КРИТИЧНО: Якщо пріоритет погіршився (наприклад, було {1, 5} з пріоритетом 1, а прибрали 1 і лишили 5):
+                # Студент не залишається першим! Він стає в кінець черги для нового пріоритету (5)!
+                if priority > current_p:
+                    await db.execute("DELETE FROM lab_queues WHERE id = ?", (existing_id,))
+                    cursor = await db.execute("""
+                        INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')
+                    """, (chat_id, subject_clean, user_id, clean_name, username, clean_lab, priority))
+                    await db.commit()
+                    target_id = cursor.lastrowid
+                else:
+                    # Пріоритет зберігся або покращився -> початкове місце і id зберігаються!
+                    await db.execute("""
+                        UPDATE lab_queues
+                        SET lab_number = ?, lab_priority = ?, user_id = ?, user_name = ?, username = ?
+                        WHERE id = ?
+                    """, (clean_lab, priority, user_id, clean_name, username, existing_id))
+                    await db.commit()
+                    target_id = existing_id
                 target_priority = priority
             else:
+                target_id = existing_id
                 target_priority = current_p
 
             # Визначаємо поточну позицію з урахуванням пріоритету (lab_priority ASC, id ASC)
@@ -1032,7 +1046,7 @@ async def join_queue_db(
                 SELECT COUNT(*) as pos FROM lab_queues
                 WHERE chat_id = ? AND subject = ? 
                   AND (lab_priority < ? OR (lab_priority = ? AND id <= ?))
-            """, (chat_id, subject_clean, target_priority, target_priority, existing_id)) as pos_cursor:
+            """, (chat_id, subject_clean, target_priority, target_priority, target_id)) as pos_cursor:
                 row = await pos_cursor.fetchone()
                 pos = row["pos"] if row else 1
 
