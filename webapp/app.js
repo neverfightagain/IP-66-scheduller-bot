@@ -75,14 +75,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.body.innerHTML = `
             <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:24px; text-align:center; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #fdfbf7; color: #1e293b;">
-                <div style="width: 76px; height: 76px; border-radius: 22px; background: linear-gradient(135deg, #6366f1, #4f46e5); display: flex; align-items: center; justify-content: center; font-size: 38px; color: #fff; margin-bottom: 20px; box-shadow: 0 10px 25px rgba(79, 70, 229, 0.35);">
+                <div style="width: 76px; height: 76px; border-radius: 22px; background: linear-gradient(135deg, #2AABEE, #229ED9); display: flex; align-items: center; justify-content: center; font-size: 38px; color: #fff; margin-bottom: 20px; box-shadow: 0 10px 25px rgba(34, 158, 217, 0.35);">
                     🤖
                 </div>
                 <h2 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 700; color: #0f172a;">Відкриття через Telegram</h2>
                 <p style="margin: 0 0 24px 0; font-size: 15px; color: #64748b; max-width: 340px; line-height: 1.5;">
                     У звичайному браузері неможливо ідентифікувати ваш студентський акаунт. Відкрийте додаток через Telegram-бота для синхронізації черг та профілю.
                 </p>
-                <a href="${botUrl}" style="display:inline-flex; align-items:center; justify-content:center; gap: 8px; background: #4f46e5; color: #ffffff; padding: 14px 28px; border-radius: 14px; text-decoration: none; font-weight: 600; font-size: 16px; box-shadow: 0 6px 20px rgba(79, 70, 229, 0.3); transition: transform 0.15s ease;">
+                <a href="${botUrl}" style="display:inline-flex; align-items:center; justify-content:center; gap: 8px; background: #229ED9; color: #ffffff; padding: 14px 28px; border-radius: 14px; text-decoration: none; font-weight: 600; font-size: 16px; box-shadow: 0 6px 20px rgba(34, 158, 217, 0.3); transition: transform 0.15s ease;">
                     <span>🚀</span> Відкрити в Telegram
                 </a>
                 <p style="margin-top: 18px; font-size: 13px; color: #94a3b8;">Автоматичне перенаправлення...</p>
@@ -444,7 +444,7 @@ document.addEventListener('DOMContentLoaded', () => {
             time: `${lesson.type || 'Пара'} • ${formatLocation(lesson.location)}`,
             body: `
                 <div style="margin-bottom:8px;"><b>👤 Викладач:</b> ${escapeHtml(lesson.lecturer || 'Не вказано')}</div>
-                ${lesson.link_comment ? `<div style="font-size:12.5px; color:#6D28D9; background:#F3E8FF; padding:8px 12px; border-radius:12px; margin-bottom:8px;">📝 ${escapeHtml(lesson.link_comment)}</div>` : ''}
+                ${lesson.link_comment ? `<div class="lesson-comment-callout">📝 ${escapeHtml(lesson.link_comment)}</div>` : ''}
                 ${!link ? '<div style="color:var(--text-secondary); font-size:13px;">ℹ️ Посилання на онлайн-заняття ще не збережено старостою.</div>' : ''}
             `,
             linkUrl: link,
@@ -1190,7 +1190,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else {
                         dayObj.lessons.forEach((l, lIdx) => {
                             const linkBadge = l.link_url
-                                ? `<span style="color:#7C3AED; font-weight:700; font-size:12px; background:#F3E8FF; padding:3px 9px; border-radius:99px;">🔗 Zoom / Meet</span>`
+                                ? `<span class="lesson-link-badge">🔗 Zoom / Meet</span>`
                                 : `<span style="color:var(--text-muted); font-size:11.5px;">Деталі →</span>`;
 
                             const isCanc = !!l.is_cancelled;
@@ -1216,7 +1216,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <div class="task-meta-block">
                                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
                                             <div style="display:flex; align-items:center; gap:6px;">
-                                                <span style="font-size:12.5px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
+                                                <span class="lesson-pair-tag">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
                                                 ${customBadge}
                                                 ${cancBadge}
                                             </div>
@@ -1264,7 +1264,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 scheduleItemsContainer.innerHTML = scheduleLessons.map((l, idx) => {
                     const linkBadge = l.link_url
-                        ? `<span style="color:#7C3AED; font-weight:700; font-size:12.5px; background:#F3E8FF; padding:4px 10px; border-radius:99px;">🔗 Zoom / Meet</span>`
+                        ? `<span class="lesson-link-badge">🔗 Zoom / Meet</span>`
                         : `<span style="color:var(--text-muted); font-size:12px;">Деталі →</span>`;
 
                     const isCanc = !!l.is_cancelled;
@@ -1290,7 +1290,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="task-meta-block">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
                                     <div style="display:flex; align-items:center; gap:6px;">
-                                        <span style="font-size:12.5px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
+                                        <span class="lesson-pair-tag">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
                                         ${customBadge}
                                         ${cancBadge}
                                     </div>
@@ -1365,7 +1365,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <div class="task-meta-block">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
-                                <span class="task-due-date" style="color:#7C3AED; font-weight:800; font-size:11.5px; text-transform:uppercase;">
+                                <span class="task-due-date dl-course-tag">
                                     ${escapeHtml(d.course_clean || d.course_id || 'Курс')}
                                 </span>
                                 <button class="dl-classroom-link-btn" data-url="${escapeHtml(classroomUrl)}" title="Перейти в Classroom">
@@ -1443,7 +1443,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             time: dl.due_formatted ? `⏰ Дедлайн: ${dl.due_formatted}` : 'Без дедлайну',
                             body: `
                                 ${statusBadge}
-                                ${dl.ai_summary ? `<div style="background:#F3E8FF; padding:10px 14px; border-radius:14px; margin-bottom:12px; font-size:13.5px; color:#581C87; line-height:1.4;"><b>💡 Короткий зміст (AI):</b><br>${escapeHtml(dl.ai_summary)}</div>` : ''}
+                                ${dl.ai_summary ? `<div class="dl-ai-summary"><b>💡 Короткий зміст (AI):</b><br>${escapeHtml(dl.ai_summary)}</div>` : ''}
                                 ${dl.description ? `<div style="font-size:13px; color:#475569; max-height:140px; overflow-y:auto; line-height:1.4;">${escapeHtml(dl.description)}</div>` : ''}
                             `,
                             linkUrl: targetUrl,
@@ -1923,7 +1923,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     : '';
 
                 const linkInfo = l.link_url
-                    ? `<a href="${escapeHtml(l.link_url)}" target="_blank" style="color:#7C3AED; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:3px;">🔗 Zoom / Meet</a>`
+                    ? `<a href="${escapeHtml(l.link_url)}" target="_blank" class="admin-zoom-link">🔗 Zoom / Meet</a>`
                     : '';
 
                 return `
@@ -2495,7 +2495,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="eng-board-title">🇬🇧 ${escapeHtml(board.title)}</div>
                             ${board.description ? `<div style="font-size:12.5px; color:var(--text-secondary); margin-top:2px;">${escapeHtml(board.description)}</div>` : ''}
                         </div>
-                        <span class="subj-pill-badge" style="background:#EDE9FE; color:#6D28D9; font-weight:800; font-size:11px;">
+                        <span class="subj-pill-badge eng-pill-badge">
                             до ${board.max_members} чол.
                         </span>
                     </div>
@@ -2518,7 +2518,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     <!-- Форма створення нової групи з вибором напарників -->
                     <div id="eng-create-panel-${board.id}" class="eng-create-group-panel ${isPanelOpen ? '' : 'hidden'}">
-                        <div style="font-size:13px; font-weight:800; color:#6D28D9;">
+                        <div class="eng-panel-title">
                             ✨ Створення міні-групи (${board.max_members} чол. максимум)
                         </div>
                         <input type="text" id="eng-input-topic-${board.id}" class="admin-input" placeholder="Тема вашого виступу англійською (напр. Microservices Architecture)">
@@ -2533,7 +2533,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
 
                         <div style="display:flex; gap:8px;">
-                            <button class="primary-pill-btn btn-submit-new-group" data-board-id="${board.id}" style="height:44px; font-size:13.5px; flex:1;">
+                            <button class="primary-pill-btn btn-eng-accent btn-submit-new-group" data-board-id="${board.id}" style="height:44px; font-size:13.5px; flex:1;">
                                 🚀 Створити групу
                             </button>
                             <button class="admin-pill-sm btn-cancel-new-group" data-board-id="${board.id}" style="padding:0 14px;">
@@ -2570,7 +2570,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="eng-group-head">
                                 <div>
                                     <div class="eng-group-topic">📘 ${escapeHtml(g.topic_title || 'Тема не вказана')}</div>
-                                    ${isMy ? '<span style="color:#7C3AED; font-weight:800; font-size:11px;">✨ Ваша група</span>' : ''}
+                                    ${isMy ? '<span class="eng-my-badge">✨ Ваша група</span>' : ''}
                                 </div>
                                 ${badgeHtml}
                             </div>
@@ -2613,7 +2613,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const hasAi = g.ai_qa && g.ai_qa.length > 0;
                         html += `
                             <div class="eng-material-box">
-                                <div style="font-size:12.5px; font-weight:800; color:#6D28D9;">
+                                <div class="eng-material-title">
                                     📤 Матеріали виступу та AI-підготовка:
                                 </div>
                                 <div style="display:flex; align-items:center; gap:8px;">
@@ -2628,7 +2628,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                                 <textarea class="admin-input eng-text-input" id="eng-text-${g.id}" rows="3" placeholder="Введіть або вставте текст виступу, тези або слайди англійською...">${escapeHtml(g.content_text || '')}</textarea>
 
-                                <button class="primary-pill-btn btn-generate-qa" data-group-id="${g.id}" data-topic="${escapeHtml(g.topic_title)}" style="height:auto; min-height:44px; font-size:13.5px; background:linear-gradient(135deg, #7C3AED, #4F46E5); white-space:normal; line-height:1.25;">
+                                <button class="primary-pill-btn btn-generate-qa" data-group-id="${g.id}" data-topic="${escapeHtml(g.topic_title)}">
                                     ${hasAi ? '🔄 Перегенерувати Q&A (English AI)' : '🤖 Згенерувати Q&A (English AI)'}
                                 </button>
 
