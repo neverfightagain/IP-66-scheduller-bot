@@ -1124,7 +1124,7 @@ async def cmd_join_op(message: Message):
         return
 
     user = message.from_user
-    ok, msg, pos = await join_queue_db(message.chat.id, "ОП", user.id, user.full_name, user.username, lab_number)
+    ok, msg, pos = await join_queue_db(message.chat.id, "ОП", user.id, user.full_name, user.username, lab_number, append=True)
     items = await get_active_queue_db(message.chat.id, "ОП")
     text, kb = format_queue_view("ОП", items, chat_id=message.chat.id)
     await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
@@ -1145,7 +1145,7 @@ async def cmd_join_asd(message: Message):
         return
 
     user = message.from_user
-    ok, msg, pos = await join_queue_db(message.chat.id, "АСД", user.id, user.full_name, user.username, lab_number)
+    ok, msg, pos = await join_queue_db(message.chat.id, "АСД", user.id, user.full_name, user.username, lab_number, append=True)
     items = await get_active_queue_db(message.chat.id, "АСД")
     text, kb = format_queue_view("АСД", items, chat_id=message.chat.id)
     await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)
@@ -1170,7 +1170,7 @@ async def cmd_join_queue(message: Message):
         return
 
     user = message.from_user
-    ok, msg, pos = await join_queue_db(message.chat.id, subject, user.id, user.full_name, user.username, lab_number)
+    ok, msg, pos = await join_queue_db(message.chat.id, subject, user.id, user.full_name, user.username, lab_number, append=True)
     items = await get_active_queue_db(message.chat.id, subject)
     text, kb = format_queue_view(subject, items, chat_id=message.chat.id)
     await safe_answer(message, f"{'✅' if ok else 'ℹ️'} {msg}\n\n" + text, reply_markup=kb)

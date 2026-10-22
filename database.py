@@ -952,7 +952,8 @@ async def join_queue_db(
     user_id: int,
     user_name: str,
     username: str = None,
-    lab_number: str = ""
+    lab_number: str = "",
+    append: bool = False
 ) -> tuple[bool, str, int]:
     """
     Додати студента до живої черги.
@@ -989,7 +990,19 @@ async def join_queue_db(
                 current_p = existing_dict.get("lab_priority") or 999
                 current_lab = existing_dict.get("lab_number") or ""
 
-                # Якщо передано новий номер лаби і він відрізняється — оновлюємо
+                # Якщо увімкнено режим додавання (append), об'єднуємо поточні роботи з новими
+                if append and current_lab and clean_lab:
+                    cur_nums = set(map(int, re.findall(r'\d+', current_lab)))
+                    new_nums = set(map(int, re.findall(r'\d+', clean_lab)))
+                    combined_nums = sorted(list(cur_nums.union(new_nums)))
+                    if combined_nums:
+                        priority = combined_nums[0]
+                        if len(combined_nums) == 1:
+                            clean_lab = f"Лаба {combined_nums[0]}"
+                        else:
+                            clean_lab = f"Лаби {', '.join(str(n) for n in combined_nums)}"
+
+                # Якщо передано новий номер лаби і він відрізняється — оновлюємо без втрати початкового місця (id зберігається!)
                 if clean_lab and (clean_lab != current_lab or priority != current_p):
                     await db.execute("""
                         UPDATE lab_queues

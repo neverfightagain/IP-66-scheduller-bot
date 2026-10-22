@@ -413,8 +413,31 @@ document.addEventListener('DOMContentLoaded', () => {
             const myItem = currentQueue.find(item => isMeItem(item));
             if (myItem) {
                 const myIdx = currentQueue.indexOf(myItem) + 1;
-                btnPrimaryActionText.textContent = `✅ Ви у черзі #${myIdx} (${activeSubject})`;
+                const currentLabNums = new Set(((myItem.lab_number || '').match(/\d+/g) || []).map(Number));
+                const isSame = (selectedLabs.size === currentLabNums.size) &&
+                               Array.from(selectedLabs).every(n => currentLabNums.has(n));
+
+                if (isSame) {
+                    btnPrimaryActionText.textContent = `✅ Ви у черзі #${myIdx} (${myItem.lab_number || 'Лаба ' + (myItem.lab_priority || 1)})`;
+                    btnPrimaryAction.classList.remove('btn-action-update');
+                } else {
+                    const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
+                    if (sorted.length === 0) {
+                        btnPrimaryActionText.textContent = `⚠️ Оберіть хоча б одну роботу`;
+                        btnPrimaryAction.classList.remove('btn-action-update');
+                    } else {
+                        const labsText = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
+                        const isAdded = sorted.some(n => !currentLabNums.has(n));
+                        if (isAdded) {
+                            btnPrimaryActionText.textContent = `➕ Додати до черги: ${labsText} (місце #${myIdx} збережено)`;
+                        } else {
+                            btnPrimaryActionText.textContent = `💾 Оновити чергу: ${labsText} (місце #${myIdx} збережено)`;
+                        }
+                        btnPrimaryAction.classList.add('btn-action-update');
+                    }
+                }
             } else {
+                btnPrimaryAction.classList.remove('btn-action-update');
                 const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
                 if (sorted.length === 0) {
                     btnPrimaryActionText.textContent = `✋ Зайняти чергу ${activeSubject} (оберіть лабу)`;
@@ -449,8 +472,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (currentTab === 'tab-queue') {
                 const myItem = currentQueue.find(item => isMeItem(item));
                 if (myItem) {
-                    showToast(`Ви вже у черзі ${activeSubject} на позиції #${currentQueue.indexOf(myItem) + 1}!`);
-                    return;
+                    const currentLabNums = new Set(((myItem.lab_number || '').match(/\d+/g) || []).map(Number));
+                    const isSame = (selectedLabs.size === currentLabNums.size) &&
+                                   Array.from(selectedLabs).every(n => currentLabNums.has(n));
+                    if (isSame) {
+                        showToast(`Ви вже у черзі ${activeSubject} на позиції #${currentQueue.indexOf(myItem) + 1}!
+Щоб додати роботу, оберіть її у сітці вище 👆`);
+                        return;
+                    }
                 }
 
                 const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
@@ -524,6 +553,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function toggleLab(num) {
+        userHasManuallyEditedLabs[activeSubject] = true;
         if (selectedLabs.has(num)) {
             selectedLabs.delete(num);
         } else {
@@ -544,8 +574,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const minLab = sorted[0];
         const labsText = sorted.length === 1 ? `Лаба ${minLab}` : `Лаби ${sorted.join(', ')}`;
+        const myItem = currentQueue.find(item => isMeItem(item));
+
         if (previewTextEl) {
-            previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⭐ Пріоритет: Лаба ${minLab} (найстаріша)`;
+            if (myItem) {
+                const myIdx = currentQueue.indexOf(myItem) + 1;
+                previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⭐ Пріоритет: Лаба ${minLab} • 🔒 Місце #${myIdx} збережено`;
+            } else {
+                previewTextEl.textContent = `🎯 Обрано: ${labsText} • ⭐ Пріоритет: Лаба ${minLab} (найстаріша)`;
+            }
         }
         if (priorityPreviewEl) priorityPreviewEl.classList.remove('hidden');
     }
@@ -564,6 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (queueListTitle) queueListTitle.textContent = `Список черги (${activeSubject})`;
+        userHasManuallyEditedLabs[activeSubject] = false;
         selectedLabs.clear();
         renderLabsGrid();
         updatePriorityPreview();
@@ -619,8 +657,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (myStatusBox) myStatusBox.classList.remove('hidden');
                 if (myPosText) myPosText.textContent = `Ви #${meIndex + 1} у черзі (${activeSubject})!`;
                 if (myLabsText) myLabsText.textContent = `${me.lab_number || 'Лаба не вказана'} • ⭐ Пріоритет: Лаба ${me.lab_priority || 1}`;
+
+                // Якщо користувач ще не робив ручного вибору, синхронізуємо обрані лаби з поточної черги
+                if (!userHasManuallyEditedLabs[activeSubject]) {
+                    selectedLabs.clear();
+                    const labMatches = (me.lab_number || '').match(/\d+/g);
+                    if (labMatches) {
+                        labMatches.forEach(n => selectedLabs.add(parseInt(n, 10)));
+                    }
+                    renderLabsGrid();
+                    updatePriorityPreview();
+                }
             } else {
                 if (myStatusBox) myStatusBox.classList.add('hidden');
+                if (!userHasManuallyEditedLabs[activeSubject]) {
+                    selectedLabs.clear();
+                    renderLabsGrid();
+                    updatePriorityPreview();
+                }
             }
 
             updateBottomButtonState();
@@ -730,6 +784,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 const data = await res.json();
                 if (data.success) {
+                    userHasManuallyEditedLabs[activeSubject] = false;
                     selectedLabs.clear();
                     renderLabsGrid();
                     updatePriorityPreview();

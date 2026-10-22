@@ -134,11 +134,12 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             user_name = str(data.get("user_name", "Студент")).strip()
             username = str(data.get("username", "")).strip() or None
             lab_number = str(data.get("lab_number", "")).strip()
+            append = bool(data.get("append", False))
 
             if not user_id:
                 return json_response_cors({"success": False, "error": "user_id is required"}, status=400)
 
-            ok, msg, pos = await join_queue_db(chat_id, subject, user_id, user_name, username, lab_number)
+            ok, msg, pos = await join_queue_db(chat_id, subject, user_id, user_name, username, lab_number, append=append)
             # Синхронізуємо повідомлення в групі Telegram
             if chat_id != 0 and bot:
                 await sync_queue_message_in_chat(bot, chat_id, subject)

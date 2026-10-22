@@ -222,6 +222,43 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
 
         await clear_queue_db(self.chat_id, "ОП")
 
+    async def test_add_additional_labs_without_losing_queue_position(self):
+        # 1. Студент 1 стає в чергу з Лабою 2 (позиція #1)
+        ok1, _, pos1 = await join_queue_db(self.chat_id, self.subject, 701, "Олександр", lab_number="Лаба 2")
+        self.assertTrue(ok1)
+        self.assertEqual(pos1, 1)
+
+        # 2. Студент 2 стає в чергу з Лабою 3 (позиція #2)
+        ok2, _, pos2 = await join_queue_db(self.chat_id, self.subject, 702, "Дмитро", lab_number="Лаба 3")
+        self.assertTrue(ok2)
+        self.assertEqual(pos2, 2)
+
+        # 3. Студент 1 додає ще й Лабу 3 (append=True): тепер здає "Лаби 2, 3"
+        ok_add, msg_add, pos_add = await join_queue_db(
+            self.chat_id, self.subject, 701, "Олександр", lab_number="Лаба 3", append=True
+        )
+        self.assertTrue(ok_add)
+        self.assertEqual(pos_add, 1)  # Залишається на #1, не летить вниз!
+
+        q = await get_active_queue_db(self.chat_id, self.subject)
+        self.assertEqual(len(q), 2)
+        self.assertEqual(q[0]["user_name"], "Олександр")
+        self.assertEqual(q[0]["lab_number"], "Лаби 2, 3")
+        self.assertEqual(q[0]["lab_priority"], 2)
+
+        # 4. Студент 1 оновлює з WebApp (надсилає повний набір "Лаби 2, 4")
+        ok_web, _, pos_web = await join_queue_db(
+            self.chat_id, self.subject, 701, "Олександр", lab_number="Лаби 2, 4", append=False
+        )
+        self.assertTrue(ok_web)
+        self.assertEqual(pos_web, 1)
+
+        q2 = await get_active_queue_db(self.chat_id, self.subject)
+        self.assertEqual(q2[0]["lab_number"], "Лаби 2, 4")
+        self.assertEqual(q2[0]["user_name"], "Олександр")
+
+        await clear_queue_db(self.chat_id, self.subject)
+
     async def test_oldest_labs_surface_to_top(self):
         # 1. Студент з Лабою 4 стає в чергу
         ok1, _, pos1 = await join_queue_db(self.chat_id, self.subject, 401, "Андрій", lab_number="Лаба 4")

@@ -1218,3 +1218,14 @@ body {
     margin-top: 2px;
 }
 
+
+
+.primary-pill-btn.btn-action-update {
+    background: linear-gradient(135deg, #10B981, #059669) !important;
+    box-shadow: 0 10px 24px rgba(16, 185, 129, 0.38) !important;
+}
+
+.primary-pill-btn.btn-action-update:active {
+    background: linear-gradient(135deg, #059669, #047857) !important;
+    transform: scale(0.97);
+}
