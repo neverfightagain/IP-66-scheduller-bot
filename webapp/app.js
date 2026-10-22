@@ -476,15 +476,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     const isSame = (selectedLabs.size === currentLabNums.size) &&
                                    Array.from(selectedLabs).every(n => currentLabNums.has(n));
                     if (isSame) {
-                        showToast(`Ви вже у черзі ${activeSubject} на позиції #${currentQueue.indexOf(myItem) + 1}!
-Щоб додати роботу, оберіть її у сітці вище 👆`);
+                        showToast(`Ви вже у черзі ${activeSubject} на позиції #${currentQueue.indexOf(myItem) + 1}!\nЩоб додати ще роботу, оберіть її у сітці вище 👆`, 3500);
+                        if (labsGridEl) {
+                            labsGridEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            labsGridEl.classList.add('attention-pulse');
+                            setTimeout(() => labsGridEl.classList.remove('attention-pulse'), 500);
+                        }
                         return;
                     }
                 }
 
                 const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
                 if (sorted.length === 0) {
-                    showToast("⚠️ Оберіть номер лаби для захисту у сітці 1-9!");
+                    toggleLab(1);
+                    showToast("🎯 Обрано Лабу 1. Натисніть ще раз, щоб підтвердити, або оберіть іншу!", 3000);
                     if (labsGridEl) labsGridEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     return;
                 }
@@ -538,16 +543,51 @@ document.addEventListener('DOMContentLoaded', () => {
             localSet.forEach(n => defendedLabNumbers.add(n));
         }
 
+        // Роботи, на які студент ВЖЕ стоїть у черзі зараз
+        const myItem = currentQueue.find(item => isMeItem(item));
+        const myQueuedLabNums = new Set();
+        if (myItem && myItem.lab_number) {
+            const matches = myItem.lab_number.match(/\d+/g);
+            if (matches) {
+                matches.forEach(n => myQueuedLabNums.add(parseInt(n, 10)));
+            }
+        }
+
         for (let i = 1; i <= 9; i++) {
             const btn = document.createElement('button');
+            const isQueued = myQueuedLabNums.has(i);
             const isSelected = selectedLabs.has(i);
             const isDefended = defendedLabNumbers.has(i);
 
-            let icon = isSelected ? '✅' : (isDefended ? '✓' : '▫️');
-            let badge = isDefended ? ' <span style="font-size:10px; color:#16a34a; font-weight:700;">(здано)</span>' : '';
-            btn.className = `lab-pill-btn ${isSelected ? 'selected' : ''} ${isDefended ? 'is-defended' : ''}`;
-            btn.innerHTML = `<span>${icon}</span><span>Лаба ${i}${badge}</span>`;
-            btn.addEventListener('click', () => toggleLab(i));
+            let icon = '▫️';
+            let tagHtml = '';
+
+            if (isQueued) {
+                icon = '⏳';
+                tagHtml = `<span class="lab-pill-tag">в черзі</span>`;
+            } else if (isSelected) {
+                icon = '✅';
+            } else if (isDefended) {
+                icon = '✓';
+                tagHtml = `<span class="lab-defended-check">✓</span>`;
+            }
+
+            const classes = ['lab-pill-btn'];
+            if (isQueued) classes.push('is-queued');
+            if (isSelected) classes.push('selected');
+            if (isDefended) classes.push('is-defended');
+
+            btn.className = classes.join(' ');
+            btn.innerHTML = `
+                <span class="lab-btn-icon">${icon}</span>
+                <span class="lab-btn-text">Лаба ${i}</span>
+                ${tagHtml}
+            `;
+            btn.setAttribute('type', 'button');
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                toggleLab(i);
+            });
             labsGridEl.appendChild(btn);
         }
     }
@@ -739,7 +779,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
         if (sorted.length === 0) return;
 
+        const myItem = currentQueue.find(item => isMeItem(item));
+        const targetUserId = (myItem && myItem.user_id) ? myItem.user_id : currentUser.id;
         const labLabel = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
+
+        if (btnPrimaryActionText) btnPrimaryActionText.textContent = "⏳ Збереження у черзі...";
+        if (btnPrimaryAction) btnPrimaryAction.disabled = true;
+
         try {
             const res = await fetch('/api/queue/join', {
                 method: 'POST',
@@ -747,22 +793,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({
                     chat_id: chatId,
                     subject: activeSubject,
-                    user_id: currentUser.id,
+                    user_id: targetUserId,
                     user_name: currentUser.name,
                     username: currentUser.username,
-                    lab_number: labLabel
+                    lab_number: labLabel,
+                    append: false
                 })
             });
             const data = await res.json();
             if (data.success) {
                 if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-                showToast(`✅ Ви успішно стали у чергу ${activeSubject}!`);
+                showToast(`✅ Чергу ${activeSubject} оновлено! (${labLabel})`);
+                userHasManuallyEditedLabs[activeSubject] = true;
                 await fetchQueue();
             } else {
                 showToast(data.message || 'Помилка запису');
             }
         } catch (err) {
             showToast('Помилка з\'єднання з сервером');
+        } finally {
+            if (btnPrimaryAction) btnPrimaryAction.disabled = false;
+            updateBottomButtonState();
         }
     }
 
@@ -779,7 +830,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({
                         chat_id: chatId,
                         subject: activeSubject,
-                        user_id: uidToLeave
+                        user_id: uidToLeave,
+                        username: currentUser.username
                     })
                 });
                 const data = await res.json();
@@ -1195,7 +1247,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         if (subjectHeroTitle) subjectHeroTitle.textContent = meta.title;
-        if (subjectHeroTerm) subjectHeroTerm.textContent = `${meta.termPlural} (1..${meta.totalWorks})`;
+        if (subjectHeroTerm) subjectHeroTerm.textContent = `${meta.termPlural} (1-${meta.totalWorks})`;
 
         renderMyProgressView(meta);
     }

@@ -259,6 +259,35 @@ class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
 
         await clear_queue_db(self.chat_id, self.subject)
 
+    async def test_join_queue_sync_roster_user_id_by_username(self):
+        # 1. Студент доданий через таблицю/ростер з тимчасовим ID 100027
+        ok1, _, pos1 = await join_queue_db(
+            self.chat_id, self.subject, 100027, "Сінчиневич М.", username="neverfightaga1n", lab_number="Лаба 5"
+        )
+        self.assertTrue(ok1)
+        self.assertEqual(pos1, 1)
+
+        # 2. Студент заходить з WebApp через Telegram ID 8735281894 і додає Лабу 6
+        ok2, msg2, pos2 = await join_queue_db(
+            self.chat_id, self.subject, 8735281894, "Сінчиневич М.", username="neverfightaga1n", lab_number="Лаби 5, 6"
+        )
+        self.assertTrue(ok2)
+        self.assertEqual(pos2, 1)
+
+        # Перевірка: запис оновлено, дублікатів немає (довжина 1), user_id оновлено на Telegram ID
+        items = await get_active_queue_db(self.chat_id, self.subject)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["user_id"], 8735281894)
+        self.assertEqual(items[0]["lab_number"], "Лаби 5, 6")
+
+        # 3. Вихід з черги
+        left = await leave_queue_db(self.chat_id, self.subject, 8735281894, username="neverfightaga1n")
+        self.assertTrue(left)
+        empty_items = await get_active_queue_db(self.chat_id, self.subject)
+        self.assertEqual(len(empty_items), 0)
+
+        await clear_queue_db(self.chat_id, self.subject)
+
     async def test_oldest_labs_surface_to_top(self):
         # 1. Студент з Лабою 4 стає в чергу
         ok1, _, pos1 = await join_queue_db(self.chat_id, self.subject, 401, "Андрій", lab_number="Лаба 4")

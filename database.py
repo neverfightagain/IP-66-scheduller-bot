@@ -977,56 +977,69 @@ async def join_queue_db(
     except Exception:
         clean_name = format_queue_name(clean_name)
 
+    clean_uname = username.lstrip("@").strip().lower() if username else None
+
     async with get_db() as db:
-        # Перевірка чи вже є у черзі
-        async with db.execute("""
-            SELECT id, lab_number, lab_priority FROM lab_queues
-            WHERE chat_id = ? AND subject = ? AND user_id = ?
-        """, (chat_id, subject_clean, user_id)) as cursor:
-            existing = await cursor.fetchone()
-            if existing:
-                existing_dict = dict(existing)
-                existing_id = existing_dict["id"]
-                current_p = existing_dict.get("lab_priority") or 999
-                current_lab = existing_dict.get("lab_number") or ""
+        # Перевірка чи вже є у черзі (за user_id або username)
+        if clean_uname:
+            async with db.execute("""
+                SELECT id, user_id, lab_number, lab_priority FROM lab_queues
+                WHERE chat_id = ? AND subject = ? 
+                  AND (user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
+                ORDER BY id ASC LIMIT 1
+            """, (chat_id, subject_clean, user_id, clean_uname)) as cursor:
+                existing = await cursor.fetchone()
+        else:
+            async with db.execute("""
+                SELECT id, user_id, lab_number, lab_priority FROM lab_queues
+                WHERE chat_id = ? AND subject = ? AND user_id = ?
+                LIMIT 1
+            """, (chat_id, subject_clean, user_id)) as cursor:
+                existing = await cursor.fetchone()
 
-                # Якщо увімкнено режим додавання (append), об'єднуємо поточні роботи з новими
-                if append and current_lab and clean_lab:
-                    cur_nums = set(map(int, re.findall(r'\d+', current_lab)))
-                    new_nums = set(map(int, re.findall(r'\d+', clean_lab)))
-                    combined_nums = sorted(list(cur_nums.union(new_nums)))
-                    if combined_nums:
-                        priority = combined_nums[0]
-                        if len(combined_nums) == 1:
-                            clean_lab = f"Лаба {combined_nums[0]}"
-                        else:
-                            clean_lab = f"Лаби {', '.join(str(n) for n in combined_nums)}"
+        if existing:
+            existing_dict = dict(existing)
+            existing_id = existing_dict["id"]
+            current_p = existing_dict.get("lab_priority") or 999
+            current_lab = existing_dict.get("lab_number") or ""
 
-                # Якщо передано новий номер лаби і він відрізняється — оновлюємо без втрати початкового місця (id зберігається!)
-                if clean_lab and (clean_lab != current_lab or priority != current_p):
-                    await db.execute("""
-                        UPDATE lab_queues
-                        SET lab_number = ?, lab_priority = ?, user_name = ?, username = ?
-                        WHERE id = ?
-                    """, (clean_lab, priority, clean_name, username, existing_id))
-                    await db.commit()
-                    target_priority = priority
-                else:
-                    target_priority = current_p
+            # Якщо увімкнено режим додавання (append), об'єднуємо поточні роботи з новими
+            if append and current_lab and clean_lab:
+                cur_nums = set(map(int, re.findall(r'\d+', current_lab)))
+                new_nums = set(map(int, re.findall(r'\d+', clean_lab)))
+                combined_nums = sorted(list(cur_nums.union(new_nums)))
+                if combined_nums:
+                    priority = combined_nums[0]
+                    if len(combined_nums) == 1:
+                        clean_lab = f"Лаба {combined_nums[0]}"
+                    else:
+                        clean_lab = f"Лаби {', '.join(str(n) for n in combined_nums)}"
 
-                # Визначаємо поточну позицію з урахуванням пріоритету (lab_priority ASC, id ASC)
-                async with db.execute("""
-                    SELECT COUNT(*) as pos FROM lab_queues
-                    WHERE chat_id = ? AND subject = ? 
-                      AND (lab_priority < ? OR (lab_priority = ? AND id <= ?))
-                """, (chat_id, subject_clean, target_priority, target_priority, existing_id)) as pos_cursor:
-                    row = await pos_cursor.fetchone()
-                    pos = row["pos"] if row else 1
+            # Якщо передано новий номер лаби і він відрізняється — оновлюємо без втрати початкового місця (id зберігається!)
+            if clean_lab and (clean_lab != current_lab or priority != current_p):
+                await db.execute("""
+                    UPDATE lab_queues
+                    SET lab_number = ?, lab_priority = ?, user_id = ?, user_name = ?, username = ?
+                    WHERE id = ?
+                """, (clean_lab, priority, user_id, clean_name, username, existing_id))
+                await db.commit()
+                target_priority = priority
+            else:
+                target_priority = current_p
 
-                if clean_lab and (clean_lab != current_lab or priority != current_p):
-                    return True, f"Ви вже у черзі. Роботу оновлено: {clean_lab}. Ваша нова позиція: #{pos}", pos
+            # Визначаємо поточну позицію з урахуванням пріоритету (lab_priority ASC, id ASC)
+            async with db.execute("""
+                SELECT COUNT(*) as pos FROM lab_queues
+                WHERE chat_id = ? AND subject = ? 
+                  AND (lab_priority < ? OR (lab_priority = ? AND id <= ?))
+            """, (chat_id, subject_clean, target_priority, target_priority, existing_id)) as pos_cursor:
+                row = await pos_cursor.fetchone()
+                pos = row["pos"] if row else 1
 
-                return False, f"Ви вже знаходитесь у черзі на позиції #{pos}.", pos
+            if clean_lab and (clean_lab != current_lab or priority != current_p):
+                return True, f"Ви вже у черзі. Роботу оновлено: {clean_lab}. Ваша нова позиція: #{pos}", pos
+
+            return False, f"Ви вже знаходитесь у черзі на позиції #{pos}.", pos
 
         # Додаємо нового учасника (гарантовано 1 актуальний запис)
         cursor = await db.execute("""
@@ -1048,14 +1061,22 @@ async def join_queue_db(
         return True, "Успішно додано до черги!", pos
 
 
-async def leave_queue_db(chat_id: int, subject: str, user_id: int) -> bool:
+async def leave_queue_db(chat_id: int, subject: str, user_id: int, username: str = None) -> bool:
     """Видалити студента з черги (фізичне повне видалення з бази даних)."""
     subject_clean = (subject or "ОП").strip()
+    clean_uname = username.lstrip("@").strip().lower() if username else None
     async with get_db() as db:
-        cursor = await db.execute("""
-            DELETE FROM lab_queues
-            WHERE chat_id = ? AND subject = ? AND user_id = ?
-        """, (chat_id, subject_clean, user_id))
+        if clean_uname:
+            cursor = await db.execute("""
+                DELETE FROM lab_queues
+                WHERE chat_id = ? AND subject = ? 
+                  AND (user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
+            """, (chat_id, subject_clean, user_id, clean_uname))
+        else:
+            cursor = await db.execute("""
+                DELETE FROM lab_queues
+                WHERE chat_id = ? AND subject = ? AND user_id = ?
+            """, (chat_id, subject_clean, user_id))
         await db.commit()
         return cursor.rowcount > 0
 

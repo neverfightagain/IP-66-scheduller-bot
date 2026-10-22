@@ -160,11 +160,12 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             chat_id = int(data.get("chat_id", 0))
             subject = str(data.get("subject", "ОП")).strip()
             user_id = int(data.get("user_id", 0))
+            username = str(data.get("username", "")).strip() or None
 
-            if not user_id:
-                return json_response_cors({"success": False, "error": "user_id is required"}, status=400)
+            if not user_id and not username:
+                return json_response_cors({"success": False, "error": "user_id or username is required"}, status=400)
 
-            ok = await leave_queue_db(chat_id, subject, user_id)
+            ok = await leave_queue_db(chat_id, subject, user_id, username=username)
             if chat_id != 0 and bot:
                 await sync_queue_message_in_chat(bot, chat_id, subject)
 
