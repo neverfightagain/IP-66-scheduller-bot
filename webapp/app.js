@@ -405,6 +405,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        const navBtnAdmin = document.getElementById('nav-btn-admin');
+        if (navBtnAdmin) {
+            if (targetTab === 'tab-admin') {
+                navBtnAdmin.classList.add('active');
+            } else {
+                navBtnAdmin.classList.remove('active');
+            }
+        }
+
         tabContents.forEach(c => {
             if (c.id === targetTab) {
                 c.classList.add('active');
@@ -412,6 +421,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 c.classList.remove('active');
             }
         });
+
+        // Ховаємо нижню плаваючу кнопку, коли відкрита адмінка, щоб не перекривати інпути
+        const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
+        if (bottomWrapper) {
+            if (targetTab === 'tab-admin') {
+                bottomWrapper.classList.add('hidden');
+            } else {
+                bottomWrapper.classList.remove('hidden');
+            }
+        }
 
         updateBottomButtonState();
     }
@@ -425,14 +444,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (targetTab === 'tab-deadlines') fetchDeadlines();
             if (targetTab === 'tab-queue') fetchQueue();
             if (targetTab === 'tab-subjects') fetchSubjectsOverview();
-            if (targetTab === 'tab-admin') {
-                if (typeof loadAdminScheduleDate === 'function') {
-                    const adminDateEl = document.getElementById('admin-schedule-date');
-                    loadAdminScheduleDate(adminDateEl ? adminDateEl.value : getKyivDateString(0));
-                }
-            }
         });
     });
+
+    const navBtnAdminEl = document.getElementById('nav-btn-admin');
+    if (navBtnAdminEl) {
+        navBtnAdminEl.addEventListener('click', () => {
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            switchToTab('tab-admin');
+            if (typeof loadAdminScheduleDate === 'function') {
+                const adminDateEl = document.getElementById('admin-schedule-date');
+                loadAdminScheduleDate(adminDateEl ? adminDateEl.value : getKyivDateString(0));
+            }
+        });
+    }
 
     // 4. Оновлення нижньої кнопки дії
     function updateBottomButtonState() {
@@ -1727,7 +1752,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const cancBadge = isCanc ? '<span class="badge-cancelled">🚫 Скасовано</span>' : '';
                 const cancReason = (isCanc && l.cancel_reason) ? `<div class="cancel-reason-callout">⚠️ Причина: ${escapeHtml(l.cancel_reason)}</div>` : '';
 
-                const uncancelBtn = isCanc
+                const actionBtn = isCanc
                     ? `<button class="admin-btn admin-btn-restore btn-admin-act-uncancel" data-pair="${l.pair_number}">↩️ Відновити</button>`
                     : `<button class="admin-btn admin-btn-cancel btn-admin-act-cancel" data-pair="${l.pair_number}" data-name="${escapeHtml(l.name)}">🚫 Скасувати</button>`;
 
@@ -1735,18 +1760,30 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? `<button class="admin-btn admin-btn-danger btn-admin-act-delete" data-id="${l.custom_id}">🗑 Видалити</button>`
                     : '';
 
+                const linkInfo = l.link_url
+                    ? `<a href="${escapeHtml(l.link_url)}" target="_blank" style="color:#7C3AED; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:3px;">🔗 Zoom / Meet</a>`
+                    : '';
+
                 return `
-                    <div class="task-item-card ${isCanc ? 'lesson-cancelled' : ''}" style="margin-bottom:8px; padding:10px 12px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
-                            <span style="font-size:12px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number} • ${l.time} (${l.type || 'Пара'})</span>
-                            <div style="display:flex; gap:4px;">${customBadge}${cancBadge}</div>
+                    <div class="admin-lesson-card ${isCanc ? 'lesson-cancelled' : ''}">
+                        <div class="admin-card-head">
+                            <div class="admin-card-tags">
+                                <span class="admin-card-time">Пара ${l.pair_number} • ${l.time} (${escapeHtml(l.type || 'Пара')})</span>
+                                ${customBadge}
+                                ${cancBadge}
+                            </div>
+                            <div class="admin-card-actions">
+                                ${actionBtn}
+                                ${deleteBtn}
+                            </div>
                         </div>
-                        <div style="font-weight:700; font-size:13.5px; color:var(--text-primary);">${escapeHtml(l.name)}</div>
-                        <div style="font-size:11.5px; color:var(--text-secondary); margin-top:2px;">👤 ${escapeHtml(l.lecturer || 'Не вказано')}</div>
-                        ${cancReason}
-                        <div class="card-admin-bar">
-                            ${uncancelBtn}
-                            ${deleteBtn}
+                        <div class="admin-card-title">${escapeHtml(l.name)}</div>
+                        <div class="admin-card-footer">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                                <span>👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')}</span>
+                                ${linkInfo}
+                            </div>
+                            ${cancReason}
                         </div>
                     </div>
                 `;

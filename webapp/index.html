@@ -6,7 +6,7 @@
     <title>ІП-66 Портал</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/webapp/app.css?v=2.7">
+    <link rel="stylesheet" href="/webapp/app.css?v=2.8">
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,9 +22,15 @@
             </div>
             
             <div class="hero-actions-col">
-                <!-- Неклікабельна аватарка користувача -->
-                <div class="user-avatar-badge" id="user-avatar-badge" aria-label="Аватар користувача">
-                    <span id="user-avatar-text">С</span>
+                <div class="hero-top-badges-row">
+                    <!-- Кнопка-замочок входу в адмінку (тільки для адмінів/власника) -->
+                    <button class="admin-lock-btn hidden" id="nav-btn-admin" title="Панель старостату" aria-label="Адмін-панель">
+                        <span>🔒</span>
+                    </button>
+                    <!-- Неклікабельна аватарка користувача -->
+                    <div class="user-avatar-badge" id="user-avatar-badge" aria-label="Аватар користувача">
+                        <span id="user-avatar-text">С</span>
+                    </div>
                 </div>
                 <!-- Явна кнопка швидкого оновлення -->
                 <button class="action-sync-btn" id="btn-sync" title="Оновити дані">
@@ -59,7 +65,6 @@
             <button class="seg-pill-btn" data-tab="tab-schedule">📅 Розклад</button>
             <button class="seg-pill-btn" data-tab="tab-deadlines">⏳ Дедлайни</button>
             <button class="seg-pill-btn" data-tab="tab-subjects">📚 Предмети</button>
-            <button class="seg-pill-btn hidden" data-tab="tab-admin" id="nav-btn-admin">⚙️ Адмінка</button>
         </div>
 
         <!-- РОЗДІЛ 1: Жива черга на захист (ОП / АСД) -->
@@ -382,6 +387,6 @@
     <!-- Toast сповіщення -->
     <div id="toast" class="toast-popup hidden"></div>
 
-    <script src="/webapp/app.js?v=2.7"></script>
+    <script src="/webapp/app.js?v=2.8"></script>
 </body>
 </html>

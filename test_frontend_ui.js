@@ -117,7 +117,7 @@ elementIds.forEach(id => getOrCreateElement(id));
 
 // Set initial classes and attributes matching index.html
 const navBtnAdmin = getOrCreateElement('nav-btn-admin', 'button');
-navBtnAdmin.classList.add('seg-pill-btn', 'hidden');
+navBtnAdmin.classList.add('admin-lock-btn', 'hidden');
 navBtnAdmin.setAttribute('data-tab', 'tab-admin');
 
 const tabAdmin = getOrCreateElement('tab-admin', 'section');
@@ -173,8 +173,13 @@ const mockDoc = {
     },
     getElementById: (id) => getOrCreateElement(id),
     createElement: (tag) => new MockElement('', tag),
+    querySelector: (sel) => {
+        if (sel === '.bottom-action-wrapper') return getOrCreateElement('bottom-action-wrapper');
+        if (sel === '#nav-btn-admin') return navBtnAdmin;
+        return null;
+    },
     querySelectorAll: (sel) => {
-        if (sel === '.seg-pill-btn') return [segQueue, segSchedule, segDeadlines, segSubjects, navBtnAdmin];
+        if (sel === '.seg-pill-btn') return [segQueue, segSchedule, segDeadlines, segSubjects];
         if (sel === '.tab-content') return [tabQueue, tabSchedule, tabDeadlines, tabSubjects, tabAdmin];
         return [];
     },
@@ -483,10 +488,21 @@ async function runTests() {
     // 9.4: Date input initialized
     assert.ok(adminScheduleDate.value, 'Admin schedule date input must be prefilled');
 
-    // 9.5: Switch tab to Admin
+    // 9.5: Switch tab to Admin via lock button
     navBtnAdmin.click();
-    assert.ok(navBtnAdmin.classList.contains('active'), 'Admin tab button must have active class when selected');
+    assert.ok(navBtnAdmin.classList.contains('active'), 'Admin lock button must have active class when selected');
     assert.ok(tabAdmin.classList.contains('active'), 'Admin tab content must be active');
+    const bottomWrapper = getOrCreateElement('bottom-action-wrapper');
+    assert.ok(bottomWrapper.classList.contains('hidden'), 'Bottom action wrapper must be hidden in admin tab');
+
+    // Switch back to schedule tab and verify admin active class is removed and bottom wrapper is restored
+    segSchedule.click();
+    assert.ok(!navBtnAdmin.classList.contains('active'), 'Admin lock button must lose active class when returning to schedule');
+    assert.ok(!bottomWrapper.classList.contains('hidden'), 'Bottom action wrapper must be unhidden when returning to schedule');
+
+    // Re-open admin tab for next tests
+    navBtnAdmin.click();
+    assert.ok(navBtnAdmin.classList.contains('active'), 'Admin lock button must be active again');
 
     // 9.6: Test mode toggle action
     adminTestModeToggle.checked = false;
