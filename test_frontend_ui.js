@@ -28,6 +28,10 @@ class MockElement {
         this.children = [];
         this._innerHTML = '';
         this._textContent = '';
+        this.value = '';
+        this.checked = false;
+        this.disabled = false;
+        this.selectedOptions = [];
     }
 
     get className() { return Array.from(this.classList.classes).join(' '); }
@@ -74,6 +78,7 @@ class MockElement {
     }
 
     scrollIntoView() {}
+    focus() {}
 }
 
 const elements = {};
@@ -84,7 +89,7 @@ function getOrCreateElement(id, tag = 'div') {
     return elements[id];
 }
 
-// Pre-create known DOM elements from index.html
+// Pre-create known DOM elements from index.html (including all admin elements)
 const elementIds = [
     'user-greeting', 'hero-subtitle', 'user-avatar-badge', 'user-avatar-text', 'btn-sync',
     'mini-card-op', 'mini-card-asd', 'mini-op-stat', 'mini-op-sub', 'mini-asd-stat', 'mini-asd-sub',
@@ -98,9 +103,67 @@ const elementIds = [
     'subject-progress-status', 'subject-works-container',
     'btn-primary-action', 'btn-primary-action-text', 'toast',
     'modal-backdrop', 'modal-sheet', 'modal-tag', 'modal-title', 'modal-time', 'modal-body-content',
-    'modal-primary-link', 'btn-close-modal'
+    'modal-primary-link', 'btn-close-modal',
+    // Admin panel elements
+    'nav-btn-admin', 'tab-admin', 'admin-role-badge',
+    'admin-test-mode-card', 'admin-test-mode-title', 'admin-test-mode-desc', 'admin-test-mode-toggle',
+    'btn-admin-next-op', 'btn-admin-clear-op', 'btn-admin-next-asd', 'btn-admin-clear-asd',
+    'admin-schedule-date', 'btn-admin-date-today', 'btn-admin-date-tomorrow', 'admin-schedule-list',
+    'admin-pair-num', 'admin-pair-type', 'admin-pair-name', 'admin-pair-lecturer', 'admin-pair-link', 'admin-pair-comment',
+    'btn-admin-add-pair', 'admin-roles-list', 'admin-student-select', 'admin-custom-username', 'admin-role-select',
+    'btn-admin-grant-role'
 ];
 elementIds.forEach(id => getOrCreateElement(id));
+
+// Set initial classes and attributes matching index.html
+const navBtnAdmin = getOrCreateElement('nav-btn-admin', 'button');
+navBtnAdmin.classList.add('seg-pill-btn', 'hidden');
+navBtnAdmin.setAttribute('data-tab', 'tab-admin');
+
+const tabAdmin = getOrCreateElement('tab-admin', 'section');
+tabAdmin.classList.add('tab-content');
+
+const adminTestModeCard = getOrCreateElement('admin-test-mode-card', 'div');
+adminTestModeCard.classList.add('admin-card', 'hidden');
+
+const adminTestModeToggle = getOrCreateElement('admin-test-mode-toggle', 'input');
+adminTestModeToggle.setAttribute('type', 'checkbox');
+adminTestModeToggle.checked = true;
+
+const adminScheduleDate = getOrCreateElement('admin-schedule-date', 'input');
+adminScheduleDate.setAttribute('type', 'date');
+
+const btnDateToday = getOrCreateElement('btn-admin-date-today', 'button');
+btnDateToday.classList.add('admin-pill-sm', 'active');
+
+const btnDateTomorrow = getOrCreateElement('btn-admin-date-tomorrow', 'button');
+btnDateTomorrow.classList.add('admin-pill-sm');
+
+// Navigation segmented buttons & tab contents
+const segQueue = new MockElement('seg-queue', 'button');
+segQueue.setAttribute('data-tab', 'tab-queue');
+segQueue.classList.add('seg-pill-btn', 'active');
+
+const segSchedule = new MockElement('seg-schedule', 'button');
+segSchedule.setAttribute('data-tab', 'tab-schedule');
+segSchedule.classList.add('seg-pill-btn');
+
+const segDeadlines = new MockElement('seg-deadlines', 'button');
+segDeadlines.setAttribute('data-tab', 'tab-deadlines');
+segDeadlines.classList.add('seg-pill-btn');
+
+const segSubjects = new MockElement('seg-subjects', 'button');
+segSubjects.setAttribute('data-tab', 'tab-subjects');
+segSubjects.classList.add('seg-pill-btn');
+
+const tabQueue = getOrCreateElement('tab-queue', 'section');
+tabQueue.classList.add('tab-content', 'active');
+const tabSchedule = getOrCreateElement('tab-schedule', 'section');
+tabSchedule.classList.add('tab-content');
+const tabDeadlines = getOrCreateElement('tab-deadlines', 'section');
+tabDeadlines.classList.add('tab-content');
+const tabSubjects = getOrCreateElement('tab-subjects', 'section');
+tabSubjects.classList.add('tab-content');
 
 const documentListeners = {};
 const mockDoc = {
@@ -111,8 +174,8 @@ const mockDoc = {
     getElementById: (id) => getOrCreateElement(id),
     createElement: (tag) => new MockElement('', tag),
     querySelectorAll: (sel) => {
-        if (sel === '.seg-pill-btn') return [new MockElement('seg1'), new MockElement('seg2')];
-        if (sel === '.tab-content') return [new MockElement('tab-queue'), new MockElement('tab-schedule')];
+        if (sel === '.seg-pill-btn') return [segQueue, segSchedule, segDeadlines, segSubjects, navBtnAdmin];
+        if (sel === '.tab-content') return [tabQueue, tabSchedule, tabDeadlines, tabSubjects, tabAdmin];
         return [];
     },
     body: new MockElement('body', 'body')
@@ -215,6 +278,57 @@ const sandbox = {
         if (url.includes('/api/schedule')) return { json: async () => ({ success: true, lessons: [], days: [] }) };
         if (url.includes('/api/deadlines')) return { json: async () => ({ success: true, deadlines: [] }) };
         if (url.includes('/api/subjects/overview')) return { json: async () => ({ success: true, defenses: [] }) };
+        if (url.includes('/api/admin/me')) {
+            const isOwner = url.includes('8735281894') || url.includes('sinch');
+            return {
+                json: async () => ({
+                    success: true,
+                    is_admin: isOwner,
+                    is_owner: isOwner,
+                    role: isOwner ? 'owner' : null,
+                    test_mode: true,
+                    roles: [
+                        { id: 1, user_id: 12345, username: 'starosta_user', real_name: 'Олександр Староста', role: 'headman' }
+                    ]
+                })
+            };
+        }
+        if (url.includes('/api/students')) {
+            return {
+                json: async () => ({
+                    success: true,
+                    students: [
+                        { telegram_id: 8735281894, telegram_username: 'sinch', real_name: 'Сінчіневіч Максим Ігорович' },
+                        { telegram_id: 12345, telegram_username: 'starosta_user', real_name: 'Олександр Староста' }
+                    ]
+                })
+            };
+        }
+        if (url.includes('/api/admin/test_mode')) {
+            const body = JSON.parse(opts.body || '{}');
+            return { json: async () => ({ success: true, test_mode: body.test_mode }) };
+        }
+        if (url.includes('/api/admin/schedule/add_pair')) {
+            return { json: async () => ({ success: true, id: 101, message: 'Пару успішно додано' }) };
+        }
+        if (url.includes('/api/admin/schedule/cancel')) {
+            return { json: async () => ({ success: true, message: 'Пару скасовано' }) };
+        }
+        if (url.includes('/api/admin/schedule/uncancel')) {
+            return { json: async () => ({ success: true, message: 'Пару відновлено' }) };
+        }
+        if (url.includes('/api/admin/schedule/delete_pair')) {
+            return { json: async () => ({ success: true, message: 'Пару видалено' }) };
+        }
+        if (url.includes('/api/admin/roles/grant')) {
+            return { json: async () => ({ success: true, roles: [] }) };
+        }
+        if (url.includes('/api/admin/roles/revoke')) {
+            return { json: async () => ({ success: true, roles: [] }) };
+        }
+        if (url.includes('/api/admin/queue/clear')) {
+            return { json: async () => ({ success: true, count: 0 }) };
+        }
         return { json: async () => ({ success: true }) };
     },
     setTimeout: (fn) => fn(),
@@ -332,6 +446,66 @@ async function runTests() {
     assert.strictEqual(queueApiState[1].lab_priority, 6);
     assert.strictEqual(btnActionText.textContent, '✅ Ви у черзі #2 (Лаба 6)');
     console.log('✓ TEST 8: Dropping earlier lab successfully drops priority and position behind priority 5 student');
+
+    // TEST 9: Admin panel verification for Owner (sinch / 8735281894)
+    // 9.1: Verify all 27 admin elements exist in DOM and initialized
+    const adminElementsToCheck = [
+        'nav-btn-admin', 'tab-admin', 'admin-role-badge',
+        'admin-test-mode-card', 'admin-test-mode-title', 'admin-test-mode-desc', 'admin-test-mode-toggle',
+        'btn-admin-next-op', 'btn-admin-clear-op', 'btn-admin-next-asd', 'btn-admin-clear-asd',
+        'admin-schedule-date', 'btn-admin-date-today', 'btn-admin-date-tomorrow', 'admin-schedule-list',
+        'admin-pair-num', 'admin-pair-type', 'admin-pair-name', 'admin-pair-lecturer', 'admin-pair-link', 'admin-pair-comment',
+        'btn-admin-add-pair', 'admin-roles-list', 'admin-student-select', 'admin-custom-username', 'admin-role-select',
+        'btn-admin-grant-role'
+    ];
+    adminElementsToCheck.forEach(id => {
+        assert.ok(elements[id], `Admin DOM element #${id} must exist and be registered`);
+    });
+
+    // 9.2: Verify #nav-btn-admin is visible (hidden class removed for owner sinch upon is_admin: true)
+    assert.strictEqual(
+        navBtnAdmin.classList.contains('hidden'),
+        false,
+        '#nav-btn-admin must become visible (hidden class removed) for bot owner'
+    );
+
+    // 9.3: Role badge and test mode card checks for owner
+    const roleBadge = getOrCreateElement('admin-role-badge');
+    assert.ok(roleBadge.innerHTML.includes('Власник бота'), 'Role badge must display "Власник бота"');
+
+    assert.strictEqual(
+        adminTestModeCard.classList.contains('hidden'),
+        false,
+        'Admin test mode card must be visible for Owner'
+    );
+    assert.strictEqual(adminTestModeToggle.checked, true, 'Test mode toggle should be checked (true)');
+
+    // 9.4: Date input initialized
+    assert.ok(adminScheduleDate.value, 'Admin schedule date input must be prefilled');
+
+    // 9.5: Switch tab to Admin
+    navBtnAdmin.click();
+    assert.ok(navBtnAdmin.classList.contains('active'), 'Admin tab button must have active class when selected');
+    assert.ok(tabAdmin.classList.contains('active'), 'Admin tab content must be active');
+
+    // 9.6: Test mode toggle action
+    adminTestModeToggle.checked = false;
+    if (adminTestModeToggle.onchange) {
+        await adminTestModeToggle.onchange();
+    }
+    const testModeReq = networkRequests.find(r => r.url.includes('/api/admin/test_mode'));
+    assert.ok(testModeReq, 'Changing test_mode toggle must trigger POST /api/admin/test_mode');
+
+    // 9.7: Add Pair form submission
+    const pairNameInput = getOrCreateElement('admin-pair-name');
+    pairNameInput.value = 'Спеціальні розділи математики';
+    const btnAddPair = getOrCreateElement('btn-admin-add-pair');
+    btnAddPair.click();
+    await new Promise(r => setTimeout(r, 50));
+    const addPairReq = networkRequests.find(r => r.url.includes('/api/admin/schedule/add_pair'));
+    assert.ok(addPairReq, 'Submitting add-pair form must call /api/admin/schedule/add_pair');
+
+    console.log('✓ TEST 9: Admin panel DOM elements & owner privileges verified (nav-btn-admin visible, owner badge, test_mode toggle, schedule add pair)');
 
     console.log('\n========================================');
     console.log('🎉 ALL UI TESTS PASSED SUCCESSFULLY! 🎉');

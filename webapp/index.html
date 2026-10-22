@@ -6,7 +6,7 @@
     <title>ІП-66 Портал</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/webapp/app.css?v=2.6">
+    <link rel="stylesheet" href="/webapp/app.css?v=2.7">
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -59,6 +59,7 @@
             <button class="seg-pill-btn" data-tab="tab-schedule">📅 Розклад</button>
             <button class="seg-pill-btn" data-tab="tab-deadlines">⏳ Дедлайни</button>
             <button class="seg-pill-btn" data-tab="tab-subjects">📚 Предмети</button>
+            <button class="seg-pill-btn hidden" data-tab="tab-admin" id="nav-btn-admin">⚙️ Адмінка</button>
         </div>
 
         <!-- РОЗДІЛ 1: Жива черга на захист (ОП / АСД) -->
@@ -207,6 +208,147 @@
             </div>
         </section>
 
+        <!-- РОЗДІЛ 5: Адмін-панель (Власник, Староста, Замстарости) -->
+        <section id="tab-admin" class="tab-content">
+            <div class="queue-mode-box">
+                <!-- 1. Заголовок та бейдж ролі -->
+                <div class="section-header-row" style="margin-bottom:12px;">
+                    <div>
+                        <span class="section-title">⚙️ Панель старостату</span>
+                        <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;" id="admin-role-badge">
+                            Вхід як: Адміністратор
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Тест-режим (тільки для Owner) -->
+                <div id="admin-test-mode-card" class="admin-card hidden" style="background:#FFFBEB; border:1.5px solid #FDE68A; border-radius:16px; padding:14px; margin-bottom:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="padding-right:12px;">
+                            <div style="font-size:13.5px; font-weight:700; color:#92400E;" id="admin-test-mode-title">
+                                🔒 Особистий тест-режим
+                            </div>
+                            <div style="font-size:11.5px; color:#B45309; margin-top:3px;" id="admin-test-mode-desc">
+                                Адмінку бачите тільки ви. Доступ для старости та замів заблоковано.
+                            </div>
+                        </div>
+                        <label class="switch-toggle" style="flex-shrink:0;">
+                            <input type="checkbox" id="admin-test-mode-toggle" checked>
+                            <span class="switch-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 3. Швидке керування чергою -->
+                <div class="admin-card" style="background:var(--card-white-bg); border:1.5px solid var(--card-border); border-radius:16px; padding:14px; margin-bottom:16px;">
+                    <div style="font-size:13.5px; font-weight:700; color:var(--text-primary); margin-bottom:10px;">
+                        ⚡️ Швидке керування чергою
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                        <button class="admin-btn admin-btn-action" id="btn-admin-next-op">
+                            🔔 Наступний (ОП)
+                        </button>
+                        <button class="admin-btn admin-btn-danger" id="btn-admin-clear-op">
+                            🗑 Очистити ОП
+                        </button>
+                        <button class="admin-btn admin-btn-action" id="btn-admin-next-asd">
+                            🔔 Наступний (АСД)
+                        </button>
+                        <button class="admin-btn admin-btn-danger" id="btn-admin-clear-asd">
+                            🗑 Очистити АСД
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 4. Керування розкладом за датою -->
+                <div class="admin-card" style="background:var(--card-white-bg); border:1.5px solid var(--card-border); border-radius:16px; padding:14px; margin-bottom:16px;">
+                    <div style="font-size:13.5px; font-weight:700; color:var(--text-primary); margin-bottom:10px;">
+                        📅 Розклад на дату
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+                        <input type="date" id="admin-schedule-date" class="admin-input" style="flex:1;">
+                        <button class="admin-pill-sm active" id="btn-admin-date-today">Сьогодні</button>
+                        <button class="admin-pill-sm" id="btn-admin-date-tomorrow">Завтра</button>
+                    </div>
+
+                    <!-- Список пар на обрану дату -->
+                    <div id="admin-schedule-list" style="margin-bottom:14px;">
+                        <!-- Заповнюється динамічно JS -->
+                    </div>
+
+                    <!-- Форма додавання пари / перенесення -->
+                    <div style="border-top:1px dashed var(--card-border); padding-top:12px;">
+                        <div style="font-size:13px; font-weight:700; color:#7C3AED; margin-bottom:8px;">
+                            ➕ Додати пару / перенесення
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="display:flex; gap:8px;">
+                                <select id="admin-pair-num" class="admin-input" style="width:130px;">
+                                    <option value="1">1 пара (08:30)</option>
+                                    <option value="2">2 пара (10:25)</option>
+                                    <option value="3">3 пара (12:20)</option>
+                                    <option value="4">4 пара (14:15)</option>
+                                    <option value="5">5 пара (16:10)</option>
+                                    <option value="6">6 пара (18:05)</option>
+                                </select>
+                                <select id="admin-pair-type" class="admin-input" style="flex:1;">
+                                    <option value="Практика">Практика</option>
+                                    <option value="Лекція">Лекція</option>
+                                    <option value="Лабораторна">Лабораторна</option>
+                                    <option value="Консультація">Консультація</option>
+                                </select>
+                            </div>
+                            <input type="text" id="admin-pair-name" class="admin-input" placeholder="Назва дисципліни (напр. Комп'ютерна дискретна математика)">
+                            <input type="text" id="admin-pair-lecturer" class="admin-input" placeholder="Викладач (ПІБ)">
+                            <input type="url" id="admin-pair-link" class="admin-input" placeholder="Посилання Zoom / Meet (необов'язково)">
+                            <input type="text" id="admin-pair-comment" class="admin-input" placeholder="Коментар або пароль (необов'язково)">
+                            <button class="primary-pill-btn" id="btn-admin-add-pair" style="margin-top:4px;">
+                                💾 Додати в розклад
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. Керування доступом (Староста та Замстарости) -->
+                <div class="admin-card" style="background:var(--card-white-bg); border:1.5px solid var(--card-border); border-radius:16px; padding:14px; margin-bottom:16px;">
+                    <div style="font-size:13.5px; font-weight:700; color:var(--text-primary); margin-bottom:6px;">
+                        👥 Права доступу (Старостат)
+                    </div>
+                    <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:12px;">
+                        Користувачі зі статусом можуть скасовувати пари та додавати пари в розклад.
+                    </div>
+
+                    <!-- Список поточних адмінів -->
+                    <div id="admin-roles-list" style="margin-bottom:12px;">
+                        <!-- Заповнюється динамічно JS -->
+                    </div>
+
+                    <!-- Додавання адміна -->
+                    <div style="border-top:1px dashed var(--card-border); padding-top:12px;">
+                        <div style="font-size:12.5px; font-weight:700; color:var(--text-primary); margin-bottom:8px;">
+                            ➕ Призначити права:
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <select id="admin-student-select" class="admin-input">
+                                <option value="">Оберіть студента зі списку групи...</option>
+                            </select>
+                            <div style="text-align:center; font-size:11px; color:var(--text-muted);">— або ввести вручну @username —</div>
+                            <input type="text" id="admin-custom-username" class="admin-input" placeholder="@telegram_username">
+                            <div style="display:flex; gap:8px;">
+                                <select id="admin-role-select" class="admin-input" style="flex:1;">
+                                    <option value="deputy">Замстарости</option>
+                                    <option value="headman">Староста</option>
+                                </select>
+                                <button class="admin-btn admin-btn-action" id="btn-admin-grant-role" style="flex:1;">
+                                    ➕ Надати доступ
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- 5. Нижня кнопка дії (Midnight Pill) -->
         <div class="bottom-action-wrapper">
             <button class="primary-pill-btn" id="btn-primary-action">
@@ -240,6 +382,6 @@
     <!-- Toast сповіщення -->
     <div id="toast" class="toast-popup hidden"></div>
 
-    <script src="/webapp/app.js?v=2.6"></script>
+    <script src="/webapp/app.js?v=2.7"></script>
 </body>
 </html>

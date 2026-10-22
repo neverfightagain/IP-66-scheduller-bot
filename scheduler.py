@@ -82,16 +82,43 @@ _today_cached_day_name: str = ""
 
 
 async def refresh_today_cache():
-    """Обновить кэш расписания на сегодня."""
+    """Обновить кэш расписания на сегодня (включая добавленные администратором пары)."""
     global _today_cache_date, _today_cached_lessons, _today_cached_week, _today_cached_day_name
     now_date = datetime.now(KYIV_TZ).date()
     try:
+        from database import get_custom_lessons_for_date_db, TIME_TO_PAIR_NUMBER
         week, day_name, lessons = await get_lessons_for_date(KPI_GROUP_ID, now_date)
         _today_cache_date = now_date
         _today_cached_week = week
         _today_cached_day_name = day_name
-        _today_cached_lessons = lessons
-        logger.info(f"Оновлено розклад на {now_date}: {len(lessons)} пар")
+
+        combined_lessons = []
+        for idx, l in enumerate(lessons, 1):
+            p_num = int(l.get("pair_number") or TIME_TO_PAIR_NUMBER.get((l.get("time") or "")[:5], idx))
+            item = dict(l)
+            item["pair_number"] = p_num
+            combined_lessons.append(item)
+
+        custom_list = await get_custom_lessons_for_date_db(now_date.isoformat())
+        for c in custom_list:
+            c_pnum = int(c["pair_number"])
+            combined_lessons.append({
+                "is_custom": True,
+                "custom_id": c["id"],
+                "pair_number": c_pnum,
+                "name": c["name"],
+                "type": c["type"],
+                "lecturer": c["lecturer"],
+                "time": c["time"],
+                "location": c.get("location") or "Онлайн",
+                "link_url": c.get("link_url") or "",
+                "link_comment": c.get("comment") or "",
+                "created_by": c.get("created_by", ""),
+            })
+
+        combined_lessons.sort(key=lambda x: (int(x.get("pair_number") or 99), x.get("time") or ""))
+        _today_cached_lessons = combined_lessons
+        logger.info(f"Оновлено розклад на {now_date}: {len(_today_cached_lessons)} пар (включно з {len(custom_list)} додатковими)")
     except Exception as e:
         logger.error(f"Помилка при оновленні розкладу: {e}")
 
@@ -164,11 +191,15 @@ async def send_morning_digest(bot: Bot):
     end_dt = calculate_lessons_end_datetime(_today_cached_lessons, today)
     delete_time_str = end_dt.strftime("%H:%M")
 
+    from database import get_cancelled_pairs_for_date_db
+    cancelled_pairs = await get_cancelled_pairs_for_date_db(today.isoformat())
+
     text, kb = format_morning_digest(
         _today_cached_week,
         _today_cached_day_name,
         _today_cached_lessons,
-        auto_delete_time=delete_time_str if _today_cached_lessons else None
+        auto_delete_time=delete_time_str if _today_cached_lessons else None,
+        cancelled_pairs=cancelled_pairs
     )
 
     for target in targets:
@@ -242,6 +273,15 @@ async def check_upcoming_lessons(bot: Bot):
                 alert_key = f"{today.isoformat()}_{lesson['time']}_{lesson['name']}_{target_minutes}"
                 if alert_key in sent_alerts:
                     continue
+
+                # Перевірка, чи не скасована пара старостою або викладачем
+                from database import is_pair_cancelled_db, TIME_TO_PAIR_NUMBER
+                pair_idx = lesson.get("pair_number") or TIME_TO_PAIR_NUMBER.get((lesson.get("time") or "")[:5])
+                if pair_idx:
+                    is_canc, canc_reason = await is_pair_cancelled_db(today.isoformat(), int(pair_idx))
+                    if is_canc:
+                        logger.info(f"Пару №{pair_idx} ({lesson.get('name')}) на {today} скасовано ({canc_reason}). Нагадування за {target_minutes} хв пропущено.")
+                        continue
 
                 text, kb = format_lesson_alert(lesson, minutes_left=target_minutes)
                 for target in targets:

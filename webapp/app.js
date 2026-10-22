@@ -425,6 +425,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (targetTab === 'tab-deadlines') fetchDeadlines();
             if (targetTab === 'tab-queue') fetchQueue();
             if (targetTab === 'tab-subjects') fetchSubjectsOverview();
+            if (targetTab === 'tab-admin') {
+                if (typeof loadAdminScheduleDate === 'function') {
+                    const adminDateEl = document.getElementById('admin-schedule-date');
+                    loadAdminScheduleDate(adminDateEl ? adminDateEl.value : getKyivDateString(0));
+                }
+            }
         });
     });
 
@@ -493,6 +499,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (currentTab === 'tab-subjects') {
             btnPrimaryActionText.textContent = `🔄 Оновити прогрес`;
             btnPrimaryAction.disabled = false;
+        } else if (currentTab === 'tab-admin') {
+            btnPrimaryActionText.textContent = `⚙️ Панель старостату`;
+            btnPrimaryAction.disabled = false;
+            btnPrimaryAction.classList.remove('btn-action-update');
         }
     }
 
@@ -1008,15 +1018,39 @@ document.addEventListener('DOMContentLoaded', () => {
                                 ? `<span style="color:#7C3AED; font-weight:700; font-size:12px; background:#F3E8FF; padding:3px 9px; border-radius:99px;">🔗 Zoom / Meet</span>`
                                 : `<span style="color:var(--text-muted); font-size:11.5px;">Деталі →</span>`;
 
+                            const isCanc = !!l.is_cancelled;
+                            const isCustom = !!l.is_custom;
+                            const customBadge = isCustom ? '<span class="badge-custom">🟣 Додаткова</span>' : '';
+                            const cancBadge = isCanc ? '<span class="badge-cancelled">🚫 Скасовано</span>' : '';
+                            const cancReasonHtml = (isCanc && l.cancel_reason) ? `<div class="cancel-reason-callout">⚠️ Причина: ${escapeHtml(l.cancel_reason)}</div>` : '';
+
+                            let adminBarHtml = '';
+                            if (currentUser.isAdmin) {
+                                const pDate = l.date || dayObj.date;
+                                const uncancelBtn = isCanc
+                                    ? `<button class="admin-btn admin-btn-restore btn-sched-uncancel" data-pair="${l.pair_number || 1}" data-date="${pDate}">↩️ Відновити</button>`
+                                    : `<button class="admin-btn admin-btn-cancel btn-sched-cancel" data-pair="${l.pair_number || 1}" data-date="${pDate}" data-name="${escapeHtml(l.name)}">🚫 Скасувати</button>`;
+                                const deleteBtn = isCustom
+                                    ? `<button class="admin-btn admin-btn-danger btn-sched-delete" data-custom-id="${l.custom_id}">🗑 Видалити</button>`
+                                    : '';
+                                adminBarHtml = `<div class="card-admin-bar">${uncancelBtn}${deleteBtn}</div>`;
+                            }
+
                             html += `
-                                <div class="task-item-card week-lesson-card" data-day="${dayIdx}" data-lesson="${lIdx}" style="cursor:pointer; margin-bottom:8px;">
+                                <div class="task-item-card week-lesson-card ${isCanc ? 'lesson-cancelled' : ''}" data-day="${dayIdx}" data-lesson="${lIdx}" style="cursor:pointer; margin-bottom:8px;">
                                     <div class="task-meta-block">
-                                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                                            <span style="font-size:12.5px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
+                                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
+                                            <div style="display:flex; align-items:center; gap:6px;">
+                                                <span style="font-size:12.5px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
+                                                ${customBadge}
+                                                ${cancBadge}
+                                            </div>
                                             ${linkBadge}
                                         </div>
                                         <span class="task-title">${escapeHtml(l.name)}</span>
                                         <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')} • ${escapeHtml(formatLocation(l.location))}</span>
+                                        ${cancReasonHtml}
+                                        ${adminBarHtml}
                                     </div>
                                 </div>
                             `;
@@ -1037,6 +1071,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     });
                 });
 
+                attachScheduleAdminButtonHandlers(scheduleItemsContainer);
+
             } else {
                 // Режим одного дня (today або tomorrow)
                 scheduleLessons = data.lessons || [];
@@ -1053,15 +1089,39 @@ document.addEventListener('DOMContentLoaded', () => {
                         ? `<span style="color:#7C3AED; font-weight:700; font-size:12.5px; background:#F3E8FF; padding:4px 10px; border-radius:99px;">🔗 Zoom / Meet</span>`
                         : `<span style="color:var(--text-muted); font-size:12px;">Деталі →</span>`;
 
+                    const isCanc = !!l.is_cancelled;
+                    const isCustom = !!l.is_custom;
+                    const customBadge = isCustom ? '<span class="badge-custom">🟣 Додаткова</span>' : '';
+                    const cancBadge = isCanc ? '<span class="badge-cancelled">🚫 Скасовано</span>' : '';
+                    const cancReasonHtml = (isCanc && l.cancel_reason) ? `<div class="cancel-reason-callout">⚠️ Причина: ${escapeHtml(l.cancel_reason)}</div>` : '';
+
+                    let adminBarHtml = '';
+                    if (currentUser.isAdmin) {
+                        const pDate = l.date || (data.date_iso || data.date);
+                        const uncancelBtn = isCanc
+                            ? `<button class="admin-btn admin-btn-restore btn-sched-uncancel" data-pair="${l.pair_number || 1}" data-date="${pDate}">↩️ Відновити</button>`
+                            : `<button class="admin-btn admin-btn-cancel btn-sched-cancel" data-pair="${l.pair_number || 1}" data-date="${pDate}" data-name="${escapeHtml(l.name)}">🚫 Скасувати</button>`;
+                        const deleteBtn = isCustom
+                            ? `<button class="admin-btn admin-btn-danger btn-sched-delete" data-custom-id="${l.custom_id}">🗑 Видалити</button>`
+                            : '';
+                        adminBarHtml = `<div class="card-admin-bar">${uncancelBtn}${deleteBtn}</div>`;
+                    }
+
                     return `
-                        <div class="task-item-card lesson-clickable-card" data-lesson-idx="${idx}" style="cursor:pointer;">
+                        <div class="task-item-card lesson-clickable-card ${isCanc ? 'lesson-cancelled' : ''}" data-lesson-idx="${idx}" style="cursor:pointer;">
                             <div class="task-meta-block">
-                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                                    <span style="font-size:12.5px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
+                                    <div style="display:flex; align-items:center; gap:6px;">
+                                        <span style="font-size:12.5px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number || 1} • ${l.time || '10:15'} (${l.type || 'Пара'})</span>
+                                        ${customBadge}
+                                        ${cancBadge}
+                                    </div>
                                     ${linkBadge}
                                 </div>
                                 <span class="task-title">${escapeHtml(l.name)}</span>
                                 <span class="task-due-date">👤 ${escapeHtml(l.lecturer || 'Викладач не вказаний')} • ${escapeHtml(formatLocation(l.location))}</span>
+                                ${cancReasonHtml}
+                                ${adminBarHtml}
                             </div>
                         </div>
                     `;
@@ -1074,6 +1134,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (lesson) openLessonModal(lesson);
                     });
                 });
+
+                attachScheduleAdminButtonHandlers(scheduleItemsContainer);
             }
             updateHeroSubtitle();
         } catch (err) {
@@ -1510,10 +1572,577 @@ document.addEventListener('DOMContentLoaded', () => {
         return div.innerHTML;
     }
 
+    // ==========================================
+    // ⚙️ АДМІН-ПАНЕЛЬ (ВЛАСНИК, СТАРОСТА, ЗАМСТАРОСТИ)
+    // ==========================================
+
+    function getKyivDateString(offsetDays = 0) {
+        const d = new Date();
+        d.setDate(d.getDate() + offsetDays);
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    async function handleAdminCancelPair(date, pairNum, subject) {
+        const reason = prompt(`Вкажіть причину скасування пари №${pairNum} на ${date}:`, "Скасовано викладачем/старостою");
+        if (reason === null) return;
+        try {
+            const res = await fetch('/api/admin/schedule/cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: currentUser.id,
+                    username: currentUser.username,
+                    date: date,
+                    pair_number: parseInt(pairNum),
+                    subject: subject || '',
+                    reason: reason.trim() || 'Скасовано викладачем/старостою',
+                    admin_name: currentUser.realName || currentUser.name
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                showToast(`🚫 Пару №${pairNum} скасовано!`);
+                fetchSchedule(scheduleDay);
+                const adminDateEl = document.getElementById('admin-schedule-date');
+                if (adminDateEl && typeof loadAdminScheduleDate === 'function') {
+                    loadAdminScheduleDate(adminDateEl.value || date);
+                }
+            } else {
+                showToast(data.error || 'Помилка скасування');
+            }
+        } catch (_) {
+            showToast("Помилка з'єднання");
+        }
+    }
+
+    async function handleAdminUncancelPair(date, pairNum) {
+        try {
+            const res = await fetch('/api/admin/schedule/uncancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: currentUser.id,
+                    username: currentUser.username,
+                    date: date,
+                    pair_number: parseInt(pairNum)
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                showToast(`✅ Скасування пари №${pairNum} знято!`);
+                fetchSchedule(scheduleDay);
+                const adminDateEl = document.getElementById('admin-schedule-date');
+                if (adminDateEl && typeof loadAdminScheduleDate === 'function') {
+                    loadAdminScheduleDate(adminDateEl.value || date);
+                }
+            } else {
+                showToast(data.error || 'Помилка');
+            }
+        } catch (_) {
+            showToast("Помилка з'єднання");
+        }
+    }
+
+    async function handleAdminDeletePair(customId) {
+        if (!confirm("Видалити цю додаткову пару з розкладу?")) return;
+        try {
+            const res = await fetch('/api/admin/schedule/delete_pair', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: currentUser.id,
+                    username: currentUser.username,
+                    id: parseInt(customId)
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                showToast("🗑 Додаткову пару успішно видалено!");
+                fetchSchedule(scheduleDay);
+                const adminDateEl = document.getElementById('admin-schedule-date');
+                if (adminDateEl && typeof loadAdminScheduleDate === 'function') {
+                    loadAdminScheduleDate(adminDateEl.value || getKyivDateString(0));
+                }
+            } else {
+                showToast(data.error || 'Помилка');
+            }
+        } catch (_) {
+            showToast("Помилка з'єднання");
+        }
+    }
+
+    function attachScheduleAdminButtonHandlers(container) {
+        if (!container) return;
+        container.querySelectorAll('.btn-sched-cancel').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const pNum = btn.getAttribute('data-pair');
+                const pDate = btn.getAttribute('data-date');
+                const pName = btn.getAttribute('data-name');
+                handleAdminCancelPair(pDate, pNum, pName);
+            });
+        });
+
+        container.querySelectorAll('.btn-sched-uncancel').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const pNum = btn.getAttribute('data-pair');
+                const pDate = btn.getAttribute('data-date');
+                handleAdminUncancelPair(pDate, pNum);
+            });
+        });
+
+        container.querySelectorAll('.btn-sched-delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const customId = btn.getAttribute('data-custom-id');
+                handleAdminDeletePair(customId);
+            });
+        });
+    }
+
+    async function loadAdminScheduleDate(dateStr) {
+        const listEl = document.getElementById('admin-schedule-list');
+        if (!listEl) return;
+        listEl.innerHTML = '<div style="text-align:center; padding:12px; color:var(--text-muted); font-size:12.5px;">Завантаження пар...</div>';
+
+        try {
+            const res = await fetch(`/api/schedule?date=${encodeURIComponent(dateStr)}`);
+            const data = await res.json();
+            if (!data.success || !data.lessons || data.lessons.length === 0) {
+                listEl.innerHTML = '<div style="text-align:center; padding:14px; color:var(--text-muted); font-size:13px;">🎉 На цю дату занять немає</div>';
+                return;
+            }
+
+            listEl.innerHTML = data.lessons.map(l => {
+                const isCanc = !!l.is_cancelled;
+                const isCustom = !!l.is_custom;
+                const customBadge = isCustom ? '<span class="badge-custom">🟣 Додаткова</span>' : '';
+                const cancBadge = isCanc ? '<span class="badge-cancelled">🚫 Скасовано</span>' : '';
+                const cancReason = (isCanc && l.cancel_reason) ? `<div class="cancel-reason-callout">⚠️ Причина: ${escapeHtml(l.cancel_reason)}</div>` : '';
+
+                const uncancelBtn = isCanc
+                    ? `<button class="admin-btn admin-btn-restore btn-admin-act-uncancel" data-pair="${l.pair_number}">↩️ Відновити</button>`
+                    : `<button class="admin-btn admin-btn-cancel btn-admin-act-cancel" data-pair="${l.pair_number}" data-name="${escapeHtml(l.name)}">🚫 Скасувати</button>`;
+
+                const deleteBtn = isCustom
+                    ? `<button class="admin-btn admin-btn-danger btn-admin-act-delete" data-id="${l.custom_id}">🗑 Видалити</button>`
+                    : '';
+
+                return `
+                    <div class="task-item-card ${isCanc ? 'lesson-cancelled' : ''}" style="margin-bottom:8px; padding:10px 12px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
+                            <span style="font-size:12px; font-weight:700; color:#7C3AED;">Пара ${l.pair_number} • ${l.time} (${l.type || 'Пара'})</span>
+                            <div style="display:flex; gap:4px;">${customBadge}${cancBadge}</div>
+                        </div>
+                        <div style="font-weight:700; font-size:13.5px; color:var(--text-primary);">${escapeHtml(l.name)}</div>
+                        <div style="font-size:11.5px; color:var(--text-secondary); margin-top:2px;">👤 ${escapeHtml(l.lecturer || 'Не вказано')}</div>
+                        ${cancReason}
+                        <div class="card-admin-bar">
+                            ${uncancelBtn}
+                            ${deleteBtn}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            listEl.querySelectorAll('.btn-admin-act-cancel').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const pNum = btn.getAttribute('data-pair');
+                    const name = btn.getAttribute('data-name');
+                    handleAdminCancelPair(dateStr, pNum, name);
+                });
+            });
+
+            listEl.querySelectorAll('.btn-admin-act-uncancel').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const pNum = btn.getAttribute('data-pair');
+                    handleAdminUncancelPair(dateStr, pNum);
+                });
+            });
+
+            listEl.querySelectorAll('.btn-admin-act-delete').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const id = btn.getAttribute('data-id');
+                    handleAdminDeletePair(id);
+                });
+            });
+
+        } catch (e) {
+            listEl.innerHTML = '<div style="text-align:center; padding:12px; color:var(--text-muted); font-size:12.5px;">Помилка завантаження розкладу</div>';
+        }
+    }
+
+    async function populateAdminStudentDropdown() {
+        const sel = document.getElementById('admin-student-select');
+        if (!sel) return;
+        try {
+            const res = await fetch('/api/students');
+            const data = await res.json();
+            if (data.students && Array.isArray(data.students)) {
+                sel.innerHTML = '<option value="">Оберіть студента зі списку групи...</option>' +
+                    data.students.map(s => {
+                        const uname = s.telegram_username ? `@${escapeHtml(s.telegram_username)}` : 'без username';
+                        return `<option value="${s.telegram_id || ''}" data-username="${escapeHtml(s.telegram_username || '')}" data-realname="${escapeHtml(s.real_name)}">
+                            ${escapeHtml(s.real_name)} (${uname})
+                        </option>`;
+                    }).join('');
+            }
+        } catch (_) {}
+    }
+
+    function renderAdminRolesList(roles) {
+        const listEl = document.getElementById('admin-roles-list');
+        if (!listEl) return;
+        if (!roles || roles.length === 0) {
+            listEl.innerHTML = '<div style="font-size:12px; color:var(--text-muted); padding:8px 0;">Призначених адміністраторів ще немає. Власник завжди має повний доступ.</div>';
+            return;
+        }
+
+        listEl.innerHTML = roles.map(r => {
+            const isHeadman = r.role === 'headman';
+            const roleClass = isHeadman ? 'headman' : 'deputy';
+            const roleTitle = isHeadman ? 'Староста' : 'Замстарости';
+            const uname = r.username ? `@${escapeHtml(r.username)}` : (r.user_id ? `ID: ${r.user_id}` : '');
+            return `
+                <div class="admin-role-item">
+                    <div>
+                        <div style="font-weight:700; color:var(--text-primary);">${escapeHtml(r.real_name || r.username || 'Адміністратор')}</div>
+                        <div style="font-size:11.5px; color:var(--text-muted);">${uname} • <span class="admin-role-badge ${roleClass}">${roleTitle}</span></div>
+                    </div>
+                    <button class="admin-btn admin-btn-danger btn-admin-revoke-role" data-role-id="${r.id}" style="padding:4px 9px; font-size:11px;">
+                        ❌ Зняти
+                    </button>
+                </div>
+            `;
+        }).join('');
+
+        listEl.querySelectorAll('.btn-admin-revoke-role').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const roleId = btn.getAttribute('data-role-id');
+                if (!confirm("Зняти права адміністратора з цього користувача?")) return;
+                try {
+                    const res = await fetch('/api/admin/roles/revoke', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: currentUser.id,
+                            username: currentUser.username,
+                            role_id: parseInt(roleId)
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        showToast("Права скасовано");
+                        renderAdminRolesList(data.roles);
+                    } else {
+                        showToast(data.error || 'Помилка');
+                    }
+                } catch (_) {
+                    showToast("Помилка з'єднання");
+                }
+            });
+        });
+    }
+
+    async function fetchAdminStatus() {
+        try {
+            const uid = currentUser.id || '';
+            const uname = encodeURIComponent(currentUser.username || '');
+            const res = await fetch(`/api/admin/me?user_id=${uid}&username=${uname}`);
+            const data = await res.json();
+            if (data.success && data.is_admin) {
+                currentUser.isAdmin = true;
+                currentUser.isOwner = !!data.is_owner;
+                currentUser.adminRole = data.role;
+                currentUser.testMode = !!data.test_mode;
+
+                const navBtnAdmin = document.getElementById('nav-btn-admin');
+                if (navBtnAdmin) navBtnAdmin.classList.remove('hidden');
+
+                const roleBadge = document.getElementById('admin-role-badge');
+                if (roleBadge) {
+                    if (data.is_owner) {
+                        roleBadge.innerHTML = '👑 <b>Власник бота</b> (повний доступ до всіх функцій)';
+                    } else if (data.role === 'headman') {
+                        roleBadge.innerHTML = '⭐️ <b>Староста групи</b>';
+                    } else {
+                        roleBadge.innerHTML = '🛡 <b>Заступник старости</b>';
+                    }
+                }
+
+                const testModeCard = document.getElementById('admin-test-mode-card');
+                const testModeToggle = document.getElementById('admin-test-mode-toggle');
+                const testModeDesc = document.getElementById('admin-test-mode-desc');
+                if (testModeCard && data.is_owner) {
+                    testModeCard.classList.remove('hidden');
+                    if (testModeToggle) {
+                        testModeToggle.checked = !!data.test_mode;
+                        testModeToggle.onchange = async () => {
+                            try {
+                                const newMode = testModeToggle.checked;
+                                const r = await fetch('/api/admin/test_mode', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        user_id: currentUser.id,
+                                        username: currentUser.username,
+                                        test_mode: newMode
+                                    })
+                                });
+                                const d = await r.json();
+                                if (d.success) {
+                                    if (testModeDesc) {
+                                        testModeDesc.textContent = newMode
+                                            ? 'Адмінку бачите тільки ви. Доступ для старости та замів заблоковано.'
+                                            : 'Доступ до адмінки відкрито для призначених старости та замів.';
+                                    }
+                                    showToast(newMode ? '🔒 Особистий тест-режим увімкнено' : '🔓 Доступ відкрито для старостату');
+                                }
+                            } catch (_) {
+                                showToast('Помилка зміни тест-режиму');
+                            }
+                        };
+                    }
+                    if (testModeDesc) {
+                        testModeDesc.textContent = data.test_mode
+                            ? 'Адмінку бачите тільки ви. Доступ для старости та замів заблоковано.'
+                            : 'Доступ до адмінки відкрито для призначених старости та замів.';
+                    }
+                }
+
+                renderAdminRolesList(data.roles || []);
+                populateAdminStudentDropdown();
+
+                // Re-render schedule to attach admin action buttons on cards
+                fetchSchedule(scheduleDay);
+            } else {
+                currentUser.isAdmin = false;
+                currentUser.isOwner = false;
+            }
+        } catch (e) {
+            console.error('Failed to check admin status:', e);
+        }
+    }
+
+    function initAdminPanelControls() {
+        const adminDateInput = document.getElementById('admin-schedule-date');
+        const btnDateToday = document.getElementById('btn-admin-date-today');
+        const btnDateTomorrow = document.getElementById('btn-admin-date-tomorrow');
+        const btnAddPair = document.getElementById('btn-admin-add-pair');
+        const btnGrantRole = document.getElementById('btn-admin-grant-role');
+
+        const todayStr = getKyivDateString(0);
+        const tomorrowStr = getKyivDateString(1);
+
+        if (adminDateInput) {
+            adminDateInput.value = todayStr;
+            adminDateInput.addEventListener('change', () => {
+                if (btnDateToday) btnDateToday.classList.toggle('active', adminDateInput.value === todayStr);
+                if (btnDateTomorrow) btnDateTomorrow.classList.toggle('active', adminDateInput.value === tomorrowStr);
+                loadAdminScheduleDate(adminDateInput.value);
+            });
+        }
+
+        if (btnDateToday && adminDateInput) {
+            btnDateToday.addEventListener('click', () => {
+                adminDateInput.value = todayStr;
+                btnDateToday.classList.add('active');
+                if (btnDateTomorrow) btnDateTomorrow.classList.remove('active');
+                loadAdminScheduleDate(todayStr);
+            });
+        }
+
+        if (btnDateTomorrow && adminDateInput) {
+            btnDateTomorrow.addEventListener('click', () => {
+                adminDateInput.value = tomorrowStr;
+                btnDateTomorrow.classList.add('active');
+                if (btnDateToday) btnDateToday.classList.remove('active');
+                loadAdminScheduleDate(tomorrowStr);
+            });
+        }
+
+        // Add Pair Submit
+        if (btnAddPair && adminDateInput) {
+            btnAddPair.addEventListener('click', async () => {
+                const pairNum = parseInt(document.getElementById('admin-pair-num')?.value) || 1;
+                const pairType = document.getElementById('admin-pair-type')?.value || 'Практика';
+                const pairName = document.getElementById('admin-pair-name')?.value?.trim();
+                const lecturer = document.getElementById('admin-pair-lecturer')?.value?.trim() || '';
+                const linkUrl = document.getElementById('admin-pair-link')?.value?.trim() || '';
+                const comment = document.getElementById('admin-pair-comment')?.value?.trim() || '';
+
+                if (!pairName) {
+                    showToast('Вкажіть назву дисципліни!');
+                    document.getElementById('admin-pair-name')?.focus();
+                    return;
+                }
+
+                try {
+                    const res = await fetch('/api/admin/schedule/add_pair', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: currentUser.id,
+                            username: currentUser.username,
+                            date: adminDateInput.value,
+                            pair_number: pairNum,
+                            name: pairName,
+                            type: pairType,
+                            lecturer: lecturer,
+                            link_url: linkUrl,
+                            comment: comment,
+                            admin_name: currentUser.realName || currentUser.name
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                        showToast('✅ Пару успішно додано в розклад!');
+                        const nameEl = document.getElementById('admin-pair-name');
+                        const lectEl = document.getElementById('admin-pair-lecturer');
+                        const linkEl = document.getElementById('admin-pair-link');
+                        const commEl = document.getElementById('admin-pair-comment');
+                        if (nameEl) nameEl.value = '';
+                        if (lectEl) lectEl.value = '';
+                        if (linkEl) linkEl.value = '';
+                        if (commEl) commEl.value = '';
+
+                        loadAdminScheduleDate(adminDateInput.value);
+                        fetchSchedule(scheduleDay);
+                    } else {
+                        showToast(data.error || 'Помилка додавання пари');
+                    }
+                } catch (_) {
+                    showToast("Помилка з'єднання");
+                }
+            });
+        }
+
+        // Grant Admin Role
+        if (btnGrantRole) {
+            btnGrantRole.addEventListener('click', async () => {
+                const studentSel = document.getElementById('admin-student-select');
+                const customUnameInput = document.getElementById('admin-custom-username');
+                const roleSel = document.getElementById('admin-role-select');
+
+                const selectedOption = studentSel?.selectedOptions?.[0];
+                let targetUid = selectedOption ? selectedOption.value : '';
+                let targetUname = customUnameInput?.value?.trim()?.replace(/^@/, '') || '';
+                let targetRealName = selectedOption ? (selectedOption.getAttribute('data-realname') || '') : '';
+
+                if (!targetUname && selectedOption) {
+                    targetUname = selectedOption.getAttribute('data-username') || '';
+                }
+
+                if (!targetUid && !targetUname) {
+                    showToast('Оберіть студента або введіть @username!');
+                    return;
+                }
+
+                const role = roleSel?.value || 'deputy';
+
+                try {
+                    const res = await fetch('/api/admin/roles/grant', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: currentUser.id,
+                            username: currentUser.username,
+                            target_user_id: targetUid ? parseInt(targetUid) : null,
+                            target_username: targetUname || null,
+                            target_real_name: targetRealName,
+                            role: role
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                        showToast('✅ Права адміністратора надано!');
+                        if (customUnameInput) customUnameInput.value = '';
+                        if (studentSel) studentSel.value = '';
+                        renderAdminRolesList(data.roles);
+                    } else {
+                        showToast(data.error || 'Помилка');
+                    }
+                } catch (_) {
+                    showToast("Помилка з'єднання");
+                }
+            });
+        }
+
+        // Quick Queue Buttons
+        const btnNextOp = document.getElementById('btn-admin-next-op');
+        const btnClearOp = document.getElementById('btn-admin-clear-op');
+        const btnNextAsd = document.getElementById('btn-admin-next-asd');
+        const btnClearAsd = document.getElementById('btn-admin-clear-asd');
+
+        if (btnNextOp) btnNextOp.addEventListener('click', () => adminQueueActionNext('ОП'));
+        if (btnClearOp) btnClearOp.addEventListener('click', () => adminQueueActionClear('ОП'));
+        if (btnNextAsd) btnNextAsd.addEventListener('click', () => adminQueueActionNext('АСД'));
+        if (btnClearAsd) btnClearAsd.addEventListener('click', () => adminQueueActionClear('АСД'));
+    }
+
+    async function adminQueueActionNext(subj) {
+        try {
+            const res = await fetch('/api/queue/next', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, subject: subj })
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+                if (data.student) {
+                    showToast(`🎯 Наступний (${subj}): ${data.student.user_name} (${data.student.lab_number})`, 3500);
+                } else {
+                    showToast(`Черга ${subj} порожня!`);
+                }
+                await fetchQueue();
+            }
+        } catch (_) {
+            showToast('Помилка дії');
+        }
+    }
+
+    async function adminQueueActionClear(subj) {
+        if (!confirm(`Ви впевнені, що хочете повністю очистити чергу ${subj}?`)) return;
+        try {
+            const res = await fetch('/api/admin/queue/clear', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: currentUser.id,
+                    username: currentUser.username,
+                    chat_id: chatId,
+                    subject: subj
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                showToast(data.message || `Чергу ${subj} очищено`);
+                await fetchQueue();
+            } else {
+                showToast(data.error || 'Помилка');
+            }
+        } catch (_) {
+            showToast("Помилка з'єднання");
+        }
+    }
+
     // Первинний запуск
     renderLabsGrid();
     updatePriorityPreview();
     updateBottomButtonState();
+    initAdminPanelControls();
+    fetchAdminStatus();
     refreshAllData();
 
     // Автоматичне фонове оновлення черги кожні 4 секунди

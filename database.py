@@ -15,6 +15,8 @@ from config import (
     TURSO_DATABASE_URL,
     TURSO_AUTH_TOKEN,
     SQLITE_CLOUD_URL,
+    OWNER_ID,
+    OWNER_USERNAMES,
 )
 
 logger = logging.getLogger(__name__)
@@ -473,6 +475,48 @@ async def init_db():
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_lab_defenses_student
             ON lab_defenses (telegram_id, subject);
+        """)
+
+        # 13. Таблиця ролей адміністраторів (Староста, Замстарости)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admin_roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                real_name TEXT DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'deputy',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # 14. Таблиця налаштувань додатку (app_settings)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+
+        # 15. Таблиця додаткових або перенесених пар (custom_lessons)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS custom_lessons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                pair_number INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'Практика',
+                lecturer TEXT DEFAULT '',
+                time TEXT NOT NULL,
+                location TEXT DEFAULT 'Онлайн',
+                link_url TEXT DEFAULT '',
+                comment TEXT DEFAULT '',
+                created_by TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_custom_lessons_date
+            ON custom_lessons (date);
         """)
 
         await db.commit()
@@ -1846,6 +1890,304 @@ async def resolve_student_by_voice_mention(spoken_name: str, subject: str = None
     res["match_score"] = best_score
     res["confidence"] = round(min(1.0, best_score / 100.0), 2)
     return res
+
+
+# ==========================================
+# АДМІН-ПАНЕЛЬ (ВЛАСНИК, СТАРОСТА, ЗАМСТАРОСТИ)
+# ==========================================
+
+PAIR_TIMES = {
+    1: "08:30",
+    2: "10:25",
+    3: "12:20",
+    4: "14:15",
+    5: "16:10",
+    6: "18:05",
+}
+
+TIME_TO_PAIR_NUMBER = {
+    "08:30": 1,
+    "10:25": 2,
+    "12:20": 3,
+    "14:15": 4,
+    "16:10": 5,
+    "18:05": 6,
+}
+
+
+async def get_admin_test_mode_db() -> bool:
+    """Отримати статус режиму особистого тесту власника (за замовчуванням True)."""
+    async with get_db() as db:
+        async with db.execute("SELECT value FROM app_settings WHERE key = 'admin_test_mode'") as cur:
+            row = await cur.fetchone()
+            if row:
+                val = str(row["value"]).strip().lower()
+                return val in ("true", "1", "yes")
+            return True
+
+
+async def set_admin_test_mode_db(enabled: bool) -> bool:
+    """Встановити статус режиму особистого тесту власника."""
+    val = "true" if enabled else "false"
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO app_settings (key, value)
+            VALUES ('admin_test_mode', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, (val,))
+        await db.commit()
+        return True
+
+
+async def check_admin_access_db(user_id: int | str = None, username: str = None) -> dict:
+    """
+    Перевірка прав доступу до адмін-панелі:
+    - Власник (user_id == OWNER_ID або username в OWNER_USERNAMES) завжди має повний доступ (role: 'owner').
+    - Якщо увімкнено test_mode (за замовчуванням True) — доступ дозволено виключно Власнику.
+    - Якщо test_mode вимкнено — доступ надається також Старості та Замстарости з таблиці admin_roles.
+    """
+    clean_uid = None
+    if user_id is not None:
+        try:
+            clean_uid = int(str(user_id).strip())
+        except (ValueError, TypeError):
+            clean_uid = None
+
+    clean_uname = str(username or "").strip().lstrip("@").lower()
+    clean_owner_unames = {str(u).strip().lstrip("@").lower() for u in (OWNER_USERNAMES or set())}
+
+    is_owner = False
+    if clean_uid is not None and clean_uid == OWNER_ID:
+        is_owner = True
+    elif clean_uname and clean_uname in clean_owner_unames:
+        is_owner = True
+
+    test_mode = await get_admin_test_mode_db()
+
+    if is_owner:
+        return {
+            "is_admin": True,
+            "is_owner": True,
+            "role": "owner",
+            "test_mode": test_mode
+        }
+
+    # Під час особистого тесту ніхто, крім власника, не має доступу
+    if test_mode:
+        return {
+            "is_admin": False,
+            "is_owner": False,
+            "role": None,
+            "test_mode": True
+        }
+
+    # Якщо тест-режим вимкнено, шукаємо в базі admin_roles
+    async with get_db() as db:
+        row = None
+        if clean_uid is not None and clean_uname:
+            async with db.execute("""
+                SELECT id, user_id, username, real_name, role
+                FROM admin_roles
+                WHERE user_id = ? OR LOWER(username) = ?
+                LIMIT 1
+            """, (clean_uid, clean_uname)) as cur:
+                row = await cur.fetchone()
+        elif clean_uid is not None:
+            async with db.execute("""
+                SELECT id, user_id, username, real_name, role
+                FROM admin_roles
+                WHERE user_id = ?
+                LIMIT 1
+            """, (clean_uid,)) as cur:
+                row = await cur.fetchone()
+        elif clean_uname:
+            async with db.execute("""
+                SELECT id, user_id, username, real_name, role
+                FROM admin_roles
+                WHERE LOWER(username) = ?
+                LIMIT 1
+            """, (clean_uname,)) as cur:
+                row = await cur.fetchone()
+
+        if row:
+            return {
+                "is_admin": True,
+                "is_owner": False,
+                "role": row["role"],
+                "test_mode": False
+            }
+
+    return {
+        "is_admin": False,
+        "is_owner": False,
+        "role": None,
+        "test_mode": False
+    }
+
+
+async def get_admin_roles_db() -> list[dict]:
+    """Отримати список призначених адміністраторів (староста, замстарости)."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, user_id, username, real_name, role, created_at
+            FROM admin_roles
+            ORDER BY id ASC
+        """) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def grant_admin_role_db(
+    user_id: int | str = None,
+    username: str = None,
+    real_name: str = "",
+    role: str = "deputy"
+) -> bool:
+    """Додати або оновити роль адміністратора ('headman' або 'deputy')."""
+    clean_uid = None
+    if user_id is not None:
+        try:
+            clean_uid = int(str(user_id).strip())
+        except (ValueError, TypeError):
+            clean_uid = None
+
+    clean_uname = str(username or "").strip().lstrip("@")
+    clean_rname = str(real_name or "").strip()
+    target_role = "headman" if str(role).strip().lower() in ("headman", "староста") else "deputy"
+
+    async with get_db() as db:
+        # Шукаємо існуючий запис
+        existing = None
+        if clean_uid is not None and clean_uname:
+            async with db.execute("""
+                SELECT id FROM admin_roles
+                WHERE user_id = ? OR LOWER(username) = LOWER(?)
+                LIMIT 1
+            """, (clean_uid, clean_uname)) as cur:
+                existing = await cur.fetchone()
+        elif clean_uid is not None:
+            async with db.execute("SELECT id FROM admin_roles WHERE user_id = ? LIMIT 1", (clean_uid,)) as cur:
+                existing = await cur.fetchone()
+        elif clean_uname:
+            async with db.execute("SELECT id FROM admin_roles WHERE LOWER(username) = LOWER(?) LIMIT 1", (clean_uname,)) as cur:
+                existing = await cur.fetchone()
+
+        if existing:
+            await db.execute("""
+                UPDATE admin_roles
+                SET role = ?,
+                    real_name = CASE WHEN ? != '' THEN ? ELSE real_name END,
+                    user_id = COALESCE(?, user_id),
+                    username = CASE WHEN ? != '' THEN ? ELSE username END
+                WHERE id = ?
+            """, (target_role, clean_rname, clean_rname, clean_uid, clean_uname, clean_uname, existing["id"]))
+        else:
+            await db.execute("""
+                INSERT INTO admin_roles (user_id, username, real_name, role)
+                VALUES (?, ?, ?, ?)
+            """, (clean_uid, clean_uname or None, clean_rname, target_role))
+
+        await db.commit()
+        return True
+
+
+async def revoke_admin_role_db(
+    role_id: int | str = None,
+    user_id: int | str = None,
+    username: str = None
+) -> bool:
+    """Видалити права адміністратора з admin_roles."""
+    async with get_db() as db:
+        cur = None
+        if role_id is not None:
+            try:
+                rid = int(str(role_id).strip())
+                cur = await db.execute("DELETE FROM admin_roles WHERE id = ?", (rid,))
+            except (ValueError, TypeError):
+                pass
+        elif user_id is not None:
+            try:
+                uid = int(str(user_id).strip())
+                cur = await db.execute("DELETE FROM admin_roles WHERE user_id = ?", (uid,))
+            except (ValueError, TypeError):
+                pass
+        elif username:
+            uname = str(username).strip().lstrip("@")
+            cur = await db.execute("DELETE FROM admin_roles WHERE LOWER(username) = LOWER(?)", (uname,))
+
+        if cur:
+            await db.commit()
+            return cur.rowcount > 0
+        return False
+
+
+async def add_custom_lesson_db(
+    date_str: str,
+    pair_number: int,
+    name: str,
+    lesson_type: str = "Практика",
+    lecturer: str = "",
+    link_url: str = "",
+    comment: str = "",
+    created_by: str = ""
+) -> int:
+    """Додати додаткову або перенесену пару в розклад на вказану дату."""
+    clean_date = date_str.strip()
+    p_num = int(pair_number)
+    time_str = PAIR_TIMES.get(p_num, "08:30")
+
+    async with get_db() as db:
+        cur = await db.execute("""
+            INSERT INTO custom_lessons (
+                date, pair_number, name, type, lecturer, time, location, link_url, comment, created_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'Онлайн', ?, ?, ?)
+        """, (
+            clean_date,
+            p_num,
+            name.strip(),
+            (lesson_type or "Практика").strip(),
+            (lecturer or "").strip(),
+            time_str,
+            (link_url or "").strip(),
+            (comment or "").strip(),
+            (created_by or "").strip()
+        ))
+        await db.commit()
+
+        new_id = getattr(cur, "lastrowid", None)
+        if not new_id:
+            async with db.execute("SELECT MAX(id) as last_id FROM custom_lessons WHERE date = ?", (clean_date,)) as c2:
+                row = await c2.fetchone()
+                new_id = row["last_id"] if row else 0
+        return int(new_id or 0)
+
+
+async def get_custom_lessons_for_date_db(date_str: str) -> list[dict]:
+    """Отримати список усіх додаткових або перенесених пар на вказану дату."""
+    clean_date = date_str.strip()
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, date, pair_number, name, type, lecturer, time, location, link_url, comment, created_by, created_at
+            FROM custom_lessons
+            WHERE date = ?
+            ORDER BY pair_number ASC, id ASC
+        """, (clean_date,)) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def delete_custom_lesson_db(lesson_id: int | str) -> bool:
+    """Видалити додаткову або перенесену пару за її ID."""
+    try:
+        lid = int(str(lesson_id).strip())
+    except (ValueError, TypeError):
+        return False
+
+    async with get_db() as db:
+        cur = await db.execute("DELETE FROM custom_lessons WHERE id = ?", (lid,))
+        await db.commit()
+        return cur.rowcount > 0
 
 
 
