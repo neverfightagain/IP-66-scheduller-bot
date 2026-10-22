@@ -115,6 +115,12 @@ def format_latex_to_unicode(text: str | None) -> str:
     text = re.sub(r'\$\$([^$]+)\$\$', r'<code>\1</code>', text)
     text = re.sub(r'\$([^$]+)\$', r'<code>\1</code>', text)
 
+    # 8. Жирний текст: **text** -> <b>text</b>
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', text)
+
+    # 9. Моноширинний код: `code` -> <code>code</code>
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+
     return text.strip()
 
 
@@ -243,7 +249,7 @@ def format_lecture_summary(summary: dict | None, video_title: str = "", video_ur
 
     points = summary.get("summary_points", [])
     if isinstance(points, list) and points:
-        lines.append("📌 <b>Головні тези з заняття:</b>")
+        lines.append("📌 <b>Детальний конспект заняття:</b>")
         for pt in points:
             if pt:
                 clean_pt = format_latex_to_unicode(str(pt))
