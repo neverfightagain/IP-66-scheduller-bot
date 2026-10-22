@@ -820,12 +820,22 @@ body {
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 0 18px;
+    padding: 0 20px;
     box-shadow: 0 10px 24px rgba(20, 23, 38, 0.28);
     cursor: pointer;
     transition: transform 0.15s ease, background-color 0.2s;
     user-select: none;
     white-space: nowrap;
+    overflow: hidden;
+}
+
+#btn-primary-action-text,
+.primary-pill-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+    display: block;
 }
 
 .primary-pill-btn:active {

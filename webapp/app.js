@@ -409,8 +409,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (navBtnAdmin) {
             if (targetTab === 'tab-admin') {
                 navBtnAdmin.classList.add('active');
+                navBtnAdmin.textContent = '🔓';
             } else {
                 navBtnAdmin.classList.remove('active');
+                navBtnAdmin.textContent = '🔒';
             }
         }
 
@@ -451,12 +453,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if (navBtnAdminEl) {
         navBtnAdminEl.addEventListener('click', () => {
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-            switchToTab('tab-admin');
-            if (typeof loadAdminScheduleDate === 'function') {
-                const adminDateEl = document.getElementById('admin-schedule-date');
-                loadAdminScheduleDate(adminDateEl ? adminDateEl.value : getKyivDateString(0));
+            if (currentTab === 'tab-admin') {
+                switchToTab('tab-queue');
+                fetchQueue();
+            } else {
+                switchToTab('tab-admin');
+                if (typeof loadAdminScheduleDate === 'function') {
+                    const adminDateEl = document.getElementById('admin-schedule-date');
+                    loadAdminScheduleDate(adminDateEl ? adminDateEl.value : getKyivDateString(0));
+                }
             }
         });
+    }
+
+    function formatShortLabsLabel(sortedArray) {
+        if (!sortedArray || sortedArray.length === 0) return '';
+        if (sortedArray.length === 1) return `Лаба ${sortedArray[0]}`;
+        if (sortedArray.length <= 3) return `Лаби ${sortedArray.join(', ')}`;
+        return `${sortedArray.length} робіт`;
     }
 
     // 4. Оновлення нижньої кнопки дії
@@ -472,7 +486,11 @@ document.addEventListener('DOMContentLoaded', () => {
                                Array.from(selectedLabs).every(n => currentLabNums.has(n));
 
                 if (isSame) {
-                    btnPrimaryActionText.textContent = `✅ Ви у черзі #${myIdx} (${myItem.lab_number || 'Лаба ' + (myItem.lab_priority || 1)})`;
+                    if (currentLabNums.size <= 3) {
+                        btnPrimaryActionText.textContent = `✅ Ви у черзі #${myIdx} (${myItem.lab_number || 'Лаба ' + (myItem.lab_priority || 1)})`;
+                    } else {
+                        btnPrimaryActionText.textContent = `✅ Ви у черзі #${myIdx} (${currentLabNums.size} робіт)`;
+                    }
                     btnPrimaryAction.classList.remove('btn-action-update');
                 } else {
                     const sorted = Array.from(selectedLabs).sort((a, b) => a - b);
@@ -480,19 +498,23 @@ document.addEventListener('DOMContentLoaded', () => {
                         btnPrimaryActionText.textContent = `⚠️ Оберіть хоча б одну роботу`;
                         btnPrimaryAction.classList.remove('btn-action-update');
                     } else {
-                        const labsText = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
+                        const shortLabel = formatShortLabsLabel(sorted);
                         const oldNums = Array.from(currentLabNums);
                         const oldMin = oldNums.length > 0 ? Math.min(...oldNums) : 999;
                         const newMin = sorted[0];
+                        const isAdded = sorted.some(n => !currentLabNums.has(n));
 
-                        if (newMin > oldMin) {
-                            btnPrimaryActionText.textContent = `💾 Оновити чергу: ${labsText} (пріоритет: Лаба ${newMin})`;
-                        } else {
-                            const isAdded = sorted.some(n => !currentLabNums.has(n));
-                            if (isAdded) {
-                                btnPrimaryActionText.textContent = `➕ Додати до черги: ${labsText} (місце #${myIdx} збережено)`;
+                        if (sorted.length <= 3) {
+                            if (isAdded && newMin <= oldMin) {
+                                btnPrimaryActionText.textContent = `➕ Додати: ${shortLabel}`;
                             } else {
-                                btnPrimaryActionText.textContent = `💾 Оновити чергу: ${labsText} (місце #${myIdx} збережено)`;
+                                btnPrimaryActionText.textContent = `💾 Оновити чергу: ${shortLabel}`;
+                            }
+                        } else {
+                            if (isAdded && newMin <= oldMin) {
+                                btnPrimaryActionText.textContent = `➕ Зберегти у черзі (${sorted.length} робіт)`;
+                            } else {
+                                btnPrimaryActionText.textContent = `💾 Оновити чергу (${sorted.length} робіт)`;
                             }
                         }
                         btnPrimaryAction.classList.add('btn-action-update');
@@ -504,8 +526,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (sorted.length === 0) {
                     btnPrimaryActionText.textContent = `✋ Зайняти чергу ${activeSubject} (оберіть лабу)`;
                 } else {
-                    const labsText = sorted.length === 1 ? `Лаба ${sorted[0]}` : `Лаби ${sorted.join(', ')}`;
-                    btnPrimaryActionText.textContent = `🚀 Зайняти чергу: ${labsText}`;
+                    const shortLabel = formatShortLabsLabel(sorted);
+                    if (sorted.length <= 3) {
+                        btnPrimaryActionText.textContent = `🚀 Зайняти чергу: ${shortLabel}`;
+                    } else {
+                        btnPrimaryActionText.textContent = `🚀 Зайняти чергу (${sorted.length} робіт)`;
+                    }
                     btnPrimaryAction.classList.add('btn-action-update');
                 }
             }

@@ -119,6 +119,7 @@ elementIds.forEach(id => getOrCreateElement(id));
 const navBtnAdmin = getOrCreateElement('nav-btn-admin', 'button');
 navBtnAdmin.classList.add('admin-lock-btn', 'hidden');
 navBtnAdmin.setAttribute('data-tab', 'tab-admin');
+navBtnAdmin.textContent = '🔒';
 
 const tabAdmin = getOrCreateElement('tab-admin', 'section');
 tabAdmin.classList.add('tab-content');
@@ -408,8 +409,8 @@ async function runTests() {
 
     assert.ok(labsGrid.children[4].classList.contains('selected'), 'Lab 5 remains selected');
     assert.ok(labsGrid.children[5].classList.contains('selected'), 'Lab 6 is now selected');
-    assert.strictEqual(btnActionText.textContent, '➕ Додати до черги: Лаби 5, 6 (місце #1 збережено)');
-    console.log('✓ TEST 5: Tapping Lab 6 shows "➕ Додати до черги: Лаби 5, 6 (місце #1 збережено)"');
+    assert.strictEqual(btnActionText.textContent, '➕ Додати: Лаби 5, 6');
+    console.log('✓ TEST 5: Tapping Lab 6 shows "➕ Додати: Лаби 5, 6"');
 
     // TEST 6: Submit updated labs (5 and 6)
     btnAction.click();
@@ -426,8 +427,8 @@ async function runTests() {
 
     assert.ok(!labsGrid.children[4].classList.contains('selected'), 'Lab 5 is unselected');
     assert.ok(labsGrid.children[5].classList.contains('selected'), 'Lab 6 remains selected');
-    assert.strictEqual(btnActionText.textContent, '💾 Оновити чергу: Лаба 6 (пріоритет: Лаба 6)');
-    console.log('✓ TEST 7: Unselecting earlier lab indicates priority will drop to Lab 6');
+    assert.strictEqual(btnActionText.textContent, '💾 Оновити чергу: Лаба 6');
+    console.log('✓ TEST 7: Unselecting earlier lab shows "💾 Оновити чергу: Лаба 6"');
 
     // Add a competitor student in queue with priority 5
     queueApiState.push({
