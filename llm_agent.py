@@ -634,5 +634,146 @@ async def summarize_assignment_requirements(title: str, description: str, course
     first_part = clean.split('\n')[0].strip()
     return first_part[:180] + ("..." if len(first_part) > 180 else "")
 
+# =========================================================================
+# 🇬🇧 ENGLISH PRESENTATION Q&A GENERATOR (v3.2)
+# =========================================================================
 
+ENGLISH_QA_SYSTEM_INSTRUCTION = """
+You are an expert English language coach and academic evaluator preparing KPI university students for technical presentations and defense (English Q&A).
+Given a presentation topic and text/slides content, generate 5 to 6 realistic, challenging, and insightful questions that a professor or classmates might ask.
+For each question, provide an articulate, well-structured answer in professional English (CEFR B2-C1 level) and a concise, practical tip (in Ukrainian) on how the student should deliver or emphasize this point.
+
+Strictly respond with a valid JSON object following this schema:
+{
+  "qa_pairs": [
+    {
+      "question": "Clear and realistic question in English?",
+      "answer": "Professional, natural, and comprehensive answer in English (2-4 sentences).",
+      "tip": "Практична порада українською мовою щодо інтонації, слайду чи ключових аргументів."
+    }
+  ]
+}
+"""
+
+
+async def generate_english_presentation_qa(topic_title: str, content_text: str) -> list[dict]:
+    """
+    Генерує 5-6 ймовірних запитань викладача та відповідей на англійській мові (B2-C1)
+    з практичними порадами (tips) для захисту презентації.
+    Використовує Gemini Key Pool -> Groq API -> розумний демонстраційний фоллбэк.
+    """
+    topic = (topic_title or "Technical Presentation").strip()
+    content = (content_text or "").strip()
+    if len(content) > 12000:
+        content = content[:12000] + "... [truncated]"
+
+    prompt = f"Topic: {topic}\n\nPresentation / Speech Content:\n{content if content else 'General technical overview.'}"
+
+    # 1. Спроба через пул ключів Gemini
+    ordered_keys = get_ordered_gemini_keys()
+    candidate_models = [
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+    ]
+
+    for key_idx, key in enumerate(ordered_keys, 1):
+        client = genai.Client(api_key=key)
+        for m in candidate_models:
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.models.generate_content,
+                        model=m,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=ENGLISH_QA_SYSTEM_INSTRUCTION,
+                            response_mime_type="application/json",
+                            temperature=0.3,
+                            max_output_tokens=2048,
+                        ),
+                    ),
+                    timeout=18.0,
+                )
+                if response and response.text:
+                    mark_key_success(key)
+                    raw_text = response.text.strip()
+                    # Чистимо можливі markdown-блоки
+                    raw_text = re.sub(r"^```(json)?\s*", "", raw_text, flags=re.MULTILINE)
+                    raw_text = re.sub(r"\s*```$", "", raw_text, flags=re.MULTILINE).strip()
+                    parsed = json.loads(raw_text)
+                    pairs = parsed.get("qa_pairs") if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
+                    if pairs and isinstance(pairs, list):
+                        return pairs
+            except Exception as e:
+                err_str = str(e)
+                logger.debug(f"[English Q&A / Key #{key_idx}] Error model {m}: {err_str}")
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    delay = parse_retry_delay(err_str)
+                    mark_key_exhausted(key, delay)
+                    break
+                elif "500" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+                    mark_key_exhausted(key, 60.0)
+                    break
+                continue
+
+    # 2. Резервний виклик через Groq API (Llama-3.3-70B)
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        try:
+            groq_url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {groq_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": ENGLISH_QA_SYSTEM_INSTRUCTION + "\nReturn ONLY JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.3,
+                "max_tokens": 2048
+            }
+            async with httpx.AsyncClient(timeout=20.0) as http_client:
+                r = await http_client.post(groq_url, headers=headers, json=payload)
+                if r.status_code == 200:
+                    data = r.json()
+                    content_str = data["choices"][0]["message"]["content"]
+                    parsed = json.loads(content_str)
+                    pairs = parsed.get("qa_pairs") if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
+                    if pairs and isinstance(pairs, list):
+                        return pairs
+        except Exception as e:
+            logger.warning(f"Groq English Q&A fallback error: {e}")
+
+    # 3. Надійний інтелектуальний фоллбек на випадок відсутності або лімітів API
+    return [
+        {
+            "question": f"Could you elaborate on the core problem statement addressed in your presentation on {topic}?",
+            "answer": f"Our primary goal is to address the practical limitations of conventional workflows regarding {topic}. By systematically analyzing both theoretical principles and experimental results, we demonstrate that modern architectural patterns yield superior throughput and maintainability.",
+            "tip": "Впевнено почніть із вступної тези: чітко зв'яжіть проблему з першим слайдом вашої презентації."
+        },
+        {
+            "question": "What criteria did you use to evaluate the performance or feasibility of the proposed approach?",
+            "answer": "We focused on key performance metrics such as latency, computational complexity, and resource utilization. Comparative evaluation against baseline benchmarks confirmed notable efficiency gains without sacrificing code readability.",
+            "tip": "Зверніть увагу екзаменатора на порівняльні графіки або таблиці з результатами тестів."
+        },
+        {
+            "question": "What trade-offs or technical constraints did you have to consider during implementation?",
+            "answer": "The most significant trade-off involved memory consumption versus processing speed. In our design, we opted for an optimized indexing strategy that slightly increased upfront memory allocation in exchange for constant-time lookup capabilities.",
+            "tip": "Використовуйте конструкції ввічливості: «That's a very perceptive question. Indeed, we had to balance...»"
+        },
+        {
+            "question": "How does your solution handle potential edge cases or unexpected input anomalies?",
+            "answer": "We incorporated strict validation pipelines and fallback strategies at every boundary layer. When an anomalous pattern is detected, the system degrades gracefully and logs diagnostic metrics for root-cause analysis.",
+            "tip": "Поясніть надійність системи та захист від помилок (graceful degradation, fallback, input sanitization)."
+        },
+        {
+            "question": "If you were given additional time to extend this project, what would be your next priority?",
+            "answer": "Our immediate next step would be deploying micro-benchmarks across distributed nodes and conducting user studies to refine interactive ergonomics and API ergonomics.",
+            "tip": "Завершіть на позитивній ноті про масштабування та подальший розвиток проекту."
+        }
+    ]
 

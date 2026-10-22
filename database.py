@@ -519,6 +519,55 @@ async def init_db():
             ON custom_lessons (date);
         """)
 
+        # 16. Таблиці проектних груп з англійської (project_boards, project_groups, project_group_members)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS project_boards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL DEFAULT 'Англійська',
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                max_members INTEGER NOT NULL DEFAULT 3,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS project_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id INTEGER NOT NULL,
+                topic_title TEXT NOT NULL,
+                content_text TEXT DEFAULT '',
+                file_name TEXT DEFAULT '',
+                ai_qa_json TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS project_group_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                board_id INTEGER NOT NULL,
+                user_id INTEGER,
+                user_name TEXT NOT NULL,
+                username TEXT DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'member',
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_project_groups_board
+            ON project_groups (board_id);
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_project_group_members_group
+            ON project_group_members (group_id);
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_project_group_members_board
+            ON project_group_members (board_id);
+        """)
+
         await db.commit()
         if SQLITE_CLOUD_URL:
             host = SQLITE_CLOUD_URL.split("@")[-1].split("?")[0]
@@ -2245,6 +2294,390 @@ async def delete_custom_lesson_db(lesson_id: int | str) -> dict | None:
         await db.commit()
         return lesson_info
 
+# =========================================================================
+# 🇬🇧 АНГЛІЙСЬКА МОВА: ПРОЕКТНІ БОРДИ, МІНІ-ГРУПИ ТА ШІ ПІДГОТОВКА (v3.2)
+# =========================================================================
+
+async def create_project_board_db(
+    title: str,
+    subject: str = "Англійська",
+    description: str = "",
+    max_members: int = 3,
+    initial_topics: list[str] | None = None,
+    created_by: str = ""
+) -> int:
+    """Створює новий проектний набір груп (board) та опціонально слоти під готові теми."""
+    clean_title = (title or "").strip()
+    clean_desc = (description or "").strip()
+    clean_subj = (subject or "Англійська").strip()
+    m_members = max(1, min(10, int(max_members or 3)))
+
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            INSERT INTO project_boards (subject, title, description, max_members, is_active, created_by)
+            VALUES (?, ?, ?, ?, 1, ?)
+            """,
+            (clean_subj, clean_title, clean_desc, m_members, created_by.strip())
+        )
+        await db.commit()
+
+        new_id = getattr(cur, "lastrowid", None)
+        if not new_id:
+            async with db.execute("SELECT MAX(id) as last_id FROM project_boards WHERE subject = ?", (clean_subj,)) as c2:
+                r = await c2.fetchone()
+                new_id = r["last_id"] if r else 0
+        board_id = int(new_id or 0)
+
+        if initial_topics and isinstance(initial_topics, list):
+            for topic in initial_topics:
+                t_str = str(topic).strip()
+                if t_str:
+                    await db.execute(
+                        """
+                        INSERT INTO project_groups (board_id, topic_title, content_text, file_name, ai_qa_json)
+                        VALUES (?, ?, '', '', '')
+                        """,
+                        (board_id, t_str)
+                    )
+            await db.commit()
+
+        return board_id
 
 
+async def delete_project_board_db(board_id: int | str) -> bool:
+    """Видаляє проектний набір груп (board), усі його міні-групи та списки учасників."""
+    try:
+        bid = int(str(board_id).strip())
+    except (ValueError, TypeError):
+        return False
+
+    async with get_db() as db:
+        await db.execute("DELETE FROM project_group_members WHERE board_id = ?", (bid,))
+        await db.execute("DELETE FROM project_groups WHERE board_id = ?", (bid,))
+        res = await db.execute("DELETE FROM project_boards WHERE id = ?", (bid,))
+        await db.commit()
+        return bool(res.rowcount > 0)
+
+
+async def get_project_boards_db(subject: str = "Англійська") -> list[dict]:
+    """
+    Повертає список активних проектних бордів із вкладеними групами,
+    учасниками та розпарсеними даними AI Q&A.
+    """
+    clean_subj = (subject or "Англійська").strip()
+    async with get_db() as db:
+        async with db.execute(
+            """
+            SELECT id, subject, title, description, max_members, is_active, created_by, created_at
+            FROM project_boards
+            WHERE subject = ? AND is_active = 1
+            ORDER BY id DESC
+            """,
+            (clean_subj,)
+        ) as cur:
+            board_rows = await cur.fetchall()
+
+        boards = []
+        for b_row in board_rows:
+            b_dict = dict(b_row)
+            board_id = b_dict["id"]
+
+            async with db.execute(
+                """
+                SELECT id, board_id, topic_title, content_text, file_name, ai_qa_json, created_at
+                FROM project_groups
+                WHERE board_id = ?
+                ORDER BY id ASC
+                """,
+                (board_id,)
+            ) as cur_g:
+                group_rows = await cur_g.fetchall()
+
+            groups = []
+            for g_row in group_rows:
+                g_dict = dict(g_row)
+                gid = g_dict["id"]
+
+                raw_qa = g_dict.get("ai_qa_json") or ""
+                ai_qa = []
+                if raw_qa:
+                    try:
+                        ai_qa = json.loads(raw_qa)
+                        if not isinstance(ai_qa, list):
+                            ai_qa = []
+                    except Exception:
+                        ai_qa = []
+                g_dict["ai_qa"] = ai_qa
+
+                async with db.execute(
+                    """
+                    SELECT id, group_id, board_id, user_id, user_name, username, role, joined_at
+                    FROM project_group_members
+                    WHERE group_id = ?
+                    ORDER BY id ASC
+                    """,
+                    (gid,)
+                ) as cur_m:
+                    member_rows = await cur_m.fetchall()
+
+                g_dict["members"] = [dict(m) for m in member_rows]
+                groups.append(g_dict)
+
+            b_dict["groups"] = groups
+            boards.append(b_dict)
+
+        return boards
+
+
+async def create_or_join_project_group_db(
+    board_id: int | str,
+    user_id: int | None,
+    user_name: str,
+    username: str = "",
+    topic_title: str = "",
+    group_id: int | None = None,
+    teammates: list[dict] | None = None
+) -> tuple[bool, str, int]:
+    """
+    Створює нову міні-групу з вказаною темою або приєднує студента до існуючої групи.
+    Контролює ліміт max_members борду та уникає дублювання студентів.
+    """
+    try:
+        bid = int(str(board_id).strip())
+    except (ValueError, TypeError):
+        return False, "Некоректний ID борду", 0
+
+    clean_user_name = (user_name or "Студент").strip()
+    clean_username = (username or "").replace("@", "").strip()
+
+    async with get_db() as db:
+        async with db.execute(
+            """
+            SELECT id, max_members, title
+            FROM project_boards
+            WHERE id = ? AND is_active = 1
+            """,
+            (bid,)
+        ) as cur_b:
+            b_row = await cur_b.fetchone()
+            if not b_row:
+                return False, "Проектний набір не знайдено", 0
+
+        max_members = int(b_row["max_members"] or 3)
+
+        # 1. Якщо студент уже в іншій групі цього борду, видаляємо його звідти
+        async with db.execute(
+            """
+            SELECT group_id FROM project_group_members
+            WHERE board_id = ? AND ((user_id IS NOT NULL AND user_id = ?) OR user_name = ?)
+            """,
+            (bid, user_id, clean_user_name)
+        ) as cur_old:
+            old_rows = await cur_old.fetchall()
+
+        for og in old_rows:
+            old_gid = og["group_id"]
+            await db.execute(
+                """
+                DELETE FROM project_group_members
+                WHERE group_id = ? AND ((user_id IS NOT NULL AND user_id = ?) OR user_name = ?)
+                """,
+                (old_gid, user_id, clean_user_name)
+            )
+            # Перевіряємо чи стара група стала порожньою
+            async with db.execute("SELECT count(*) as c FROM project_group_members WHERE group_id = ?", (old_gid,)) as cur_oc:
+                oc_row = await cur_oc.fetchone()
+                if oc_row and oc_row["c"] == 0:
+                    async with db.execute("SELECT content_text, ai_qa_json FROM project_groups WHERE id = ?", (old_gid,)) as cur_cg:
+                        cg_row = await cur_cg.fetchone()
+                        if not cg_row or (not cg_row["content_text"] and not cg_row["ai_qa_json"]):
+                            await db.execute("DELETE FROM project_groups WHERE id = ?", (old_gid,))
+
+        # 2. Варіант А: Приєднання до існуючої групи
+        if group_id:
+            try:
+                gid = int(str(group_id).strip())
+            except (ValueError, TypeError):
+                return False, "Некоректний ID групи", 0
+
+            async with db.execute("SELECT id, board_id, topic_title FROM project_groups WHERE id = ? AND board_id = ?", (gid, bid)) as cur_g:
+                g_row = await cur_g.fetchone()
+                if not g_row:
+                    return False, "Групу не знайдено", 0
+
+            async with db.execute("SELECT count(*) as c FROM project_group_members WHERE group_id = ?", (gid,)) as cur_cnt:
+                cnt_row = await cur_cnt.fetchone()
+                cur_count = cnt_row["c"] if cnt_row else 0
+
+            if cur_count >= max_members:
+                return False, f"Група вже заповнена (макс. {max_members} учасників)", gid
+
+            await db.execute(
+                """
+                INSERT INTO project_group_members (group_id, board_id, user_id, user_name, username, role)
+                VALUES (?, ?, ?, ?, ?, 'member')
+                """,
+                (gid, bid, user_id, clean_user_name, clean_username)
+            )
+            await db.commit()
+            return True, f"Ви приєдналися до групи «{g_row['topic_title']}»!", gid
+
+        # 3. Варіант Б: Створення нової групи з темою та напарниками
+        clean_topic = (topic_title or "General Topic").strip()
+        cur_ins = await db.execute(
+            """
+            INSERT INTO project_groups (board_id, topic_title, content_text, file_name, ai_qa_json)
+            VALUES (?, ?, '', '', '')
+            """,
+            (bid, clean_topic)
+        )
+        await db.commit()
+
+        new_gid = getattr(cur_ins, "lastrowid", None)
+        if not new_gid:
+            async with db.execute("SELECT MAX(id) as last_id FROM project_groups WHERE board_id = ?", (bid,)) as c2:
+                r = await c2.fetchone()
+                new_gid = r["last_id"] if r else 0
+        new_gid = int(new_gid or 0)
+
+        # Додаємо лідера
+        await db.execute(
+            """
+            INSERT INTO project_group_members (group_id, board_id, user_id, user_name, username, role)
+            VALUES (?, ?, ?, ?, ?, 'leader')
+            """,
+            (new_gid, bid, user_id, clean_user_name, clean_username)
+        )
+
+        # Додаємо напарників (до max_members - 1)
+        if teammates and isinstance(teammates, list):
+            for tm in teammates[:max_members - 1]:
+                tm_uid_raw = tm.get("user_id") or tm.get("id")
+                tm_uid = int(tm_uid_raw) if tm_uid_raw and str(tm_uid_raw).isdigit() else None
+                tm_name = str(tm.get("user_name") or tm.get("name") or tm.get("real_name") or "").strip()
+                tm_uname = str(tm.get("username") or "").replace("@", "").strip()
+                if not tm_name:
+                    continue
+
+                # Вилучаємо напарника з попередніх груп цього борду
+                await db.execute(
+                    """
+                    DELETE FROM project_group_members
+                    WHERE board_id = ? AND ((user_id IS NOT NULL AND user_id = ?) OR user_name = ?)
+                    """,
+                    (bid, tm_uid, tm_name)
+                )
+                await db.execute(
+                    """
+                    INSERT INTO project_group_members (group_id, board_id, user_id, user_name, username, role)
+                    VALUES (?, ?, ?, ?, ?, 'member')
+                    """,
+                    (new_gid, bid, tm_uid, tm_name, tm_uname)
+                )
+
+        await db.commit()
+        return True, f"Групу «{clean_topic}» успішно створено!", new_gid
+
+
+async def leave_project_group_db(
+    group_id: int | str,
+    user_id: int | None = None,
+    user_name: str | None = None
+) -> bool:
+    """Видаляє учасника з міні-групи та очищує порожні групи без контенту."""
+    try:
+        gid = int(str(group_id).strip())
+    except (ValueError, TypeError):
+        return False
+
+    clean_name = (user_name or "").strip()
+
+    async with get_db() as db:
+        if user_id:
+            res = await db.execute(
+                """
+                DELETE FROM project_group_members
+                WHERE group_id = ? AND (user_id = ? OR (user_name != '' AND user_name = ?))
+                """,
+                (gid, user_id, clean_name)
+            )
+        elif clean_name:
+            res = await db.execute(
+                "DELETE FROM project_group_members WHERE group_id = ? AND user_name = ?",
+                (gid, clean_name)
+            )
+        else:
+            return False
+
+        # Перевіряємо чи залишилися учасники
+        async with db.execute("SELECT count(*) as c FROM project_group_members WHERE group_id = ?", (gid,)) as cur_c:
+            row_c = await cur_c.fetchone()
+            rem_count = row_c["c"] if row_c else 0
+
+        if rem_count == 0:
+            async with db.execute("SELECT content_text, ai_qa_json FROM project_groups WHERE id = ?", (gid,)) as cur_g:
+                g_row = await cur_g.fetchone()
+                has_content = bool(g_row and (g_row["content_text"] or g_row["ai_qa_json"]))
+            if not has_content:
+                await db.execute("DELETE FROM project_groups WHERE id = ?", (gid,))
+
+        await db.commit()
+        return bool(res.rowcount > 0)
+
+
+async def save_project_group_material_db(
+    group_id: int | str,
+    content_text: str,
+    file_name: str = "",
+    topic_title: str | None = None
+) -> bool:
+    """Зберігає текст та назву файлу презентації/виступу для групи."""
+    try:
+        gid = int(str(group_id).strip())
+    except (ValueError, TypeError):
+        return False
+
+    async with get_db() as db:
+        if topic_title:
+            res = await db.execute(
+                """
+                UPDATE project_groups
+                SET content_text = ?, file_name = ?, topic_title = ?
+                WHERE id = ?
+                """,
+                (content_text, file_name, topic_title.strip(), gid)
+            )
+        else:
+            res = await db.execute(
+                """
+                UPDATE project_groups
+                SET content_text = ?, file_name = ?
+                WHERE id = ?
+                """,
+                (content_text, file_name, gid)
+            )
+        await db.commit()
+        return bool(res.rowcount > 0)
+
+
+async def save_project_group_ai_qa_db(group_id: int | str, qa_list: list[dict]) -> bool:
+    """Зберігає список сгенерованих ШІ питань і відповідей у JSON форматі."""
+    try:
+        gid = int(str(group_id).strip())
+    except (ValueError, TypeError):
+        return False
+
+    raw_json = json.dumps(qa_list, ensure_ascii=False)
+    async with get_db() as db:
+        res = await db.execute(
+            """
+            UPDATE project_groups
+            SET ai_qa_json = ?
+            WHERE id = ?
+            """,
+            (raw_json, gid)
+        )
+        await db.commit()
+        return bool(res.rowcount > 0)
 

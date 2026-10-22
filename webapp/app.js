@@ -213,8 +213,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const subjectProgressPercent = document.getElementById('subject-progress-percent');
     const subjectProgressStatus = document.getElementById('subject-progress-status');
     const subjectWorksContainer = document.getElementById('subject-works-container');
+    const subjectsTabEng = document.getElementById('subjects-tab-eng');
+    const englishProjectsContainer = document.getElementById('english-projects-container');
+    const engAdminCard = document.getElementById('eng-admin-card');
+    const btnEngToggleAdminForm = document.getElementById('btn-eng-toggle-admin-form');
+    const engAdminFormBody = document.getElementById('eng-admin-form-body');
+    const engBoardTitleInput = document.getElementById('eng-board-title-input');
+    const engBoardDescInput = document.getElementById('eng-board-desc-input');
+    const engBoardMaxMembersInput = document.getElementById('eng-board-max-members-input');
+    const engBoardTopicsInput = document.getElementById('eng-board-topics-input');
+    const btnEngCreateBoard = document.getElementById('btn-eng-create-board');
+    const engLoading = document.getElementById('eng-loading');
+    const engEmptyMsg = document.getElementById('eng-empty-msg');
+    const engBoardsList = document.getElementById('eng-boards-list');
 
     let activeSubjectsSubj = 'ОП';
+    let englishBoards = [];
+    let studentsRosterCache = [];
+    let activeCreateGroupBoardId = null;
+    let selectedTeammatesMap = new Map();
     let officialAiDefenses = [];
 
     // Bottom Action Button & Toast
@@ -597,7 +614,11 @@ document.addEventListener('DOMContentLoaded', () => {
             btnPrimaryActionText.textContent = `🔄 Оновити дедлайни`;
             btnPrimaryAction.disabled = false;
         } else if (currentTab === 'tab-subjects') {
-            btnPrimaryActionText.textContent = `🔄 Оновити прогрес`;
+            if (activeSubjectsSubj === 'Англійська') {
+                btnPrimaryActionText.textContent = `🔄 Оновити групи (Англ)`;
+            } else {
+                btnPrimaryActionText.textContent = `🔄 Оновити прогрес`;
+            }
             btnPrimaryAction.disabled = false;
         } else if (currentTab === 'tab-admin') {
             btnPrimaryActionText.textContent = `⚙️ Панель старостату`;
@@ -651,8 +672,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 await fetchDeadlines();
                 showToast("Дедлайни оновлено!");
             } else if (currentTab === 'tab-subjects') {
-                await fetchSubjectsOverview();
-                showToast(`Дані з ${activeSubjectsSubj} оновлено! 📚`);
+                if (activeSubjectsSubj === 'Англійська') {
+                    await fetchEnglishBoards();
+                    showToast("Проекти з англійської оновлено! 🇬🇧");
+                } else {
+                    await fetchSubjectsOverview();
+                    showToast(`Дані з ${activeSubjectsSubj} оновлено! 📚`);
+                }
             }
         });
     }
@@ -1639,12 +1665,16 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (_) {}
     }
 
-    // Слухачі подій перемикання дисциплін (ОП vs АСД)
+    // Слухачі подій перемикання дисциплін (ОП vs АСД vs Англійська)
     if (subjectsTabOp) {
         subjectsTabOp.addEventListener('click', () => {
             activeSubjectsSubj = 'ОП';
             subjectsTabOp.classList.add('active');
             subjectsTabAsd.classList.remove('active');
+            if (subjectsTabEng) subjectsTabEng.classList.remove('active');
+            if (englishProjectsContainer) englishProjectsContainer.classList.add('hidden');
+            if (subjectProgressHero) subjectProgressHero.classList.remove('hidden');
+            if (subjectWorksContainer) subjectWorksContainer.classList.remove('hidden');
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
             renderSubjectsView();
             updateBottomButtonState();
@@ -1655,8 +1685,26 @@ document.addEventListener('DOMContentLoaded', () => {
             activeSubjectsSubj = 'АСД';
             subjectsTabAsd.classList.add('active');
             subjectsTabOp.classList.remove('active');
+            if (subjectsTabEng) subjectsTabEng.classList.remove('active');
+            if (englishProjectsContainer) englishProjectsContainer.classList.add('hidden');
+            if (subjectProgressHero) subjectProgressHero.classList.remove('hidden');
+            if (subjectWorksContainer) subjectWorksContainer.classList.remove('hidden');
             if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
             renderSubjectsView();
+            updateBottomButtonState();
+        });
+    }
+    if (subjectsTabEng) {
+        subjectsTabEng.addEventListener('click', () => {
+            activeSubjectsSubj = 'Англійська';
+            subjectsTabEng.classList.add('active');
+            subjectsTabOp.classList.remove('active');
+            subjectsTabAsd.classList.remove('active');
+            if (subjectProgressHero) subjectProgressHero.classList.add('hidden');
+            if (subjectWorksContainer) subjectWorksContainer.classList.add('hidden');
+            if (englishProjectsContainer) englishProjectsContainer.classList.remove('hidden');
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            fetchEnglishBoards();
             updateBottomButtonState();
         });
     }
@@ -2054,6 +2102,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentUser.isAdmin = false;
                 currentUser.isOwner = false;
             }
+
+            // Оновлення видимості вкладки «🇬🇧 Англ» відповідно до test_mode
+            if (subjectsTabEng) {
+                if (currentUser.isAdmin || !data.test_mode) {
+                    subjectsTabEng.classList.remove('hidden');
+                } else {
+                    subjectsTabEng.classList.add('hidden');
+                }
+            }
+            if (engAdminCard) {
+                if (currentUser.isAdmin) {
+                    engAdminCard.classList.remove('hidden');
+                } else {
+                    engAdminCard.classList.add('hidden');
+                }
+            }
         } catch (e) {
             console.error('Failed to check admin status:', e);
         }
@@ -2295,8 +2359,678 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
         showToast(`⚡ Заповнено шаблон: ${preset.shortLabel}`);
     }
+
+    // =========================================================================
+    // 🇬🇧 АНГЛІЙСЬКА МОВА: ПРОЕКТИ, ГРУПИ, ПРЕЗЕНТАЦІЇ ТА ШІ ПІДГОТОВКА (v3.2)
+    // =========================================================================
+
+    async function fetchStudentsRosterOnce() {
+        if (studentsRosterCache.length > 0) return studentsRosterCache;
+        try {
+            const res = await fetch('/api/students');
+            const data = await res.json();
+            if (data.success && Array.isArray(data.students)) {
+                studentsRosterCache = data.students;
+            }
+        } catch (_) {}
+        return studentsRosterCache;
+    }
+
+    async function fetchEnglishBoards() {
+        if (engLoading) engLoading.classList.remove('hidden');
+        if (engEmptyMsg) engEmptyMsg.classList.add('hidden');
+        if (engBoardsList) engBoardsList.innerHTML = '';
+
+        try {
+            await fetchStudentsRosterOnce();
+            const uId = currentUser.id || '';
+            const uName = currentUser.username || '';
+            const res = await fetch(`/api/projects/boards?subject=Англійська&user_id=${uId}&username=${encodeURIComponent(uName)}`);
+            const data = await res.json();
+            if (engLoading) engLoading.classList.add('hidden');
+
+            if (!data.success) {
+                if (engBoardsList) engBoardsList.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Помилка завантаження проектів.</div>';
+                return;
+            }
+
+            if (data.restricted_by_test_mode) {
+                if (engBoardsList) {
+                    engBoardsList.innerHTML = `
+                        <div style="text-align:center; padding:32px 16px; background:#FFFFFF; border:1.5px solid var(--card-border); border-radius:18px;">
+                            <div style="font-size:36px; margin-bottom:10px;">🧪</div>
+                            <div style="font-size:15px; font-weight:800; color:var(--text-primary); margin-bottom:6px;">Закрите тестування розділу</div>
+                            <div style="font-size:13px; color:var(--text-secondary); line-height:1.45; max-width:320px; margin:0 auto;">
+                                Розділ проектних груп та AI-підготовки з англійської мови наразі проходить тестування старостатом. Незабаром буде відкрито для всієї групи!
+                            </div>
+                        </div>
+                    `;
+                }
+                return;
+            }
+
+            englishBoards = data.boards || [];
+            renderEnglishBoards();
+        } catch (e) {
+            if (engLoading) engLoading.classList.add('hidden');
+            if (engBoardsList) engBoardsList.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Помилка зв\'язку з сервером.</div>';
+        }
+    }
+
+    function isUserMemberOfGroup(group) {
+        if (!group || !Array.isArray(group.members)) return false;
+        return group.members.some(m => {
+            if (currentUser.id && m.user_id && String(m.user_id) === String(currentUser.id)) return true;
+            const cUname = (currentUser.username || '').replace(/^@/, '').toLowerCase().trim();
+            const mUname = (m.username || '').replace(/^@/, '').toLowerCase().trim();
+            if (cUname && mUname && cUname === mUname) return true;
+            if (currentUser.realName && m.user_name && m.user_name.toLowerCase().includes(currentUser.realName.toLowerCase())) return true;
+            if (currentUser.name && m.user_name && m.user_name.toLowerCase().includes(currentUser.name.toLowerCase())) return true;
+            return false;
+        });
+    }
+
+    function findUserGroupInBoard(board) {
+        if (!board || !Array.isArray(board.groups)) return null;
+        return board.groups.find(g => isUserMemberOfGroup(g)) || null;
+    }
+
+    function renderEnglishBoards() {
+        if (!engBoardsList) return;
+        if (!englishBoards || englishBoards.length === 0) {
+            engBoardsList.innerHTML = '';
+            if (engEmptyMsg) engEmptyMsg.classList.remove('hidden');
+            return;
+        }
+
+        if (engEmptyMsg) engEmptyMsg.classList.add('hidden');
+        let html = '';
+
+        englishBoards.forEach(board => {
+            const userGroup = findUserGroupInBoard(board);
+            const userInAnyGroup = !!userGroup;
+            const isPanelOpen = activeCreateGroupBoardId === board.id;
+
+            html += `
+                <div class="eng-board-card" data-board-id="${board.id}">
+                    <div class="eng-board-header">
+                        <div>
+                            <div class="eng-board-title">🇬🇧 ${escapeHtml(board.title)}</div>
+                            ${board.description ? `<div style="font-size:12.5px; color:var(--text-secondary); margin-top:2px;">${escapeHtml(board.description)}</div>` : ''}
+                        </div>
+                        <span class="subj-pill-badge" style="background:#EDE9FE; color:#6D28D9; font-weight:800; font-size:11px;">
+                            до ${board.max_members} чол.
+                        </span>
+                    </div>
+
+                    <div class="eng-board-actions-row">
+                        ${!userInAnyGroup ? `
+                            <button class="eng-board-btn primary btn-toggle-create-group" data-board-id="${board.id}">
+                                ${isPanelOpen ? '✕ Закрити форму' : '➕ Створити групу / тему'}
+                            </button>
+                        ` : ''}
+                        <button class="eng-board-btn secondary btn-export-board" data-board-id="${board.id}">
+                            📋 Експорт для викладача
+                        </button>
+                        ${currentUser.isAdmin ? `
+                            <button class="eng-board-btn danger btn-delete-board" data-board-id="${board.id}" title="Видалити набір">
+                                🗑 Видалити набір
+                            </button>
+                        ` : ''}
+                    </div>
+
+                    <!-- Форма створення нової групи з вибором напарників -->
+                    <div id="eng-create-panel-${board.id}" class="eng-create-group-panel ${isPanelOpen ? '' : 'hidden'}">
+                        <div style="font-size:13px; font-weight:800; color:#6D28D9;">
+                            ✨ Створення міні-групи (${board.max_members} чол. максимум)
+                        </div>
+                        <input type="text" id="eng-input-topic-${board.id}" class="admin-input" placeholder="Тема вашого виступу англійською (напр. Microservices Architecture)">
+                        
+                        <div>
+                            <div style="font-size:11.5px; font-weight:700; color:var(--text-secondary); margin-bottom:4px;">
+                                👥 Оберіть напарників (до ${board.max_members - 1} чол.):
+                            </div>
+                            <div class="eng-teammates-selector" id="eng-teammates-${board.id}">
+                                <!-- Чіпси одногрупників -->
+                            </div>
+                        </div>
+
+                        <div style="display:flex; gap:8px;">
+                            <button class="primary-pill-btn btn-submit-new-group" data-board-id="${board.id}" style="height:44px; font-size:13.5px; flex:1;">
+                                🚀 Створити групу
+                            </button>
+                            <button class="admin-pill-sm btn-cancel-new-group" data-board-id="${board.id}" style="padding:0 14px;">
+                                Скасувати
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Список міні-груп -->
+                    <div class="eng-groups-list">
+            `;
+
+            if (!board.groups || board.groups.length === 0) {
+                html += `
+                    <div style="text-align:center; padding:18px; font-size:13px; color:var(--text-muted); background:#F8FAFC; border-radius:12px;">
+                        Групи ще не сформовані. Створіть першу або оберіть тему!
+                    </div>
+                `;
+            } else {
+                board.groups.forEach(g => {
+                    const isMy = isUserMemberOfGroup(g);
+                    const isFull = (g.members || []).length >= board.max_members;
+                    const canJoin = !userInAnyGroup && !isFull;
+
+                    let badgeHtml = '';
+                    if (isFull) {
+                        badgeHtml = `<span class="eng-group-badge full">✅ Сформована (${g.members.length}/${board.max_members})</span>`;
+                    } else {
+                        badgeHtml = `<span class="eng-group-badge open">⏳ Є місця (${g.members.length}/${board.max_members})</span>`;
+                    }
+
+                    html += `
+                        <div class="eng-group-card ${isMy ? 'is-my-group' : ''}" data-group-id="${g.id}">
+                            <div class="eng-group-head">
+                                <div>
+                                    <div class="eng-group-topic">📘 ${escapeHtml(g.topic_title || 'Тема не вказана')}</div>
+                                    ${isMy ? '<span style="color:#7C3AED; font-weight:800; font-size:11px;">✨ Ваша група</span>' : ''}
+                                </div>
+                                ${badgeHtml}
+                            </div>
+
+                            <div class="eng-members-wrap">
+                    `;
+
+                    (g.members || []).forEach(m => {
+                        const isLeader = m.role === 'leader';
+                        const isMe = (currentUser.id && m.user_id && String(m.user_id) === String(currentUser.id)) ||
+                                     (currentUser.realName && m.user_name && m.user_name.includes(currentUser.realName));
+                        const icon = isLeader ? '👑' : '👤';
+                        html += `
+                            <span class="eng-member-chip ${isLeader ? 'leader' : ''} ${isMe ? 'is-me' : ''}">
+                                ${icon} ${escapeHtml(m.user_name)}${isMe ? ' (Ви)' : ''}
+                            </span>
+                        `;
+                    });
+
+                    html += `</div>`;
+
+                    // Кнопки дій: Приєднатися / Вийти
+                    if (canJoin) {
+                        html += `
+                            <button class="eng-board-btn primary btn-join-group" data-board-id="${board.id}" data-group-id="${g.id}" style="width:100%; justify-content:center; padding:8px 12px; margin-top:4px;">
+                                🤝 Приєднатися до цієї групи
+                            </button>
+                        `;
+                    } else if (isMy) {
+                        html += `
+                            <div style="display:flex; justify-content:flex-end;">
+                                <button class="eng-board-btn danger btn-leave-group" data-group-id="${g.id}" style="font-size:11px; padding:4px 10px;">
+                                    🚪 Вийти з групи
+                                </button>
+                            </div>
+                        `;
+
+                        // Блок завантаження презентації / тексту + AI Q&A генератор
+                        const hasAi = g.ai_qa && g.ai_qa.length > 0;
+                        html += `
+                            <div class="eng-material-box">
+                                <div style="font-size:12.5px; font-weight:800; color:#6D28D9;">
+                                    📤 Матеріали виступу та AI-підготовка:
+                                </div>
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <label class="eng-file-picker-label" style="flex:1;">
+                                        <span>📁 Оберіть слайди (.pptx, .docx, .txt)</span>
+                                        <input type="file" class="eng-file-input hidden" data-group-id="${g.id}" accept=".pptx,.docx,.txt,.md">
+                                    </label>
+                                    <span class="eng-file-status" id="eng-file-status-${g.id}" style="font-size:11.5px; color:var(--text-secondary); max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                        ${g.file_name ? '✓ ' + escapeHtml(g.file_name) : ''}
+                                    </span>
+                                </div>
+
+                                <textarea class="admin-input eng-text-input" id="eng-text-${g.id}" rows="3" placeholder="Введіть або вставте текст виступу, тези або слайди англійською...">${escapeHtml(g.content_text || '')}</textarea>
+
+                                <button class="primary-pill-btn btn-generate-qa" data-group-id="${g.id}" data-topic="${escapeHtml(g.topic_title)}" style="height:46px; font-size:13.5px; background:linear-gradient(135deg, #7C3AED, #4F46E5);">
+                                    🤖 Згенерувати питання та відповіді (English AI)
+                                </button>
+
+                                <!-- AI Questions & Answers list -->
+                                <div class="eng-qa-list" id="eng-qa-list-${g.id}">
+                        `;
+
+                        if (hasAi) {
+                            g.ai_qa.forEach((qa, qIdx) => {
+                                html += `
+                                    <div class="eng-qa-card">
+                                        <div class="eng-qa-question">❓ Q${qIdx + 1}: ${escapeHtml(qa.question)}</div>
+                                        <div class="eng-qa-answer">💬 <b>Answer:</b> ${escapeHtml(qa.answer)}</div>
+                                        ${qa.tip ? `<div class="eng-qa-tip">💡 <b>Tip:</b> ${escapeHtml(qa.tip)}</div>` : ''}
+                                    </div>
+                                `;
+                            });
+                        }
+
+                        html += `
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    html += `</div>`; // .eng-group-card
+                });
+            }
+
+            html += `
+                    </div>
+                </div>
+            `;
+        });
+
+        engBoardsList.innerHTML = html;
+        attachEnglishBoardsEventHandlers();
+    }
+
+    function attachEnglishBoardsEventHandlers() {
+        if (!engBoardsList) return;
+
+        // Toggle create group panel
+        engBoardsList.querySelectorAll('.btn-toggle-create-group').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const bId = parseInt(btn.getAttribute('data-board-id'));
+                if (activeCreateGroupBoardId === bId) {
+                    activeCreateGroupBoardId = null;
+                } else {
+                    activeCreateGroupBoardId = bId;
+                }
+                renderEnglishBoards();
+                if (activeCreateGroupBoardId === bId) {
+                    populateTeammatesSelector(bId);
+                }
+            });
+        });
+
+        engBoardsList.querySelectorAll('.btn-cancel-new-group').forEach(btn => {
+            btn.addEventListener('click', () => {
+                activeCreateGroupBoardId = null;
+                renderEnglishBoards();
+            });
+        });
+
+        // Submit create group
+        engBoardsList.querySelectorAll('.btn-submit-new-group').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const bId = parseInt(btn.getAttribute('data-board-id'));
+                const topicInput = document.getElementById(`eng-input-topic-${bId}`);
+                const topic = topicInput ? topicInput.value.trim() : '';
+                if (!topic) {
+                    showToast('Вкажіть тему виступу англійською!');
+                    if (topicInput) topicInput.focus();
+                    return;
+                }
+
+                const teammates = Array.from(selectedTeammatesMap.get(bId) || []);
+                btn.disabled = true;
+                btn.textContent = '⏳ Створення групи...';
+
+                try {
+                    const res = await fetch('/api/projects/groups/join', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            board_id: bId,
+                            topic_title: topic,
+                            user_id: currentUser.id,
+                            user_name: currentUser.realName || currentUser.name,
+                            username: currentUser.username,
+                            teammates: teammates
+                        })
+                    });
+                    const d = await res.json();
+                    if (d.success) {
+                        activeCreateGroupBoardId = null;
+                        selectedTeammatesMap.delete(bId);
+                        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                        showToast(d.message || 'Групу успішно створено!');
+                        await fetchEnglishBoards();
+                    } else {
+                        showToast(d.message || 'Помилка створення');
+                    }
+                } catch (_) {
+                    showToast("Помилка з'єднання");
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = '🚀 Створити групу';
+                }
+            });
+        });
+
+        // Join existing group
+        engBoardsList.querySelectorAll('.btn-join-group').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const bId = parseInt(btn.getAttribute('data-board-id'));
+                const gId = parseInt(btn.getAttribute('data-group-id'));
+                btn.disabled = true;
+                try {
+                    const res = await fetch('/api/projects/groups/join', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            board_id: bId,
+                            group_id: gId,
+                            user_id: currentUser.id,
+                            user_name: currentUser.realName || currentUser.name,
+                            username: currentUser.username
+                        })
+                    });
+                    const d = await res.json();
+                    if (d.success) {
+                        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                        showToast(d.message || 'Ви у групі!');
+                        await fetchEnglishBoards();
+                    } else {
+                        showToast(d.message || 'Помилка приєднання');
+                    }
+                } catch (_) {
+                    showToast("Помилка з'єднання");
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+        });
+
+        // Leave group
+        engBoardsList.querySelectorAll('.btn-leave-group').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const gId = parseInt(btn.getAttribute('data-group-id'));
+                if (!confirm('Ви дійсно бажаєте вийти з цієї проектної групи?')) return;
+                try {
+                    const res = await fetch('/api/projects/groups/leave', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            group_id: gId,
+                            user_id: currentUser.id,
+                            user_name: currentUser.realName || currentUser.name
+                        })
+                    });
+                    const d = await res.json();
+                    if (d.success) {
+                        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+                        showToast(d.message || 'Ви вийшли з групи');
+                        await fetchEnglishBoards();
+                    } else {
+                        showToast(d.message || 'Помилка виходу');
+                    }
+                } catch (_) {
+                    showToast("Помилка з'єднання");
+                }
+            });
+        });
+
+        // Delete board (Admin only)
+        engBoardsList.querySelectorAll('.btn-delete-board').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const bId = parseInt(btn.getAttribute('data-board-id'));
+                if (!confirm('Ви дійсно бажаєте видалити весь набір груп? Всі групи будуть видалені!')) return;
+                try {
+                    const res = await fetch('/api/projects/boards/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: currentUser.id,
+                            username: currentUser.username,
+                            board_id: bId
+                        })
+                    });
+                    const d = await res.json();
+                    if (d.success) {
+                        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                        showToast('Набір груп видалено');
+                        await fetchEnglishBoards();
+                    } else {
+                        showToast(d.error || 'Помилка видалення');
+                    }
+                } catch (_) {
+                    showToast("Помилка з'єднання");
+                }
+            });
+        });
+
+        // Export board for lecturer
+        engBoardsList.querySelectorAll('.btn-export-board').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const bId = parseInt(btn.getAttribute('data-board-id'));
+                const board = englishBoards.find(b => b.id === bId);
+                if (!board) return;
+                let text = `🇬🇧 Списки груп з Англійської мови (ІП-66)\nПроект: ${board.title}\n`;
+                if (board.description) text += `Вимоги/Дедлайн: ${board.description}\n`;
+                text += `\n`;
+
+                if (!board.groups || board.groups.length === 0) {
+                    text += `Групи ще не створені.\n`;
+                } else {
+                    board.groups.forEach((g, idx) => {
+                        text += `Група №${idx + 1}: ${g.topic_title}\n`;
+                        if (!g.members || g.members.length === 0) {
+                            text += `  • [Місця вільні]\n`;
+                        } else {
+                            g.members.forEach(m => {
+                                const roleLabel = m.role === 'leader' ? ' (Лідер)' : '';
+                                text += `  • ${m.user_name}${roleLabel}\n`;
+                            });
+                        }
+                        text += `\n`;
+                    });
+                }
+
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text);
+                }
+                showToast('📋 Списки груп скопійовано для викладача!', 3500);
+            });
+        });
+
+        // File upload change listener
+        engBoardsList.querySelectorAll('.eng-file-input').forEach(input => {
+            input.addEventListener('change', () => {
+                const gId = input.getAttribute('data-group-id');
+                const file = input.files?.[0];
+                const statusEl = document.getElementById(`eng-file-status-${gId}`);
+                if (file && statusEl) {
+                    statusEl.textContent = `✓ ${file.name}`;
+                    showToast(`Обрано файл: ${file.name}`);
+                }
+            });
+        });
+
+        // AI Q&A generation trigger
+        engBoardsList.querySelectorAll('.btn-generate-qa').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const gId = parseInt(btn.getAttribute('data-group-id'));
+                const topic = btn.getAttribute('data-topic') || '';
+                const fileInput = engBoardsList.querySelector(`.eng-file-input[data-group-id="${gId}"]`);
+                const textArea = document.getElementById(`eng-text-${gId}`);
+                const file = fileInput?.files?.[0];
+                const contentText = textArea ? textArea.value.trim() : '';
+
+                if (!file && !contentText) {
+                    showToast('Додайте файл або введіть тези виступу!');
+                    if (textArea) textArea.focus();
+                    return;
+                }
+
+                const prevText = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = '⏳ ШІ генерує питання (Gemini / Groq)...';
+                if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+
+                try {
+                    let fileBase64 = '';
+                    let fileName = '';
+
+                    if (file) {
+                        fileName = file.name;
+                        fileBase64 = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(file);
+                        });
+                    }
+
+                    const res = await fetch('/api/projects/groups/upload_and_generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            group_id: gId,
+                            topic_title: topic,
+                            content_text: contentText,
+                            file_name: fileName,
+                            file_base64: fileBase64
+                        })
+                    });
+                    const d = await res.json();
+                    if (d.success) {
+                        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                        showToast(`🎓 Згенеровано ${d.qa_list?.length || 5} питань та відповідей!`, 3500);
+                        await fetchEnglishBoards();
+                    } else {
+                        showToast(d.error || 'Помилка генерації ШІ');
+                    }
+                } catch (e) {
+                    showToast("Помилка генерації");
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = prevText;
+                }
+            });
+        });
+    }
+
+    function populateTeammatesSelector(boardId) {
+        const container = document.getElementById(`eng-teammates-${boardId}`);
+        if (!container) return;
+        container.innerHTML = '';
+
+        const board = englishBoards.find(b => b.id === boardId);
+        const maxTeammates = Math.max(1, (board?.max_members || 3) - 1);
+
+        if (!selectedTeammatesMap.has(boardId)) {
+            selectedTeammatesMap.set(boardId, new Set());
+        }
+        const selectedSet = selectedTeammatesMap.get(boardId);
+
+        const currentNameLower = (currentUser.realName || currentUser.name || '').toLowerCase().trim();
+
+        // Фільтруємо самого користувача
+        const candidates = studentsRosterCache.filter(st => {
+            const stName = (st.real_name || '').toLowerCase().trim();
+            return stName && !stName.includes(currentNameLower) && !currentNameLower.includes(stName);
+        });
+
+        if (candidates.length === 0) {
+            container.innerHTML = '<span style="font-size:12px; color:var(--text-muted);">Список групи завантажується...</span>';
+            return;
+        }
+
+        candidates.forEach(st => {
+            const pill = document.createElement('div');
+            const isSel = Array.from(selectedSet).some(s => s.user_id === st.telegram_id || s.user_name === st.real_name);
+            pill.className = `eng-teammate-pill ${isSel ? 'selected' : ''}`;
+            pill.textContent = st.short_name || st.real_name;
+
+            pill.addEventListener('click', () => {
+                const matchObj = Array.from(selectedSet).find(s => s.user_id === st.telegram_id || s.user_name === st.real_name);
+                if (matchObj) {
+                    selectedSet.delete(matchObj);
+                    pill.classList.remove('selected');
+                } else {
+                    if (selectedSet.size >= maxTeammates) {
+                        showToast(`Максимум ${maxTeammates} напарників для цієї групи!`);
+                        return;
+                    }
+                    selectedSet.add({
+                        user_id: st.telegram_id || null,
+                        user_name: st.real_name,
+                        username: st.username || ''
+                    });
+                    pill.classList.add('selected');
+                }
+                if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            });
+            container.appendChild(pill);
+        });
+    }
+
+    function initEnglishAdminControls() {
+        if (btnEngToggleAdminForm && engAdminFormBody) {
+            btnEngToggleAdminForm.addEventListener('click', () => {
+                const isHidden = engAdminFormBody.classList.contains('hidden');
+                if (isHidden) {
+                    engAdminFormBody.classList.remove('hidden');
+                    btnEngToggleAdminForm.textContent = '▴ Згорнути';
+                } else {
+                    engAdminFormBody.classList.add('hidden');
+                    btnEngToggleAdminForm.textContent = '▾ Розгорнути';
+                }
+            });
+        }
+
+        if (btnEngCreateBoard) {
+            btnEngCreateBoard.addEventListener('click', async () => {
+                const title = engBoardTitleInput?.value?.trim();
+                const desc = engBoardDescInput?.value?.trim() || '';
+                const maxMembers = parseInt(engBoardMaxMembersInput?.value || '3');
+                const topicsRaw = engBoardTopicsInput?.value?.trim() || '';
+
+                if (!title) {
+                    showToast('Вкажіть назву проекту / набору груп!');
+                    if (engBoardTitleInput) engBoardTitleInput.focus();
+                    return;
+                }
+
+                btnEngCreateBoard.disabled = true;
+                btnEngCreateBoard.textContent = '⏳ Створення...';
+
+                try {
+                    const res = await fetch('/api/projects/boards/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: currentUser.id,
+                            username: currentUser.username,
+                            title: title,
+                            description: desc,
+                            max_members: maxMembers,
+                            initial_topics: topicsRaw,
+                            admin_name: currentUser.realName || currentUser.name
+                        })
+                    });
+                    const d = await res.json();
+                    if (d.success) {
+                        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                        showToast('✅ Проектний набір успішно створено!');
+                        if (engBoardTitleInput) engBoardTitleInput.value = '';
+                        if (engBoardDescInput) engBoardDescInput.value = '';
+                        if (engBoardTopicsInput) engBoardTopicsInput.value = '';
+                        if (engAdminFormBody) engAdminFormBody.classList.add('hidden');
+                        if (btnEngToggleAdminForm) btnEngToggleAdminForm.textContent = '▾ Розгорнути';
+                        await fetchEnglishBoards();
+                    } else {
+                        showToast(d.error || 'Помилка створення');
+                    }
+                } catch (_) {
+                    showToast("Помилка з'єднання");
+                } finally {
+                    btnEngCreateBoard.disabled = false;
+                    btnEngCreateBoard.textContent = '💾 Створити набір груп';
+                }
+            });
+        }
+    }
     function initAdminPanelControls() {
         renderAdminPresets();
+        initEnglishAdminControls();
         const adminDateInput = document.getElementById('admin-schedule-date');
         const btnDateToday = document.getElementById('btn-admin-date-today');
         const btnDateTomorrow = document.getElementById('btn-admin-date-tomorrow');

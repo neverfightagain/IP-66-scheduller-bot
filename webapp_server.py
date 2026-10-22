@@ -19,7 +19,20 @@ from config import (
 )
 from handlers import make_webapp_button
 from scheduler import safe_send_message, refresh_today_cache
+import base64
+import zipfile
+import io
+import re
+import xml.etree.ElementTree as ET
+
 from database import (
+    create_project_board_db,
+    delete_project_board_db,
+    get_project_boards_db,
+    create_or_join_project_group_db,
+    leave_project_group_db,
+    save_project_group_material_db,
+    save_project_group_ai_qa_db,
     get_subscribed_chats_db,
     get_active_queue_db,
     join_queue_db,
@@ -121,6 +134,64 @@ async def broadcast_schedule_change_notification(bot: Bot | None, text: str):
             logger.info(f"Розіслано сповіщення про зміну розкладу у {len(targets)} чатів.")
     except Exception as e:
         logger.error(f"Помилка при розсилці сповіщення про зміну розкладу: {e}")
+
+
+def extract_text_from_uploaded_file(filename: str, file_bytes: bytes) -> str:
+    """
+    Витягує текст із завантаженого файлу (.pptx, .docx, .txt, .md, .csv)
+    виключно за допомогою стандартної бібліотеки Python.
+    """
+    fn_lower = filename.lower()
+    if fn_lower.endswith(".pptx"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                slide_files = [f for f in z.namelist() if re.match(r"^ppt/slides/slide\d+\.xml$", f)]
+                def slide_num(f_name):
+                    m = re.search(r"slide(\d+)\.xml", f_name)
+                    return int(m.group(1)) if m else 999
+                slide_files.sort(key=slide_num)
+
+                slides_text = []
+                for s_file in slide_files:
+                    s_xml = z.read(s_file)
+                    root = ET.fromstring(s_xml)
+                    texts = []
+                    for elem in root.iter():
+                        if elem.tag.endswith("}t") or elem.tag == "t":
+                            if elem.text:
+                                texts.append(elem.text.strip())
+                    s_num = slide_num(s_file)
+                    slide_content = " ".join(t for t in texts if t)
+                    if slide_content:
+                        slides_text.append(f"Slide {s_num}: {slide_content}")
+
+                return "\n\n".join(slides_text)
+        except Exception as e:
+            logger.warning(f"Помилка парсингу .pptx файлу {filename}: {e}")
+            return ""
+
+    elif fn_lower.endswith(".docx"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                doc_xml = z.read("word/document.xml")
+                root = ET.fromstring(doc_xml)
+                texts = []
+                for elem in root.iter():
+                    if elem.tag.endswith("}t") or elem.tag == "t":
+                        if elem.text:
+                            texts.append(elem.text)
+                return " ".join(texts).strip()
+        except Exception as e:
+            logger.warning(f"Помилка парсингу .docx файлу {filename}: {e}")
+            return ""
+
+    else:
+        for enc in ("utf-8", "utf-8-sig", "cp1251", "latin-1"):
+            try:
+                return file_bytes.decode(enc).strip()
+            except UnicodeDecodeError:
+                continue
+        return file_bytes.decode("utf-8", errors="ignore").strip()
 
 
 def create_webapp_app(bot: Bot | None = None) -> web.Application:
@@ -903,6 +974,190 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
 
+    # --- Projects & English Groups API (v3.2) ---
+    async def handle_api_projects_boards(request):
+        try:
+            subject = str(request.query.get("subject", "Англійська")).strip()
+            user_id = request.query.get("user_id")
+            username = request.query.get("username")
+
+            access = await check_admin_access_db(user_id=user_id, username=username)
+            test_mode = access.get("test_mode", False)
+            is_admin = access.get("is_admin", False)
+
+            if test_mode and not is_admin:
+                return json_response_cors({
+                    "success": True,
+                    "restricted_by_test_mode": True,
+                    "test_mode": True,
+                    "is_admin": False,
+                    "boards": []
+                })
+
+            boards = await get_project_boards_db(subject=subject)
+            return json_response_cors({
+                "success": True,
+                "restricted_by_test_mode": False,
+                "test_mode": test_mode,
+                "is_admin": is_admin,
+                "boards": boards
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_projects_boards_create(request):
+        try:
+            access, data = await require_admin_auth(request)
+            if not access.get("is_admin"):
+                return json_response_cors({"success": False, "error": "Немає прав доступу"}, status=403)
+
+            title = str(data.get("title", "")).strip()
+            if not title:
+                return json_response_cors({"success": False, "error": "Вкажіть назву набору груп (title)"}, status=400)
+
+            subject = str(data.get("subject", "Англійська")).strip()
+            description = str(data.get("description", "")).strip()
+            max_members = int(data.get("max_members", 3))
+
+            initial_topics_raw = data.get("initial_topics")
+            initial_topics = []
+            if isinstance(initial_topics_raw, list):
+                initial_topics = [str(t).strip() for t in initial_topics_raw if str(t).strip()]
+            elif isinstance(initial_topics_raw, str) and initial_topics_raw.strip():
+                initial_topics = [t.strip() for t in re.split(r"[\n,;]", initial_topics_raw) if t.strip()]
+
+            admin_name = str(data.get("admin_name") or access.get("real_name") or access.get("username") or "Староста")
+            board_id = await create_project_board_db(
+                title=title,
+                subject=subject,
+                description=description,
+                max_members=max_members,
+                initial_topics=initial_topics,
+                created_by=admin_name
+            )
+            return json_response_cors({
+                "success": True,
+                "board_id": board_id,
+                "message": f"Набір груп «{title}» успішно створено"
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_projects_boards_delete(request):
+        try:
+            access, data = await require_admin_auth(request)
+            if not access.get("is_admin"):
+                return json_response_cors({"success": False, "error": "Немає прав доступу"}, status=403)
+
+            board_id = data.get("board_id")
+            if not board_id:
+                return json_response_cors({"success": False, "error": "board_id required"}, status=400)
+
+            ok = await delete_project_board_db(board_id)
+            return json_response_cors({
+                "success": ok,
+                "message": "Набір груп видалено" if ok else "Борд не знайдено"
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_projects_groups_join(request):
+        try:
+            data = await request.json()
+            board_id = data.get("board_id")
+            if not board_id:
+                return json_response_cors({"success": False, "error": "board_id is required"}, status=400)
+
+            group_id = data.get("group_id")
+            user_id = data.get("user_id")
+            user_name = str(data.get("user_name", "")).strip()
+            username = str(data.get("username", "")).strip()
+            topic_title = str(data.get("topic_title", "")).strip()
+            teammates = data.get("teammates")
+
+            if not user_name:
+                return json_response_cors({"success": False, "error": "user_name is required"}, status=400)
+
+            ok, msg, gid = await create_or_join_project_group_db(
+                board_id=board_id,
+                user_id=user_id,
+                user_name=user_name,
+                username=username,
+                topic_title=topic_title,
+                group_id=group_id,
+                teammates=teammates
+            )
+            return json_response_cors({
+                "success": ok,
+                "message": msg,
+                "group_id": gid
+            }, status=200 if ok else 400)
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_projects_groups_leave(request):
+        try:
+            data = await request.json()
+            group_id = data.get("group_id")
+            if not group_id:
+                return json_response_cors({"success": False, "error": "group_id is required"}, status=400)
+
+            user_id = data.get("user_id")
+            user_name = data.get("user_name")
+
+            ok = await leave_project_group_db(
+                group_id=group_id,
+                user_id=user_id,
+                user_name=user_name
+            )
+            return json_response_cors({
+                "success": ok,
+                "message": "Ви вийшли з групи" if ok else "Учасника не знайдено"
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
+    async def handle_api_projects_groups_upload_and_generate(request):
+        try:
+            data = await request.json()
+            group_id = data.get("group_id")
+            if not group_id:
+                return json_response_cors({"success": False, "error": "group_id is required"}, status=400)
+
+            topic_title = str(data.get("topic_title", "")).strip()
+            content_text = str(data.get("content_text", "")).strip()
+            file_name = str(data.get("file_name", "")).strip()
+            file_b64 = str(data.get("file_base64", "")).strip()
+
+            if file_b64:
+                if "," in file_b64:
+                    file_b64 = file_b64.split(",", 1)[1]
+                file_bytes = base64.b64decode(file_b64)
+                extracted_text = extract_text_from_uploaded_file(file_name, file_bytes)
+                if extracted_text:
+                    content_text = f"{content_text}\n\n[Зміст файлу {file_name}]:\n{extracted_text}".strip() if content_text else extracted_text
+
+            await save_project_group_material_db(
+                group_id=group_id,
+                content_text=content_text,
+                file_name=file_name,
+                topic_title=topic_title if topic_title else None
+            )
+
+            from llm_agent import generate_english_presentation_qa
+            qa_list = await generate_english_presentation_qa(topic_title, content_text)
+            await save_project_group_ai_qa_db(group_id, qa_list)
+
+            return json_response_cors({
+                "success": True,
+                "qa_list": qa_list,
+                "content_text": content_text,
+                "file_name": file_name,
+                "message": f"Згенеровано {len(qa_list)} питань та відповідей!"
+            })
+        except Exception as e:
+            return json_response_cors({"success": False, "error": str(e)}, status=400)
+
     # Реєстрація роутів
     app.router.add_get("/", handle_ping)
     app.router.add_get("/health", handle_ping)
@@ -924,6 +1179,14 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     app.router.add_get("/api/defenses", handle_api_defenses)
     app.router.add_post("/api/defenses/toggle", handle_api_defenses_toggle)
     app.router.add_get("/api/subjects/overview", handle_api_subjects_overview)
+
+    # Projects & English Groups API (v3.2)
+    app.router.add_get("/api/projects/boards", handle_api_projects_boards)
+    app.router.add_post("/api/projects/boards/create", handle_api_projects_boards_create)
+    app.router.add_post("/api/projects/boards/delete", handle_api_projects_boards_delete)
+    app.router.add_post("/api/projects/groups/join", handle_api_projects_groups_join)
+    app.router.add_post("/api/projects/groups/leave", handle_api_projects_groups_leave)
+    app.router.add_post("/api/projects/groups/upload_and_generate", handle_api_projects_groups_upload_and_generate)
 
     # Admin API
     app.router.add_get("/api/admin/me", handle_api_admin_me)

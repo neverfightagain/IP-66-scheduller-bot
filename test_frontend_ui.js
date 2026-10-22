@@ -46,6 +46,7 @@ class MockElement {
         this.checked = false;
         this.disabled = false;
         this.selectedOptions = [];
+        this.files = [];
     }
 
     get className() { return Array.from(this.classList.classes).join(' '); }
@@ -58,10 +59,36 @@ class MockElement {
     set innerHTML(val) {
         this._innerHTML = val;
         this.children = [];
+        if (typeof val === 'string' && val.includes('<')) {
+            const tagRe = /<([a-zA-Z0-9-]+)\s*([^>]*)>/g;
+            let m;
+            while ((m = tagRe.exec(val)) !== null) {
+                const tag = m[1];
+                if (tag.startsWith('/')) continue;
+                const rawAttrs = m[2];
+                const child = new MockElement('', tag);
+                const attrRe = /([a-zA-Z0-9_-]+)=["']([^"']*)["']/g;
+                let am;
+                while ((am = attrRe.exec(rawAttrs)) !== null) {
+                    if (am[1] === 'class') {
+                        child.className = am[2];
+                    } else if (am[1] === 'id') {
+                        child.id = am[2];
+                        elements[am[2]] = child;
+                    } else {
+                        child.setAttribute(am[1], am[2]);
+                    }
+                }
+                this.children.push(child);
+            }
+        }
     }
 
-    get textContent() { return this._textContent; }
-    set textContent(val) { this._textContent = val; }
+    get textContent() { return this._textContent || this._innerHTML; }
+    set textContent(val) {
+        this._textContent = val;
+        this._innerHTML = val;
+    }
 
     setAttribute(key, val) { this.attributes[key] = String(val); }
     getAttribute(key) { return this.attributes[key] || null; }
@@ -83,12 +110,44 @@ class MockElement {
     }
 
     querySelectorAll(selector) {
+        let targetClass = null;
+        let attrKey = null;
+        let attrVal = null;
+        let targetTag = null;
+
+        if (selector.startsWith('.')) {
+            let s = selector.slice(1);
+            if (s.includes('[')) {
+                const parts = s.split('[');
+                targetClass = parts[0];
+                const attrMatch = parts[1].replace(']', '').split('=');
+                attrKey = attrMatch[0];
+                attrVal = attrMatch[1] ? attrMatch[1].replace(/["']/g, '') : null;
+            } else {
+                targetClass = s;
+            }
+        } else if (selector.startsWith('#')) {
+            const id = selector.slice(1);
+            return this.children.filter(c => c.id === id);
+        } else {
+            targetTag = selector.toUpperCase();
+        }
+
         return this.children.filter(c => {
-            if (selector.startsWith('.')) {
-                return c.classList.contains(selector.slice(1));
+            if (targetClass && !c.classList.contains(targetClass)) return false;
+            if (targetTag && c.tagName !== targetTag) return false;
+            if (attrKey) {
+                const val = c.getAttribute(attrKey);
+                if (attrVal !== null && val !== attrVal) return false;
+                if (attrVal === null && val === null) return false;
             }
             return true;
         });
+    }
+
+    querySelector(selector) {
+        const matches = this.querySelectorAll(selector);
+        return matches.length > 0 ? matches[0] : null;
     }
 
     scrollIntoView() {}
@@ -112,9 +171,12 @@ const elementIds = [
     'queue-items-container', 'queue-empty', 'queue-list-title', 'badge-op-count', 'badge-asd-count',
     'btn-day-today', 'btn-day-tomorrow', 'btn-day-week', 'schedule-items-container', 'schedule-loading',
     'schedule-day-title', 'deadlines-items-container', 'deadlines-count-badge',
-    'subjects-tab-op', 'subjects-tab-asd', 'subject-progress-hero', 'subject-hero-title',
+    'subjects-tab-op', 'subjects-tab-asd', 'subjects-tab-eng', 'subject-progress-hero', 'subject-hero-title',
     'subject-hero-term', 'subject-score-badge', 'subject-progress-bar-fill', 'subject-progress-percent',
     'subject-progress-status', 'subject-works-container',
+    'english-projects-container', 'eng-admin-card', 'btn-eng-toggle-admin-form', 'eng-admin-form-body',
+    'eng-board-title-input', 'eng-board-desc-input', 'eng-board-max-members-input', 'eng-board-topics-input',
+    'btn-eng-create-board', 'eng-loading', 'eng-empty-msg', 'eng-boards-list',
     'btn-primary-action', 'btn-primary-action-text', 'toast',
     'modal-backdrop', 'modal-sheet', 'modal-tag', 'modal-title', 'modal-time', 'modal-body-content',
     'modal-primary-link', 'btn-close-modal',
@@ -153,6 +215,14 @@ btnDateToday.classList.add('admin-pill-sm', 'active');
 
 const btnDateTomorrow = getOrCreateElement('btn-admin-date-tomorrow', 'button');
 btnDateTomorrow.classList.add('admin-pill-sm');
+
+// English project elements initial state matching index.html
+const subjectsTabEng = getOrCreateElement('subjects-tab-eng', 'button');
+subjectsTabEng.classList.add('subj-pill-tab', 'hidden');
+subjectsTabEng.setAttribute('data-subject', 'Англійська');
+
+const englishProjectsContainer = getOrCreateElement('english-projects-container', 'div');
+englishProjectsContainer.classList.add('hidden');
 
 // Navigation segmented buttons & tab contents
 const segQueue = new MockElement('seg-queue', 'button');
@@ -204,6 +274,30 @@ const mockDoc = {
 const networkRequests = [];
 let queueApiState = [];
 let scheduleApiLessons = [];
+let isTestModeActive = true;
+let englishBoardsApiState = [
+    {
+        id: 1,
+        title: "English Presentation Project: Tech Topics",
+        subject: "Англійська",
+        description: "Group presentation and defense",
+        max_members: 3,
+        created_by: "Admin",
+        groups: [
+            {
+                id: 10,
+                board_id: 1,
+                topic_title: "Cloud Native Microservices",
+                members: [
+                    { id: 101, user_id: 12345, user_name: "Олександр Староста", username: "starosta_user", role: "leader" }
+                ],
+                file_name: null,
+                content_text: null,
+                ai_qa: []
+            }
+        ]
+    }
+];
 
 const mockLocalStorage = {
     _data: {},
@@ -327,7 +421,120 @@ const sandbox = {
         }
         if (url.includes('/api/admin/test_mode')) {
             const body = JSON.parse(opts.body || '{}');
+            isTestModeActive = body.test_mode;
             return { json: async () => ({ success: true, test_mode: body.test_mode }) };
+        }
+        if (url.includes('/api/projects/boards/create')) {
+            const body = JSON.parse(opts.body || '{}');
+            const newBoard = {
+                id: englishBoardsApiState.length + 1,
+                title: body.title,
+                subject: body.subject || 'Англійська',
+                description: body.description || '',
+                max_members: body.max_members || 3,
+                created_by: 'Admin',
+                groups: (body.initial_topics || []).map((t, idx) => ({
+                    id: 200 + idx,
+                    board_id: englishBoardsApiState.length + 1,
+                    topic_title: t,
+                    members: [],
+                    file_name: null,
+                    content_text: null,
+                    ai_qa: []
+                }))
+            };
+            englishBoardsApiState.push(newBoard);
+            return { json: async () => ({ success: true, id: newBoard.id, message: 'Борд створено' }) };
+        }
+        if (url.includes('/api/projects/boards/delete')) {
+            const body = JSON.parse(opts.body || '{}');
+            englishBoardsApiState = englishBoardsApiState.filter(b => b.id !== body.board_id);
+            return { json: async () => ({ success: true, message: 'Борд видалено' }) };
+        }
+        if (url.includes('/api/projects/boards')) {
+            const isNonAdminStudent = url.includes('random_student') || url.includes('777000');
+            if (isNonAdminStudent && isTestModeActive) {
+                return {
+                    json: async () => ({
+                        success: true,
+                        restricted_by_test_mode: true,
+                        boards: []
+                    })
+                };
+            }
+            return {
+                json: async () => ({
+                    success: true,
+                    restricted_by_test_mode: false,
+                    boards: englishBoardsApiState
+                })
+            };
+        }
+        if (url.includes('/api/projects/groups/join')) {
+            const body = JSON.parse(opts.body || '{}');
+            const board = englishBoardsApiState.find(b => b.id === body.board_id) || englishBoardsApiState[0];
+            if (body.group_id) {
+                const grp = board.groups.find(g => g.id === body.group_id);
+                if (grp) {
+                    grp.members.push({
+                        id: 900 + grp.members.length,
+                        user_id: body.user_id,
+                        user_name: body.user_name,
+                        username: body.username,
+                        role: 'member'
+                    });
+                }
+                return { json: async () => ({ success: true, group_id: body.group_id, message: 'Приєднано' }) };
+            } else if (body.topic_title) {
+                const newGid = 50 + board.groups.length;
+                const newMembers = [
+                    { id: 910, user_id: body.user_id, user_name: body.user_name, username: body.username, role: 'leader' },
+                    ...(body.teammates || []).map((tm, idx) => ({
+                        id: 920 + idx,
+                        user_id: tm.user_id,
+                        user_name: tm.user_name,
+                        username: tm.username,
+                        role: 'member'
+                    }))
+                ];
+                board.groups.push({
+                    id: newGid,
+                    board_id: board.id,
+                    topic_title: body.topic_title,
+                    members: newMembers,
+                    file_name: null,
+                    content_text: null,
+                    ai_qa: []
+                });
+                return { json: async () => ({ success: true, group_id: newGid, message: 'Групу створено' }) };
+            }
+        }
+        if (url.includes('/api/projects/groups/leave')) {
+            return { json: async () => ({ success: true, message: 'Вийшли з групи' }) };
+        }
+        if (url.includes('/api/projects/groups/upload_and_generate')) {
+            const body = JSON.parse(opts.body || '{}');
+            const board = englishBoardsApiState[0];
+            const grp = board.groups.find(g => g.id === body.group_id);
+            const mockQa = [
+                { question: "What is cloud architecture?", answer: "It is scalable computing.", tip: "Highlight elasticity." },
+                { question: "How does microservice communicate?", answer: "Via gRPC and REST.", tip: "Mention latency." },
+                { question: "What is fault tolerance?", answer: "Resilience to errors.", tip: "Give chaos monkey example." },
+                { question: "Why containerize?", answer: "Portability and consistency.", tip: "Talk about Docker." },
+                { question: "What is service mesh?", answer: "Manages service discovery.", tip: "Mention Istio." }
+            ];
+            if (grp) {
+                grp.content_text = body.content_text || 'Extracted presentation content';
+                grp.file_name = body.file_name || 'presentation.pptx';
+                grp.ai_qa = mockQa;
+            }
+            return {
+                json: async () => ({
+                    success: true,
+                    content_text: body.content_text || 'Extracted presentation content',
+                    qa_list: mockQa
+                })
+            };
         }
         if (url.includes('/api/admin/schedule/add_pair')) {
             return { json: async () => ({ success: true, id: 101, message: 'Пару успішно додано' }) };
@@ -372,7 +579,26 @@ const sandbox = {
     parseInt: parseInt,
     parseFloat: parseFloat,
     Promise: Promise,
-    confirm: () => true
+    confirm: () => true,
+    navigator: {
+        clipboard: {
+            writeText: async () => {}
+        }
+    },
+    FileReader: class {
+        constructor() {
+            this.result = null;
+            this.onload = null;
+            this.onerror = null;
+        }
+        readAsDataURL(file) {
+            const b64 = Buffer.from(file?.content || 'Sample presentation notes').toString('base64');
+            this.result = `data:text/plain;base64,${b64}`;
+            if (this.onload) {
+                this.onload({ target: this });
+            }
+        }
+    }
 };
 
 // 2. Execute app.js in sandbox
@@ -610,6 +836,96 @@ async function runTests() {
         assert.ok(kdmLekChip.classList.contains('active'), 'Newly selected chip must be active');
     }
     console.log('✓ TEST 11: Admin pair presets chips & dropdown autofill all fields correctly');
+
+    // ==========================================
+    // TEST 12: English Tab closed test mode visibility & API isolation
+    // ==========================================
+    // 12.1: Ensure test mode is active for closed beta test
+    adminTestModeToggle.checked = true;
+    if (adminTestModeToggle.onchange) {
+        await adminTestModeToggle.onchange();
+    }
+
+    // Admin/Owner sees the English tab regardless of test mode
+    assert.ok(!subjectsTabEng.classList.contains('hidden'), 'English tab pill must be visible for Admin/Owner');
+
+    // 12.2: Verify API isolation for non-admin student when test_mode is active
+    const studentBoardsReq = await sandbox.fetch('/api/projects/boards?subject=Англійська&user_id=777000&username=random_student');
+    const studentBoardsData = await studentBoardsReq.json();
+    assert.strictEqual(studentBoardsData.restricted_by_test_mode, true, 'Non-admin student must be restricted when test_mode is on');
+    assert.strictEqual(studentBoardsData.boards.length, 0, 'Non-admin student receives 0 boards during closed test');
+
+    // 12.3: Verify Owner receives full boards list
+    const ownerBoardsReq = await sandbox.fetch('/api/projects/boards?subject=Англійська&user_id=8735281894&username=sinch');
+    const ownerBoardsData = await ownerBoardsReq.json();
+    assert.strictEqual(ownerBoardsData.restricted_by_test_mode, false, 'Owner must NOT be restricted');
+    assert.ok(ownerBoardsData.boards.length > 0, 'Owner receives English boards list');
+    console.log('✓ TEST 12: English Tab closed test mode visibility & API isolation verified');
+
+    // ==========================================
+    // TEST 13: English Projects collaboration, teammate selection, and AI Q&A defense generation
+    // ==========================================
+    // 13.1: Switch to Subjects tab, then click English tab
+    segSubjects.click();
+    subjectsTabEng.click();
+    await new Promise(r => setTimeout(r, 60));
+
+    assert.ok(subjectsTabEng.classList.contains('active'), 'English tab pill must be active');
+    const subjectsTabOp = getOrCreateElement('subjects-tab-op');
+    const subjectsTabAsd = getOrCreateElement('subjects-tab-asd');
+    assert.ok(!subjectsTabOp.classList.contains('active'), 'OP tab must not be active');
+    assert.ok(!subjectsTabAsd.classList.contains('active'), 'ASD tab must not be active');
+
+    const progressHero = getOrCreateElement('subject-progress-hero');
+    const worksContainer = getOrCreateElement('subject-works-container');
+    assert.ok(progressHero.classList.contains('hidden'), 'Progress hero must be hidden when English tab is selected');
+    assert.ok(worksContainer.classList.contains('hidden'), 'Works container must be hidden when English tab is selected');
+    assert.ok(!englishProjectsContainer.classList.contains('hidden'), 'English projects container must be visible');
+
+    // Bottom action button reflects English mode
+    assert.strictEqual(btnActionText.textContent, '🔄 Оновити групи (Англ)');
+
+    // 13.2: Verify board rendering
+    const engBoardsList = getOrCreateElement('eng-boards-list');
+    assert.ok(engBoardsList.innerHTML.includes('English Presentation Project: Tech Topics'), 'Must render board title');
+    assert.ok(engBoardsList.innerHTML.includes('Cloud Native Microservices'), 'Must render initial topic');
+    assert.ok(engBoardsList.innerHTML.includes('Олександр Староста'), 'Must render existing member in group 10');
+
+    // 13.3: User joins Group 10
+    const joinBtns = engBoardsList.querySelectorAll('.btn-join-group');
+    assert.ok(joinBtns.length > 0, 'Must have at least one join button');
+    joinBtns[0].click();
+    await new Promise(r => setTimeout(r, 60));
+
+    const joinReq = networkRequests.find(r => r.url.includes('/api/projects/groups/join'));
+    assert.ok(joinReq, 'Clicking join button must trigger POST /api/projects/groups/join');
+
+    // Re-render happens after join: user 8735281894 is now in group 10
+    assert.ok(engBoardsList.innerHTML.includes('Сінчіневіч Максим'), 'Must display current user in group 10');
+
+    // 13.4: Verify user in group sees upload materials & AI generator section
+    const generateBtn = engBoardsList.querySelectorAll('.btn-generate-qa')[0];
+    assert.ok(generateBtn, 'Group member must have AI Generate Q&A button');
+
+    const textArea = elements['eng-text-10'] || getOrCreateElement('eng-text-10', 'textarea');
+    textArea.value = 'We demonstrate Kubernetes cluster autoscaling and ingress controllers.';
+
+    generateBtn.click();
+    await new Promise(r => setTimeout(r, 60));
+
+    const genReq = networkRequests.find(r => r.url.includes('/api/projects/groups/upload_and_generate'));
+    assert.ok(genReq, 'Clicking generate button must call /api/projects/groups/upload_and_generate');
+
+    // 13.5: Verify AI Q&A cards rendered in UI
+    assert.ok(engBoardsList.innerHTML.includes('What is cloud architecture?'), 'Rendered HTML must contain AI Question');
+    assert.ok(engBoardsList.innerHTML.includes('elasticity'), 'Rendered HTML must contain AI Tip');
+    assert.ok(engBoardsList.innerHTML.includes('Why containerize?'), 'Rendered HTML must contain AI Question 2');
+
+    // 13.6: Verify Lecturer Export button
+    const exportBtns = engBoardsList.querySelectorAll('.btn-export-board');
+    assert.ok(exportBtns.length > 0, 'Export for lecturer button must exist');
+
+    console.log('✓ TEST 13: English projects board rendering, group collaboration, and AI Q&A defense passed');
 
     console.log('\n========================================');
     console.log('🎉 ALL UI TESTS PASSED SUCCESSFULLY! 🎉');

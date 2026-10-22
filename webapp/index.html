@@ -6,7 +6,7 @@
     <title>IP-66 Hub</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/webapp/app.css?v=3.1">
+    <link rel="stylesheet" href="/webapp/app.css?v=3.2">
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -186,6 +186,9 @@
                     <button class="subj-pill-tab" data-subject="АСД" id="subjects-tab-asd">
                         <span>🧮 АСД</span> <span class="subj-pill-hint">Практичні</span>
                     </button>
+                    <button class="subj-pill-tab hidden" data-subject="Англійська" id="subjects-tab-eng">
+                        <span>🇬🇧 Англ</span> <span class="subj-pill-hint">Групи & AI</span>
+                    </button>
                 </div>
 
                 <!-- Картка зведеного прогресу студента -->
@@ -209,6 +212,51 @@
                 <!-- Список робіт (Практикуми 1-8 для ОП або Практичні 1-8 для АСД) -->
                 <div class="tasks-list" id="subject-works-container" style="margin-top:14px;">
                     <!-- Генерується динамічно JS -->
+                </div>
+
+                <!-- РОЗДІЛ 4.1: Англійська мова (Проектні набори, міні-групи та AI Q&A) -->
+                <div id="english-projects-container" class="hidden">
+                    <!-- Адмін-панель створення нового борду (видно тільки адміну/старості) -->
+                    <div id="eng-admin-card" class="admin-card hidden" style="background:var(--card-white-bg); border:1.5px solid var(--card-border); border-radius:16px; padding:14px; margin-bottom:14px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <span style="font-size:13.5px; font-weight:700; color:#7C3AED;">
+                                ➕ Створити набір груп з Англійської
+                            </span>
+                            <button class="admin-pill-sm" id="btn-eng-toggle-admin-form" style="padding:4px 10px; font-size:11.5px;">
+                                ▾ Розгорнути
+                            </button>
+                        </div>
+                        <div id="eng-admin-form-body" class="hidden" style="display:flex; flex-direction:column; gap:8px;">
+                            <input type="text" id="eng-board-title-input" class="admin-input" placeholder="Назва (напр. Presentation / Speaking Project)">
+                            <input type="text" id="eng-board-desc-input" class="admin-input" placeholder="Опис, вимоги або дедлайн (необов'язково)">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:12px; font-weight:700; color:var(--text-secondary); white-space:nowrap;">Макс. в групі:</span>
+                                <select id="eng-board-max-members-input" class="admin-input" style="width:110px;">
+                                    <option value="2">2 чол.</option>
+                                    <option value="3" selected>3 чол.</option>
+                                    <option value="4">4 чол.</option>
+                                    <option value="5">5 чол.</option>
+                                </select>
+                            </div>
+                            <textarea id="eng-board-topics-input" class="admin-input" rows="3" placeholder="Список тем (кожна тема з нового рядка або через кому)"></textarea>
+                            <button class="primary-pill-btn" id="btn-eng-create-board" style="margin-top:4px;">
+                                💾 Створити набір груп
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Стан завантаження / Повідомлення -->
+                    <div id="eng-loading" class="hidden" style="text-align:center; padding:24px 0; color:var(--text-muted); font-size:14px;">
+                        Завантаження проектів з англійської...
+                    </div>
+                    <div id="eng-empty-msg" class="hidden" style="text-align:center; padding:28px 14px; background:#FFFFFF; border:1.5px dashed var(--card-border); border-radius:16px; color:var(--text-secondary); font-size:13.5px; margin-bottom:14px;">
+                        🎉 Наразі немає активних проектних наборів з англійської мови.
+                    </div>
+
+                    <!-- Контейнер для списку проектних бордів -->
+                    <div id="eng-boards-list">
+                        <!-- Динамічно заповнюється JS -->
+                    </div>
                 </div>
             </div>
         </section>
@@ -399,6 +447,6 @@
     <!-- Toast сповіщення -->
     <div id="toast" class="toast-popup hidden"></div>
 
-    <script src="/webapp/app.js?v=3.1"></script>
+    <script src="/webapp/app.js?v=3.2"></script>
 </body>
 </html>
