@@ -15,6 +15,20 @@ class MockClassList {
     add(...cls) { cls.forEach(c => this.classes.add(c)); }
     remove(...cls) { cls.forEach(c => this.classes.delete(c)); }
     contains(cls) { return this.classes.has(cls); }
+    toggle(cls, force) {
+        if (force !== undefined) {
+            if (force) this.classes.add(cls);
+            else this.classes.delete(cls);
+            return force;
+        }
+        if (this.classes.has(cls)) {
+            this.classes.delete(cls);
+            return false;
+        } else {
+            this.classes.add(cls);
+            return true;
+        }
+    }
 }
 
 class MockElement {
@@ -111,7 +125,7 @@ const elementIds = [
     'admin-schedule-date', 'btn-admin-date-today', 'btn-admin-date-tomorrow', 'admin-schedule-list',
     'admin-pair-num', 'admin-pair-type', 'admin-pair-name', 'admin-pair-lecturer', 'admin-pair-link', 'admin-pair-comment',
     'btn-admin-add-pair', 'admin-roles-list', 'admin-student-select', 'admin-custom-username', 'admin-role-select',
-    'btn-admin-grant-role'
+    'btn-admin-grant-role', 'admin-preset-chips', 'admin-pair-preset'
 ];
 elementIds.forEach(id => getOrCreateElement(id));
 
@@ -189,6 +203,7 @@ const mockDoc = {
 
 const networkRequests = [];
 let queueApiState = [];
+let scheduleApiLessons = [];
 
 const mockLocalStorage = {
     _data: {},
@@ -281,7 +296,7 @@ const sandbox = {
             };
         }
         if (url.includes('/api/defenses')) return { json: async () => ({ success: true, defenses: [] }) };
-        if (url.includes('/api/schedule')) return { json: async () => ({ success: true, lessons: [], days: [] }) };
+        if (url.includes('/api/schedule')) return { json: async () => ({ success: true, lessons: scheduleApiLessons, days: [] }) };
         if (url.includes('/api/deadlines')) return { json: async () => ({ success: true, deadlines: [] }) };
         if (url.includes('/api/subjects/overview')) return { json: async () => ({ success: true, defenses: [] }) };
         if (url.includes('/api/admin/me')) {
@@ -496,10 +511,15 @@ async function runTests() {
     const bottomWrapper = getOrCreateElement('bottom-action-wrapper');
     assert.ok(bottomWrapper.classList.contains('hidden'), 'Bottom action wrapper must be hidden in admin tab');
 
-    // Switch back to schedule tab and verify admin active class is removed and bottom wrapper is restored
+    // Switch back to schedule tab and verify admin active class is removed
     segSchedule.click();
     assert.ok(!navBtnAdmin.classList.contains('active'), 'Admin lock button must lose active class when returning to schedule');
-    assert.ok(!bottomWrapper.classList.contains('hidden'), 'Bottom action wrapper must be unhidden when returning to schedule');
+    // In schedule tab with no active lesson, bottom action wrapper should be hidden!
+    assert.ok(bottomWrapper.classList.contains('hidden'), 'Bottom action wrapper must be hidden in schedule tab when no active lesson exists');
+
+    // Switch to queue tab and verify bottom action wrapper is visible
+    segQueue.click();
+    assert.ok(!bottomWrapper.classList.contains('hidden'), 'Bottom action wrapper must be visible in queue tab');
 
     // Re-open admin tab for next tests
     navBtnAdmin.click();
@@ -523,6 +543,73 @@ async function runTests() {
     assert.ok(addPairReq, 'Submitting add-pair form must call /api/admin/schedule/add_pair');
 
     console.log('✓ TEST 9: Admin panel DOM elements & owner privileges verified (nav-btn-admin visible, owner badge, test_mode toggle, schedule add pair)');
+
+    // TEST 10: Schedule active pair sync & bottom button dynamic visibility
+    const nowKyivTime = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Kyiv',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    }).format(new Date());
+    const [nowH, nowM] = nowKyivTime.split(':').map(Number);
+    const mockActiveLesson = {
+        name: "Комп'ютерна дискретна математика",
+        type: 'Лекція',
+        lecturer: 'Ліхоузова Тетяна Анатоліївна',
+        time: `${String(nowH).padStart(2, '0')}:${String(nowM).padStart(2, '0')}`,
+        link_url: 'https://us02web.zoom.us/j/6982343166',
+        is_cancelled: false
+    };
+
+    scheduleApiLessons.push(mockActiveLesson);
+    segSchedule.click();
+    await new Promise(r => setTimeout(r, 60));
+
+    assert.ok(!bottomWrapper.classList.contains('hidden'), 'Bottom action wrapper must be visible when an active lesson exists');
+    assert.ok(btnActionText.textContent.includes("🟢 Зараз: Комп'ютерна дискретна математика"), 'Button text must reflect active lesson');
+    console.log('✓ TEST 10: Schedule active pair dynamically updates bottom button');
+
+    // TEST 11: Admin Panel Presets (Chips & Dropdown) Autofill
+    navBtnAdmin.click();
+    const presetChipsContainer = getOrCreateElement('admin-preset-chips');
+    const pairPresetSelect = getOrCreateElement('admin-pair-preset');
+
+    assert.ok(presetChipsContainer.children.length >= 9, 'Must render frequent preset chips');
+    assert.ok(pairPresetSelect.children.length >= 15, 'Must render all 15 preset options in dropdown');
+
+    // 11.1: Click on "💻 ОП (Лаб)" chip
+    const opLabChip = presetChipsContainer.children.find(c => c.getAttribute('data-preset-id') === 'op-lab');
+    assert.ok(opLabChip, 'op-lab chip must exist');
+    opLabChip.click();
+
+    const typeInput = getOrCreateElement('admin-pair-type');
+    const nameInput = getOrCreateElement('admin-pair-name');
+    const lecturerInput = getOrCreateElement('admin-pair-lecturer');
+    const linkInput = getOrCreateElement('admin-pair-link');
+    const commentInput = getOrCreateElement('admin-pair-comment');
+
+    assert.strictEqual(nameInput.value, 'Основи програмування. Частина 1. Базові конструкції');
+    assert.strictEqual(typeInput.value, 'Лабораторна');
+    assert.strictEqual(lecturerInput.value, 'Ахаладзе Антон Елдарійович');
+    assert.ok(linkInput.value.includes('zoom.us'), 'Zoom link must be filled');
+    assert.strictEqual(commentInput.value, 'Zoom');
+    assert.ok(opLabChip.classList.contains('active'), 'Active class must be added to chosen chip');
+
+    // 11.2: Select "kdm-lek" from dropdown
+    pairPresetSelect.value = 'kdm-lek';
+    if (pairPresetSelect.onchange) {
+        pairPresetSelect.onchange();
+    }
+    assert.strictEqual(nameInput.value, "Комп'ютерна дискретна математика");
+    assert.strictEqual(typeInput.value, 'Лекція');
+    assert.strictEqual(lecturerInput.value, 'Ліхоузова Тетяна Анатоліївна');
+    assert.strictEqual(commentInput.value, 'Zoom');
+    assert.ok(!opLabChip.classList.contains('active'), 'Previous chip must lose active class');
+    const kdmLekChip = presetChipsContainer.children.find(c => c.getAttribute('data-preset-id') === 'kdm-lek');
+    if (kdmLekChip) {
+        assert.ok(kdmLekChip.classList.contains('active'), 'Newly selected chip must be active');
+    }
+    console.log('✓ TEST 11: Admin pair presets chips & dropdown autofill all fields correctly');
 
     console.log('\n========================================');
     console.log('🎉 ALL UI TESTS PASSED SUCCESSFULLY! 🎉');

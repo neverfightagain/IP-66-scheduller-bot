@@ -122,6 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentQueue = [];
     let allQueuesData = { 'ОП': [], 'АСД': [] };
     let scheduleLessons = [];
+    let todayLessonsCache = [];
     let deadlinesCache = [];
     let scheduleDay = 'today';
     let currentTab = 'tab-queue';
@@ -378,6 +379,44 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function getKyivNowMinutes() {
+        try {
+            const timeStr = new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Europe/Kyiv',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            }).format(new Date());
+            const [h, m] = timeStr.split(':').map(Number);
+            return h * 60 + m;
+        } catch (_) {
+            const now = new Date();
+            return now.getHours() * 60 + now.getMinutes();
+        }
+    }
+
+    function getCurrentActiveLesson() {
+        const nowMins = getKyivNowMinutes();
+        const lessons = (scheduleDay === 'today' && scheduleLessons && scheduleLessons.length > 0)
+            ? scheduleLessons
+            : todayLessonsCache;
+
+        if (!lessons || !lessons.length) return null;
+
+        for (const l of lessons) {
+            if (l.is_cancelled) continue;
+            if (!l.time) continue;
+            const parts = l.time.split(':').map(Number);
+            if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) continue;
+            const startMins = parts[0] * 60 + parts[1];
+            // Пара в КПІ триває 95 хв. Вважаємо активною, якщо (startMins - 15) <= nowMins && nowMins <= (startMins + 95)
+            if ((startMins - 15) <= nowMins && nowMins <= (startMins + 95)) {
+                return l;
+            }
+        }
+        return null;
+    }
+
     function openLessonModal(lesson) {
         const link = lesson.link_url || '';
         openModal({
@@ -424,11 +463,18 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Ховаємо нижню плаваючу кнопку, коли відкрита адмінка, щоб не перекривати інпути
+        // Ховаємо нижню плаваючу кнопку, коли відкрита адмінка або в розкладі немає активної пари
         const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
         if (bottomWrapper) {
             if (targetTab === 'tab-admin') {
                 bottomWrapper.classList.add('hidden');
+            } else if (targetTab === 'tab-schedule') {
+                const activeLesson = getCurrentActiveLesson();
+                if (activeLesson) {
+                    bottomWrapper.classList.remove('hidden');
+                } else {
+                    bottomWrapper.classList.add('hidden');
+                }
             } else {
                 bottomWrapper.classList.remove('hidden');
             }
@@ -537,13 +583,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             btnPrimaryAction.disabled = false;
         } else if (currentTab === 'tab-schedule') {
-            const firstWithLink = scheduleLessons.find(l => l.link_url);
-            if (firstWithLink) {
-                btnPrimaryActionText.textContent = `🔗 Приєднатися: ${firstWithLink.name.substring(0, 22)}...`;
+            const activeLesson = getCurrentActiveLesson();
+            const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
+            if (activeLesson) {
+                if (bottomWrapper) bottomWrapper.classList.remove('hidden');
+                btnPrimaryActionText.textContent = `🟢 Зараз: ${activeLesson.name}`;
+                btnPrimaryAction.disabled = false;
+                btnPrimaryAction.classList.remove('btn-action-update');
             } else {
-                btnPrimaryActionText.textContent = `📅 Розклад пар ІП-66`;
+                if (bottomWrapper) bottomWrapper.classList.add('hidden');
             }
-            btnPrimaryAction.disabled = false;
         } else if (currentTab === 'tab-deadlines') {
             btnPrimaryActionText.textContent = `🔄 Оновити дедлайни`;
             btnPrimaryAction.disabled = false;
@@ -592,11 +641,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 await submitJoinQueue();
             } else if (currentTab === 'tab-schedule') {
-                const firstWithLink = scheduleLessons.find(l => l.link_url);
-                if (firstWithLink) {
-                    openLessonModal(firstWithLink);
+                const activeLesson = getCurrentActiveLesson();
+                if (activeLesson) {
+                    openLessonModal(activeLesson);
                 } else {
-                    showToast("У розкладі немає збережених Zoom/Meet посилань");
+                    showToast("Зараз немає активної пари");
                 }
             } else if (currentTab === 'tab-deadlines') {
                 await fetchDeadlines();
@@ -1050,6 +1099,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
+                if (data.days && Array.isArray(data.days)) {
+                    const todayDayObj = data.days.find(d => d.is_today);
+                    if (todayDayObj && todayDayObj.lessons) {
+                        todayLessonsCache = todayDayObj.lessons;
+                    }
+                }
+
                 let html = '';
                 data.days.forEach((dayObj, dayIdx) => {
                     const todayBadge = dayObj.is_today ? '<span class="week-today-badge">Сьогодні</span>' : '';
@@ -1127,6 +1183,9 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 // Режим одного дня (today або tomorrow)
                 scheduleLessons = data.lessons || [];
+                if (mode === 'today') {
+                    todayLessonsCache = scheduleLessons;
+                }
 
                 if (scheduleLessons.length === 0) {
                     if (scheduleItemsContainer) {
@@ -1189,6 +1248,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 attachScheduleAdminButtonHandlers(scheduleItemsContainer);
             }
             updateHeroSubtitle();
+            updateBottomButtonState();
         } catch (err) {
             if (scheduleLoading) scheduleLoading.classList.add('hidden');
             if (scheduleItemsContainer) {
@@ -1981,6 +2041,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
 
+                if (data.links) {
+                    updatePresetsFromLinks(data.links);
+                }
+                renderAdminPresets();
                 renderAdminRolesList(data.roles || []);
                 populateAdminStudentDropdown();
 
@@ -1995,7 +2059,244 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+
+    // ==========================================
+    // ⚡ ШАБЛОНИ (ПРЕСЕТИ) ПАР ДЛЯ АДМІНКИ (v3.1)
+    // ==========================================
+    const LESSON_PRESETS = [
+        {
+            id: 'op-lab',
+            shortLabel: '💻 ОП (Лаб)',
+            name: 'Основи програмування. Частина 1. Базові конструкції',
+            type: 'Лабораторна',
+            lecturer: 'Ахаладзе Антон Елдарійович',
+            link_url: 'https://us02web.zoom.us/j/4667005724?pwd=4gspSY3fby4wmx03otBxTz6Xbtw4iJ.1',
+            comment: 'Zoom',
+            isFrequent: true
+        },
+        {
+            id: 'op-lek',
+            shortLabel: '💻 ОП (Лек)',
+            name: 'Основи програмування. Частина 1. Базові конструкції',
+            type: 'Лекція',
+            lecturer: 'Лісовиченко Олег Іванович',
+            link_url: 'https://us02web.zoom.us/j/82202565780?pwd=iZsEfajipabMDL86OfYLyVZ2NXx9Je.1',
+            comment: 'Zoom',
+            isFrequent: true
+        },
+        {
+            id: 'asd-prak',
+            shortLabel: '🧮 АСД (Прак)',
+            name: 'Алгоритми та структури даних. Частина 1. Основи алгоритмізації',
+            type: 'Практика',
+            lecturer: 'Куценко Микита Олександрович',
+            link_url: 'https://us04web.zoom.us/j/7844542824?pwd=QkdZVGxWQS9SVnN4aGw2WGM5UXdlZz09',
+            comment: 'Zoom',
+            isFrequent: true
+        },
+        {
+            id: 'asd-lek',
+            shortLabel: '🧮 АСД (Лек)',
+            name: 'Алгоритми та структури даних. Частина 1. Основи алгоритмізації',
+            type: 'Лекція',
+            lecturer: 'Вітковська Ірина Іванівна',
+            link_url: 'https://us02web.zoom.us/meetings/9422967120/invitations?signature=d6VbkP_jvUZQP_l9e9y76yGjrLF7J76HkOwuU86e15c',
+            comment: 'Zoom',
+            isFrequent: true
+        },
+        {
+            id: 'kdm-prak',
+            shortLabel: '📐 КДМ (Прак)',
+            name: "Комп'ютерна дискретна математика",
+            type: 'Практика',
+            lecturer: 'Нікітченко Назар Олегович',
+            link_url: 'https://us02web.zoom.us/j/6982343166?pwd=S2M5UTUwd3E2cEI2TTc2WGdzNmExZz09',
+            comment: 'Zoom',
+            isFrequent: true
+        },
+        {
+            id: 'kdm-lek',
+            shortLabel: '📐 КДМ (Лек)',
+            name: "Комп'ютерна дискретна математика",
+            type: 'Лекція',
+            lecturer: 'Ліхоузова Тетяна Анатоліївна',
+            link_url: 'https://us02web.zoom.us/j/6982343166?pwd=S2M5UTUwd3E2cEI2TTc2WGdzNmExZz09',
+            comment: 'Zoom',
+            isFrequent: true
+        },
+        {
+            id: 'laag-prak',
+            shortLabel: '📊 ЛААГ (Прак)',
+            name: 'Лінійна алгебра та аналітична геометрія',
+            type: 'Практика',
+            lecturer: 'Новікова Юлія Вікторівна',
+            link_url: 'https://meet.google.com/ctx-dphj-kra?authuser=0',
+            comment: 'Google Meet',
+            isFrequent: true
+        },
+        {
+            id: 'laag-lek',
+            shortLabel: '📊 ЛААГ (Лек)',
+            name: 'Лінійна алгебра та аналітична геометрія',
+            type: 'Лекція',
+            lecturer: 'Ванєєва Олена Олександрівна',
+            link_url: 'https://us02web.zoom.us/j/4911162386?pwd=OU43Q0thZEk1bFhvcFBRUm13VXlZZz09',
+            comment: 'Zoom',
+            isFrequent: false
+        },
+        {
+            id: 'matan-lek',
+            shortLabel: '📈 Матан (Лек)',
+            name: 'Математичний аналіз. Частина 1. Диференціальне та інтегральне числення функцій однієї змінної',
+            type: 'Лекція',
+            lecturer: 'Боднарчук Семен Володимирович',
+            link_url: 'https://us02web.zoom.us/j/87335006074?pwd=TUxsUW9ZK2tzeFVJU3B5aFJXbjMwdz09',
+            comment: 'Zoom',
+            isFrequent: false
+        },
+        {
+            id: 'matan-prak',
+            shortLabel: '📈 Матан (Прак)',
+            name: 'Математичний аналіз. Частина 1. Диференціальне та інтегральне числення функцій однієї змінної',
+            type: 'Практика',
+            lecturer: 'Лесіна Євгенія Вікторівна',
+            link_url: '',
+            comment: 'Посилання кожного разу нове',
+            isFrequent: true
+        },
+        {
+            id: 'eng-prak',
+            shortLabel: '🇬🇧 Англ',
+            name: 'Англійська мова',
+            type: 'Практика',
+            lecturer: 'Чіжова Наталія Володимирівна',
+            link_url: 'https://us04web.zoom.us/j/75279958293?pwd=6Y3JS8WNvOY5L5Q0ZUlw2FTbCpFUax.1',
+            comment: 'Zoom',
+            isFrequent: true
+        },
+        {
+            id: 'hist-m1-lek',
+            shortLabel: '🏛 Історія (Лек)',
+            name: 'Історико-філософські засади суспільного розвитку (Модуль 1)',
+            type: 'Лекція',
+            lecturer: 'Костилєва Світлана Олександрівна',
+            link_url: 'https://us02web.zoom.us/j/2145632753?pwd=uxdSpco8rHY7ZMUECZaeN1kp5vXdGn.1',
+            comment: 'Zoom',
+            isFrequent: false
+        },
+        {
+            id: 'hist-m1-prak',
+            shortLabel: '🏛 Історія (Прак)',
+            name: 'Історико-філософські засади суспільного розвитку (Модуль 1)',
+            type: 'Практика',
+            lecturer: 'Тарасюк Марина Юріївна',
+            link_url: 'https://us04web.zoom.us/j/79669484597?pwd=GoazJeVqlnGbVboZULAa2QfkCtMtrH.1',
+            comment: 'Zoom',
+            isFrequent: false
+        },
+        {
+            id: 'phil-m2-lek',
+            shortLabel: '🦉 Філософія (Лек)',
+            name: 'Історико-філософські засади суспільного розвитку (Модуль 2)',
+            type: 'Лекція',
+            lecturer: 'Гавва Олександр Володимирович',
+            link_url: 'https://us06web.zoom.us/j/7785230328?pwd=5CZxrqrbJVbCnQFDwgarjxjwj1PyUb.1',
+            comment: 'Zoom',
+            isFrequent: false
+        },
+        {
+            id: 'phil-m2-prak',
+            shortLabel: '🦉 Філософія (Прак)',
+            name: 'Історико-філософські засади суспільного розвитку (Модуль 2)',
+            type: 'Практика',
+            lecturer: 'Пенюк Вадим Богданович',
+            link_url: '',
+            comment: '',
+            isFrequent: false
+        }
+    ];
+
+    function updatePresetsFromLinks(serverLinks) {
+        if (!serverLinks || typeof serverLinks !== 'object') return;
+        LESSON_PRESETS.forEach(preset => {
+            for (const [key, val] of Object.entries(serverLinks)) {
+                if (!val || typeof val !== 'object') continue;
+                const subjMatches = key.includes(preset.name) || (val.subject && preset.name.includes(val.subject));
+                const typeMatches = key.includes(preset.type.substring(0, 3)) || (val.type && preset.type.startsWith(val.type));
+                if (subjMatches && typeMatches) {
+                    if (val.url) preset.link_url = val.url;
+                    if (val.comment) preset.comment = val.comment;
+                    if (val.lecturer) preset.lecturer = val.lecturer;
+                }
+            }
+        });
+    }
+
+    function renderAdminPresets() {
+        const chipsContainer = document.getElementById('admin-preset-chips');
+        const selectEl = document.getElementById('admin-pair-preset');
+        if (!chipsContainer || !selectEl) return;
+
+        chipsContainer.innerHTML = '';
+        const frequentPresets = LESSON_PRESETS.filter(p => p.isFrequent);
+        frequentPresets.forEach(preset => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'admin-preset-chip';
+            chip.setAttribute('data-preset-id', preset.id);
+            chip.textContent = preset.shortLabel;
+            chip.addEventListener('click', () => {
+                applyLessonPreset(preset);
+            });
+            chipsContainer.appendChild(chip);
+        });
+
+        selectEl.innerHTML = '<option value="">⚡ Швидкий вибір шаблону пари...</option>';
+        LESSON_PRESETS.forEach(preset => {
+            const opt = document.createElement('option');
+            opt.value = preset.id;
+            opt.textContent = `${preset.shortLabel} — ${preset.name.substring(0, 32)}...`;
+            selectEl.appendChild(opt);
+        });
+
+        selectEl.onchange = () => {
+            const val = selectEl.value;
+            if (!val) return;
+            const p = LESSON_PRESETS.find(item => item.id === val);
+            if (p) applyLessonPreset(p);
+        };
+    }
+
+    function applyLessonPreset(preset) {
+        const typeEl = document.getElementById('admin-pair-type');
+        const nameEl = document.getElementById('admin-pair-name');
+        const lectEl = document.getElementById('admin-pair-lecturer');
+        const linkEl = document.getElementById('admin-pair-link');
+        const commEl = document.getElementById('admin-pair-comment');
+
+        if (typeEl) typeEl.value = preset.type;
+        if (nameEl) nameEl.value = preset.name;
+        if (lectEl) lectEl.value = preset.lecturer;
+        if (linkEl) linkEl.value = preset.link_url || '';
+        if (commEl) commEl.value = preset.comment || '';
+
+        const chipsContainer = document.getElementById('admin-preset-chips');
+        if (chipsContainer) {
+            chipsContainer.querySelectorAll('.admin-preset-chip').forEach(c => {
+                c.classList.toggle('active', c.getAttribute('data-preset-id') === preset.id);
+            });
+        }
+
+        const selectEl = document.getElementById('admin-pair-preset');
+        if (selectEl) {
+            selectEl.value = preset.id;
+        }
+
+        if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+        showToast(`⚡ Заповнено шаблон: ${preset.shortLabel}`);
+    }
     function initAdminPanelControls() {
+        renderAdminPresets();
         const adminDateInput = document.getElementById('admin-schedule-date');
         const btnDateToday = document.getElementById('btn-admin-date-today');
         const btnDateTomorrow = document.getElementById('btn-admin-date-tomorrow');
@@ -2077,6 +2378,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (lectEl) lectEl.value = '';
                         if (linkEl) linkEl.value = '';
                         if (commEl) commEl.value = '';
+                        const chipsContainer = document.getElementById('admin-preset-chips');
+                        if (chipsContainer) {
+                            chipsContainer.querySelectorAll('.admin-preset-chip').forEach(c => c.classList.remove('active'));
+                        }
+                        const presetSelect = document.getElementById('admin-pair-preset');
+                        if (presetSelect) presetSelect.value = '';
 
                         loadAdminScheduleDate(adminDateInput.value);
                         fetchSchedule(scheduleDay);

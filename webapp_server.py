@@ -628,6 +628,11 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             access = await check_admin_access_db(user_id=user_id, username=username)
             if access.get("is_admin"):
                 access["roles"] = await get_admin_roles_db()
+                try:
+                    from links_manager import load_links
+                    access["links"] = load_links()
+                except Exception:
+                    access["links"] = {}
             return json_response_cors({"success": True, **access})
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)

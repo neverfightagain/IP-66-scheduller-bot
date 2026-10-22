@@ -1684,3 +1684,47 @@ body {
     width: 100%;
     box-sizing: border-box;
 }
+
+/* --- Admin Preset Chips & Selector (v3.1) --- */
+.admin-preset-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.admin-preset-chip {
+    background: #F8FAFC;
+    border: 1.5px solid var(--card-border);
+    border-radius: 999px;
+    padding: 5px 11px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.admin-preset-chip:hover {
+    background: #F1F5F9;
+    border-color: #CBD5E1;
+}
+
+.admin-preset-chip:active {
+    transform: scale(0.96);
+}
+
+.admin-preset-chip.active {
+    background: #EDE9FE;
+    border-color: #A78BFA;
+    color: #6D28D9;
+    box-shadow: 0 2px 8px rgba(124, 58, 237, 0.18);
+}

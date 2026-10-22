@@ -6,7 +6,7 @@
     <title>IP-66 Hub</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/webapp/app.css?v=3.0">
+    <link rel="stylesheet" href="/webapp/app.css?v=3.1">
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -287,6 +287,18 @@
                             ➕ Додати пару / перенесення
                         </div>
                         <div style="display:flex; flex-direction:column; gap:8px;">
+                            <!-- Швидкий вибір шаблону пари (Пресети) -->
+                            <div>
+                                <div style="font-size:12px; font-weight:700; color:var(--text-secondary); margin-bottom:6px;">
+                                    ⚡ Швидкі шаблони пар ІП-66:
+                                </div>
+                                <div class="admin-preset-chips" id="admin-preset-chips">
+                                    <!-- Кнопки-чипси для найчастіших предметів -->
+                                </div>
+                                <select id="admin-pair-preset" class="admin-input" style="width:100%; margin-top:2px;">
+                                    <option value="">⚡ Швидкий вибір шаблону пари...</option>
+                                </select>
+                            </div>
                             <div style="display:flex; gap:8px;">
                                 <select id="admin-pair-num" class="admin-input" style="width:130px;">
                                     <option value="1">1 пара (08:30)</option>
@@ -387,6 +399,6 @@
     <!-- Toast сповіщення -->
     <div id="toast" class="toast-popup hidden"></div>
 
-    <script src="/webapp/app.js?v=3.0"></script>
+    <script src="/webapp/app.js?v=3.1"></script>
 </body>
 </html>
