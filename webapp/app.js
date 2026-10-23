@@ -887,60 +887,199 @@ document.addEventListener('DOMContentLoaded', () => {
         return false;
     }
 
+    // --- Real-Time WebSocket Queue Channel + Unified Queue State ---
+    let queueWs = null;
+    let wsConnected = false;
+    let wsReconnectTimer = null;
+    let wsReqCounter = 1;
+    const wsPendingRequests = new Map();
+    let lastQueueVersion = 0;
+
+    function updateQueueBadgesForSubject(subj, count) {
+        if (subj === 'ОП') {
+            if (badgeOpCount) badgeOpCount.textContent = count;
+            if (miniOpStat) miniOpStat.textContent = `${count}`;
+            if (miniOpSub) miniOpSub.textContent = count > 0 ? `Активна черга 🔥` : `Черга вільна`;
+        } else if (subj === 'АСД') {
+            if (badgeAsdCount) badgeAsdCount.textContent = count;
+            if (miniAsdStat) miniAsdStat.textContent = `${count}`;
+            if (miniAsdSub) miniAsdSub.textContent = count > 0 ? `Активна черга 🔥` : `Черга вільна`;
+        }
+    }
+
+    function applyQueuesSnapshot(queuesMap, fallbackSubj, fallbackItems, version) {
+        if (typeof version === 'number' && version > 0) {
+            if (version < lastQueueVersion) return;
+            lastQueueVersion = version;
+        }
+
+        if (queuesMap && typeof queuesMap === 'object') {
+            if (Array.isArray(queuesMap['ОП'])) {
+                allQueuesData['ОП'] = queuesMap['ОП'];
+                updateQueueBadgesForSubject('ОП', queuesMap['ОП'].length);
+            }
+            if (Array.isArray(queuesMap['АСД'])) {
+                allQueuesData['АСД'] = queuesMap['АСД'];
+                updateQueueBadgesForSubject('АСД', queuesMap['АСД'].length);
+            }
+            if (fallbackSubj && Array.isArray(queuesMap[fallbackSubj])) {
+                allQueuesData[fallbackSubj] = queuesMap[fallbackSubj];
+            }
+        } else if (fallbackSubj && Array.isArray(fallbackItems)) {
+            allQueuesData[fallbackSubj] = fallbackItems;
+            updateQueueBadgesForSubject(fallbackSubj, fallbackItems.length);
+        }
+
+        if (activeSubject === 'Англійська') {
+            updateHeroSubtitle();
+            return;
+        }
+
+        currentQueue = allQueuesData[activeSubject] || [];
+        renderQueueList(currentQueue);
+        updateQueueBadgesForSubject(activeSubject, currentQueue.length);
+
+        const meIndex = currentQueue.findIndex(item => isMeItem(item));
+        if (meIndex !== -1) {
+            const me = currentQueue[meIndex];
+            if (myStatusBox) myStatusBox.classList.remove('hidden');
+            if (myPosText) myPosText.textContent = `Ви #${meIndex + 1} у черзі (${activeSubject})!`;
+            if (myLabsText) myLabsText.textContent = `${me.lab_number || 'Лаба не вказана'} • ⭐ Пріоритет: Лаба ${me.lab_priority || 1}`;
+
+            if (!userHasManuallyEditedLabs[activeSubject]) {
+                selectedLabs.clear();
+                const labMatches = (me.lab_number || '').match(/\d+/g);
+                if (labMatches) {
+                    labMatches.forEach(n => selectedLabs.add(parseInt(n, 10)));
+                }
+                renderLabsGrid();
+                updatePriorityPreview();
+            }
+        } else {
+            if (myStatusBox) myStatusBox.classList.add('hidden');
+            if (!userHasManuallyEditedLabs[activeSubject]) {
+                selectedLabs.clear();
+                renderLabsGrid();
+                updatePriorityPreview();
+            }
+        }
+
+        updateBottomButtonState();
+        updateHeroSubtitle();
+    }
+
+    function connectQueueWebSocket() {
+        if (typeof WebSocket === 'undefined') return;
+        const host = window.location?.host;
+        if (!host) return;
+        if (queueWs && (queueWs.readyState === 0 || queueWs.readyState === 1)) return;
+
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${proto}//${host}/ws`;
+
+        try {
+            queueWs = new WebSocket(wsUrl);
+        } catch (_) {
+            return;
+        }
+
+        queueWs.onopen = () => {
+            wsConnected = true;
+            if (wsReconnectTimer) {
+                clearTimeout(wsReconnectTimer);
+                wsReconnectTimer = null;
+            }
+        };
+
+        queueWs.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'queue_update') {
+                    applyQueuesSnapshot(msg.queues, null, null, msg.version);
+                } else if (msg.type === 'action_result') {
+                    if (msg.queues) {
+                        applyQueuesSnapshot(msg.queues, msg.subject, null, msg.version);
+                    }
+                    if (msg.req_id && wsPendingRequests.has(msg.req_id)) {
+                        const pending = wsPendingRequests.get(msg.req_id);
+                        wsPendingRequests.delete(msg.req_id);
+                        clearTimeout(pending.timer);
+                        pending.resolve(msg);
+                    }
+                }
+            } catch (_) {}
+        };
+
+        queueWs.onclose = () => {
+            wsConnected = false;
+            queueWs = null;
+            for (const [reqId, pending] of wsPendingRequests.entries()) {
+                clearTimeout(pending.timer);
+                pending.reject(new Error('WS closed'));
+                wsPendingRequests.delete(reqId);
+            }
+            if (!document.hidden && !wsReconnectTimer) {
+                wsReconnectTimer = setTimeout(() => {
+                    wsReconnectTimer = null;
+                    connectQueueWebSocket();
+                }, 2500);
+            }
+        };
+
+        queueWs.onerror = () => {
+            wsConnected = false;
+        };
+    }
+
+    async function sendQueueAction(wsAction, payload, httpUrl) {
+        if (wsConnected && queueWs && queueWs.readyState === 1) {
+            try {
+                const data = await new Promise((resolve, reject) => {
+                    const reqId = `q_${wsReqCounter++}_${Date.now()}`;
+                    const timer = setTimeout(() => {
+                        wsPendingRequests.delete(reqId);
+                        reject(new Error('WS timeout'));
+                    }, 3500);
+                    wsPendingRequests.set(reqId, { resolve, reject, timer });
+                    queueWs.send(JSON.stringify({ action: wsAction, req_id: reqId, ...payload }));
+                });
+                return data;
+            } catch (_) {
+                // Fallback to HTTP below if WebSocket timed out or dropped
+            }
+        }
+
+        const res = await fetch(httpUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.queues) {
+            applyQueuesSnapshot(data.queues, payload.subject, data.items, data.version);
+        }
+        return data;
+    }
+
     // Отримання черги
     async function fetchQueue() {
         try {
+            if (wsConnected && queueWs && queueWs.readyState === 1) {
+                const reqId = `q_${wsReqCounter++}`;
+                queueWs.send(JSON.stringify({ action: 'get_queues', req_id: reqId }));
+                return;
+            }
             const res = await fetch(`/api/queue?subject=${encodeURIComponent(activeSubject)}&chat_id=${chatId}`);
             const data = await res.json();
             if (!data.success) return;
 
-            currentQueue = data.items || [];
-            allQueuesData[activeSubject] = currentQueue;
-            renderQueueList(currentQueue);
-
-            // Оновлюємо бейджі та міні-картки
-            if (activeSubject === 'ОП') {
-                if (badgeOpCount) badgeOpCount.textContent = currentQueue.length;
-                if (miniOpStat) miniOpStat.textContent = `${currentQueue.length}`;
-                if (miniOpSub) miniOpSub.textContent = currentQueue.length > 0 ? `Активна черга 🔥` : `Черга вільна`;
+            if (data.queues) {
+                applyQueuesSnapshot(data.queues, activeSubject, data.items || [], data.version);
             } else {
-                if (badgeAsdCount) badgeAsdCount.textContent = currentQueue.length;
-                if (miniAsdStat) miniAsdStat.textContent = `${currentQueue.length}`;
-                if (miniAsdSub) miniAsdSub.textContent = currentQueue.length > 0 ? `Активна черга 🔥` : `Черга вільна`;
+                applyQueuesSnapshot(null, activeSubject, data.items || [], data.version);
+                const otherSubj = activeSubject === 'ОП' ? 'АСД' : 'ОП';
+                fetchOtherQueueCount(otherSubj);
             }
-
-            const otherSubj = activeSubject === 'ОП' ? 'АСД' : 'ОП';
-            fetchOtherQueueCount(otherSubj);
-
-            // Статус користувача в черзі
-            const meIndex = currentQueue.findIndex(item => isMeItem(item));
-            if (meIndex !== -1) {
-                const me = currentQueue[meIndex];
-                if (myStatusBox) myStatusBox.classList.remove('hidden');
-                if (myPosText) myPosText.textContent = `Ви #${meIndex + 1} у черзі (${activeSubject})!`;
-                if (myLabsText) myLabsText.textContent = `${me.lab_number || 'Лаба не вказана'} • ⭐ Пріоритет: Лаба ${me.lab_priority || 1}`;
-
-                // Якщо користувач ще не робив ручного вибору, синхронізуємо обрані лаби з поточної черги
-                if (!userHasManuallyEditedLabs[activeSubject]) {
-                    selectedLabs.clear();
-                    const labMatches = (me.lab_number || '').match(/\d+/g);
-                    if (labMatches) {
-                        labMatches.forEach(n => selectedLabs.add(parseInt(n, 10)));
-                    }
-                    renderLabsGrid();
-                    updatePriorityPreview();
-                }
-            } else {
-                if (myStatusBox) myStatusBox.classList.add('hidden');
-                if (!userHasManuallyEditedLabs[activeSubject]) {
-                    selectedLabs.clear();
-                    renderLabsGrid();
-                    updatePriorityPreview();
-                }
-            }
-
-            updateBottomButtonState();
-            updateHeroSubtitle();
         } catch (err) {
             console.error('Queue fetch error:', err);
         }
@@ -951,16 +1090,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch(`/api/queue?subject=${encodeURIComponent(subj)}&chat_id=${chatId}`);
             const data = await res.json();
             if (data.success) {
-                const count = (data.items || []).length;
-                allQueuesData[subj] = data.items || [];
-                if (subj === 'ОП') {
-                    if (badgeOpCount) badgeOpCount.textContent = count;
-                    if (miniOpStat) miniOpStat.textContent = `${count}`;
-                    if (miniOpSub) miniOpSub.textContent = count > 0 ? `Активна черга 🔥` : `Черга вільна`;
+                if (data.queues) {
+                    applyQueuesSnapshot(data.queues, subj, data.items || [], data.version);
                 } else {
-                    if (badgeAsdCount) badgeAsdCount.textContent = count;
-                    if (miniAsdStat) miniAsdStat.textContent = `${count}`;
-                    if (miniAsdSub) miniAsdSub.textContent = count > 0 ? `Активна черга 🔥` : `Черга вільна`;
+                    const count = (data.items || []).length;
+                    allQueuesData[subj] = data.items || [];
+                    updateQueueBadgesForSubject(subj, count);
                 }
             }
         } catch (_) {}
@@ -1010,25 +1145,24 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btnPrimaryAction) btnPrimaryAction.disabled = true;
 
         try {
-            const res = await fetch('/api/queue/join', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    subject: activeSubject,
-                    user_id: targetUserId,
-                    user_name: targetUserName,
-                    username: currentUser.username,
-                    lab_number: labLabel,
-                    append: false
-                })
-            });
-            const data = await res.json();
+            const data = await sendQueueAction('queue_join', {
+                chat_id: chatId,
+                subject: activeSubject,
+                user_id: targetUserId,
+                user_name: targetUserName,
+                username: currentUser.username,
+                lab_number: labLabel,
+                append: false
+            }, '/api/queue/join');
             if (data.success) {
                 if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
                 showToast(`✅ Чергу ${activeSubject} оновлено! (${labLabel})`);
                 userHasManuallyEditedLabs[activeSubject] = false;
-                await fetchQueue();
+                if (data.queues) {
+                    applyQueuesSnapshot(data.queues, activeSubject, null, data.version);
+                } else {
+                    await fetchQueue();
+                }
             } else {
                 showToast(data.message || 'Помилка запису');
             }
@@ -1047,17 +1181,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const myItem = currentQueue.find(item => isMeItem(item));
             const uidToLeave = myItem ? myItem.user_id : currentUser.id;
             try {
-                const res = await fetch('/api/queue/leave', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        chat_id: chatId,
-                        subject: activeSubject,
-                        user_id: uidToLeave,
-                        username: currentUser.username
-                    })
-                });
-                const data = await res.json();
+                const data = await sendQueueAction('queue_leave', {
+                    chat_id: chatId,
+                    subject: activeSubject,
+                    user_id: uidToLeave,
+                    username: currentUser.username
+                }, '/api/queue/leave');
                 if (data.success) {
                     userHasManuallyEditedLabs[activeSubject] = false;
                     selectedLabs.clear();
@@ -1066,7 +1195,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     updateBottomButtonState();
                     if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
                     showToast(`Ви вийшли з черги ${activeSubject}`);
-                    await fetchQueue();
+                    if (data.queues) {
+                        applyQueuesSnapshot(data.queues, activeSubject, null, data.version);
+                    } else {
+                        await fetchQueue();
+                    }
                 }
             } catch (err) {
                 showToast('Помилка виходу з черги');
@@ -1078,15 +1211,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnNextStudent) {
         btnNextStudent.addEventListener('click', async () => {
             try {
-                const res = await fetch('/api/queue/next', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        chat_id: chatId,
-                        subject: activeSubject
-                    })
-                });
-                const data = await res.json();
+                const data = await sendQueueAction('queue_next', {
+                    chat_id: chatId,
+                    subject: activeSubject
+                }, '/api/queue/next');
                 if (data.success) {
                     if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
                     if (data.student) {
@@ -1094,7 +1222,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else {
                         showToast(`Черга ${activeSubject} порожня!`);
                     }
-                    await fetchQueue();
+                    if (data.queues) {
+                        applyQueuesSnapshot(data.queues, activeSubject, null, data.version);
+                    } else {
+                        await fetchQueue();
+                    }
                 }
             } catch (err) {
                 showToast('Помилка дії');
@@ -3251,12 +3383,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function adminQueueActionNext(subj) {
         try {
-            const res = await fetch('/api/queue/next', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, subject: subj })
-            });
-            const data = await res.json();
+            const data = await sendQueueAction('queue_next', {
+                chat_id: chatId,
+                subject: subj
+            }, '/api/queue/next');
             if (data.success) {
                 if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
                 if (data.student) {
@@ -3264,7 +3394,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     showToast(`Черга ${subj} порожня!`);
                 }
-                await fetchQueue();
+                if (data.queues) {
+                    applyQueuesSnapshot(data.queues, subj, null, data.version);
+                } else {
+                    await fetchQueue();
+                }
             }
         } catch (_) {
             showToast('Помилка дії');
@@ -3274,21 +3408,20 @@ document.addEventListener('DOMContentLoaded', () => {
     async function adminQueueActionClear(subj) {
         if (!confirm(`Ви впевнені, що хочете повністю очистити чергу ${subj}?`)) return;
         try {
-            const res = await fetch('/api/admin/queue/clear', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    user_id: currentUser.id,
-                    username: currentUser.username,
-                    chat_id: chatId,
-                    subject: subj
-                })
-            });
-            const data = await res.json();
+            const data = await sendQueueAction('queue_clear', {
+                user_id: currentUser.id,
+                username: currentUser.username,
+                chat_id: chatId,
+                subject: subj
+            }, '/api/admin/queue/clear');
             if (data.success) {
                 if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
                 showToast(data.message || `Чергу ${subj} очищено`);
-                await fetchQueue();
+                if (data.queues) {
+                    applyQueuesSnapshot(data.queues, subj, null, data.version);
+                } else {
+                    await fetchQueue();
+                }
             } else {
                 showToast(data.error || 'Помилка');
             }
@@ -3302,11 +3435,23 @@ document.addEventListener('DOMContentLoaded', () => {
     updatePriorityPreview();
     updateBottomButtonState();
     initAdminPanelControls();
+    connectQueueWebSocket();
     fetchAdminStatus();
     refreshAllData();
 
-    // Автоматичне фонове оновлення черги кожні 4 секунди
+    if (typeof document.addEventListener === 'function') {
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && !wsConnected) {
+                connectQueueWebSocket();
+                fetchQueue();
+            }
+        });
+    }
+
+    // Резервний фоновий полінг (працює ТІЛЬКИ якщо WebSocket недоступний і вкладка активна)
     pollInterval = setInterval(() => {
+        if (document.hidden) return;
+        if (wsConnected && queueWs && queueWs.readyState === 1) return;
         if (currentTab === 'tab-queue') {
             const bottomWrapper = (typeof document.querySelector === 'function' ? document.querySelector('.bottom-action-wrapper') : null) || btnPrimaryAction?.parentElement;
             if (activeSubject === 'Англійська') {
@@ -3315,5 +3460,5 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             fetchQueue();
         }
-    }, 4000);
+    }, 10000);
 });

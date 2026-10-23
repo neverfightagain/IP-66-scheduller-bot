@@ -102,7 +102,7 @@ async def main():
     # Одноразова автоматична міграція черги з Google Таблиці
     try:
         from sync_queue_sheet import auto_sync_on_startup
-        await auto_sync_on_startup(bot=bot)
+        # await auto_sync_on_startup(bot=bot)
     except Exception as e_q:
         logger.warning(f"Помилка при auto_sync_on_startup: {e_q}")
 

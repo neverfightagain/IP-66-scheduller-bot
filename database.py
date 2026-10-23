@@ -191,6 +191,133 @@ class SQLiteCloudConnectionWrapper:
 
 _turso_client: Optional[Any] = None
 _sqlitecloud_conn: Optional[Any] = None
+_local_db_conn: Optional[aiosqlite.Connection] = None
+_local_db_path: Optional[str] = None
+_local_db_loop: Optional[Any] = None
+
+# --- RAM Caches & State ---
+_students_ram_cache: Optional[list[dict]] = None
+_students_cache_time: float = 0.0
+_students_cache_path: Optional[str] = None
+
+_queue_lock: Optional[asyncio.Lock] = None
+_queue_lock_loop: Optional[Any] = None
+_queue_ram_cache: dict[str, list[dict]] = {}
+_queue_cache_path: Optional[str] = None
+_queue_version: int = 1
+
+
+def _get_queue_lock() -> asyncio.Lock:
+    global _queue_lock, _queue_lock_loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _queue_lock is None or _queue_lock_loop is not loop:
+        _queue_lock = asyncio.Lock()
+        _queue_lock_loop = loop
+    return _queue_lock
+
+
+def _check_db_path_changed():
+    global _queue_cache_path, _students_cache_path
+    cur_path = str(DB_PATH)
+    if _queue_cache_path != cur_path:
+        _queue_ram_cache.clear()
+        _queue_cache_path = cur_path
+    if _students_cache_path != cur_path:
+        invalidate_students_cache()
+        _students_cache_path = cur_path
+
+
+def invalidate_queue_cache(subject: str = None):
+    """Скинути RAM-кеш черги та збільшити лічильник версій."""
+    global _queue_version, _queue_ram_cache
+    if subject:
+        clean = normalize_queue_subject(subject) or subject.strip()
+        _queue_ram_cache.pop(clean, None)
+    else:
+        _queue_ram_cache.clear()
+    _queue_version += 1
+
+
+def invalidate_students_cache():
+    """Скинути RAM-кеш списку студентів."""
+    global _students_ram_cache, _students_cache_time
+    _students_ram_cache = None
+    _students_cache_time = 0.0
+
+
+async def get_cached_students_roster() -> list[dict]:
+    """Отримати кешований список студентів (TTL 300 сек) для 0 мс пошуку без SELECT до БД."""
+    global _students_ram_cache, _students_cache_time
+    _check_db_path_changed()
+    import time
+    now = time.time()
+    if _students_ram_cache is not None and (now - _students_cache_time < 300.0):
+        return _students_ram_cache
+
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, real_name, telegram_username, telegram_id, subgroup, notes, created_at
+            FROM students
+            WHERE LOWER(real_name) NOT LIKE '%куратор%'
+            ORDER BY subgroup ASC, real_name ASC
+        """) as cur:
+            rows = await cur.fetchall()
+            _students_ram_cache = [dict(r) for r in rows]
+            _students_cache_time = now
+            return _students_ram_cache
+
+
+async def find_student_roster_id(user_id: int = None, telegram_username: str = None) -> int | None:
+    """Знайти ID студента у таблиці students за telegram_id або username миттєво з RAM-кешу."""
+    roster = await get_cached_students_roster()
+    clean_uname = telegram_username.lstrip("@").strip().lower() if telegram_username else None
+    if user_id:
+        for s in roster:
+            if s.get("telegram_id") == user_id:
+                return s["id"]
+    if clean_uname:
+        for s in roster:
+            tu = s.get("telegram_username")
+            if tu and tu.lstrip("@").strip().lower() == clean_uname:
+                return s["id"]
+    return None
+
+
+async def _get_local_db_conn() -> aiosqlite.Connection:
+    global _local_db_conn, _local_db_path, _local_db_loop
+    _check_db_path_changed()
+    cur_path = str(DB_PATH)
+    try:
+        cur_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        cur_loop = None
+
+    if _local_db_conn is not None:
+        if _local_db_path == cur_path and _local_db_loop is cur_loop:
+            try:
+                if getattr(_local_db_conn, "_connection", None) is not None and _local_db_conn.is_alive():
+                    return _local_db_conn
+            except Exception:
+                pass
+        try:
+            await _local_db_conn.close()
+        except Exception:
+            pass
+        _local_db_conn = None
+
+    conn = aiosqlite.connect(DB_PATH)
+    conn.daemon = True
+    _local_db_conn = await conn
+    _local_db_path = cur_path
+    _local_db_loop = cur_loop
+    await _local_db_conn.execute("PRAGMA journal_mode = WAL;")
+    await _local_db_conn.execute("PRAGMA synchronous = NORMAL;")
+    await _local_db_conn.execute("PRAGMA foreign_keys = ON;")
+    _local_db_conn.row_factory = aiosqlite.Row
+    return _local_db_conn
 
 
 async def _get_turso_client():
@@ -227,8 +354,9 @@ async def get_db():
     Підтримує:
     1. SQLite Cloud (якщо задано SQLITE_CLOUD_URL)
     2. Turso Cloud libSQL (якщо задано TURSO_DATABASE_URL)
-    3. Локальну SQLite через aiosqlite (за замовчуванням)
+    3. Локальну SQLite через aiosqlite (WAL + synchronous NORMAL + busy_timeout)
     """
+    _check_db_path_changed()
     if SQLITE_CLOUD_URL:
         conn = await _get_sqlitecloud_conn()
         yield SQLiteCloudConnectionWrapper(conn)
@@ -236,16 +364,14 @@ async def get_db():
         client = await _get_turso_client()
         yield TursoConnectionWrapper(client)
     else:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("PRAGMA journal_mode = WAL;")
-            await db.execute("PRAGMA foreign_keys = ON;")
+        async with aiosqlite.connect(DB_PATH, timeout=30.0) as db:
             db.row_factory = aiosqlite.Row
             yield db
 
 
 async def close_db():
     """Закрити активні з'єднання з базою даних."""
-    global _turso_client, _sqlitecloud_conn
+    global _turso_client, _sqlitecloud_conn, _local_db_conn
     if _turso_client is not None and not getattr(_turso_client, "closed", False):
         await _turso_client.close()
         _turso_client = None
@@ -255,11 +381,20 @@ async def close_db():
         except Exception:
             pass
         _sqlitecloud_conn = None
+    if _local_db_conn is not None:
+        try:
+            await _local_db_conn.close()
+        except Exception:
+            pass
+        _local_db_conn = None
 
 
 async def init_db():
     """Создание таблиц базы данных и миграция из старых JSON-файлов."""
     async with get_db() as db:
+        if not SQLITE_CLOUD_URL and not TURSO_DATABASE_URL:
+            await db.execute("PRAGMA journal_mode = WAL;")
+            await db.execute("PRAGMA synchronous = NORMAL;")
         # 1. Таблица курсов/предметов
         await db.execute("""
             CREATE TABLE IF NOT EXISTS courses (
@@ -582,7 +717,6 @@ async def init_db():
         await _migrate_legacy_data(db)
         await db.execute("DELETE FROM assignments WHERE id IN ('op_lab1', 'asd_lab1', 'kdm_calc1')")
         await db.commit()
-        await cleanup_past_assignments_db()
 
         # Автоматичне вилучення кураторів із реєстру студентів (вони не навчаються в групі)
         await db.execute("DELETE FROM students WHERE LOWER(real_name) LIKE '%куратор%'")
@@ -626,6 +760,10 @@ async def init_db():
                         logger.info(f"Успішно імпортовано студентів з реєстру.")
             except Exception as e_rost:
                 logger.warning(f"Не вдалося імпортувати студентів: {e_rost}")
+
+    await cleanup_past_assignments_db()
+    invalidate_queue_cache()
+    invalidate_students_cache()
 
 
 async def _migrate_legacy_data(db):
@@ -1075,6 +1213,77 @@ def extract_first_name(full_name: str) -> str:
     return name or surname or full_name.strip() or "Студент"
 
 
+async def get_active_queue_db(chat_id: int = 0, subject: str = None) -> list[dict]:
+    """
+    Отримати поточний список студентів у черзі (старіші роботи першими, без по-батькові).
+    Черга є єдиною для всієї групи ІП-66 (фільтр chat_id ігнорується для усунення рассинхрону).
+    На льоту дедуплікує студентів, якщо один і той же студент мав записи під різними chat_id.
+    Працює за 0 мс з RAM-кешу при повторних викликах.
+    """
+    _check_db_path_changed()
+    subject_clean = normalize_queue_subject(subject) or (subject or "ОП").strip()
+
+    if subject_clean in _queue_ram_cache:
+        return [dict(x) for x in _queue_ram_cache[subject_clean]]
+
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status, joined_at
+            FROM lab_queues
+            WHERE subject = ?
+            ORDER BY lab_priority ASC, id ASC
+        """, (subject_clean,)) as cursor:
+            rows = await cursor.fetchall()
+
+    deduped: list[dict] = []
+    seen_ids: set = set()
+    stale_duplicate_ids: list[int] = []
+
+    for r in rows:
+        item = dict(r)
+        uid = item.get("user_id") or 0
+        uname = (item.get("username") or "").lstrip("@").strip().lower()
+        raw_name = item.get("user_name") or ""
+        rname = format_queue_name(raw_name).lower() if raw_name else ""
+
+        is_dup = False
+        if uid > 0 and uid in seen_ids:
+            is_dup = True
+        elif uname and uname in seen_ids:
+            is_dup = True
+        elif rname and rname not in ("студент", "") and rname in seen_ids:
+            is_dup = True
+
+        if is_dup:
+            stale_duplicate_ids.append(item["id"])
+            continue
+
+        if uid > 0:
+            seen_ids.add(uid)
+        if uname:
+            seen_ids.add(uname)
+        if rname and rname not in ("студент", ""):
+            seen_ids.add(rname)
+
+        if raw_name:
+            item["user_name"] = format_queue_name(raw_name)
+        deduped.append(item)
+
+    if stale_duplicate_ids:
+        async def _cleanup_dups(dup_ids):
+            try:
+                async with get_db() as db:
+                    placeholders = ",".join("?" for _ in dup_ids)
+                    await db.execute(f"DELETE FROM lab_queues WHERE id IN ({placeholders})", tuple(dup_ids))
+                    await db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to cleanup stale queue duplicates: {e}")
+        asyncio.create_task(_cleanup_dups(stale_duplicate_ids))
+
+    _queue_ram_cache[subject_clean] = deduped
+    return [dict(x) for x in deduped]
+
+
 async def join_queue_db(
     chat_id: int,
     subject: str,
@@ -1085,260 +1294,224 @@ async def join_queue_db(
     append: bool = False
 ) -> tuple[bool, str, int]:
     """
-    Додати студента до живої черги.
+    Додати студента до єдиної глобальної черги групи ІП-66.
     Гарантує відсутність спаму (один студент займає лише 1 місце в черзі з предмету).
     Пріоритет черги: старіші практичні роботи (менший номер) піднімаються нагору!
     При однаковому номері діє FIFO (хто раніше зайняв).
     Якщо студент уже в черзі, оновлює номер лаби та перераховує його позицію за пріоритетом.
     Повертає (успіх, повідомлення, позиція_в_черзі).
     """
-    subject_clean = (subject or "ОП").strip()[:50]
-    clean_name = (user_name or "Студент").strip()[:100]
+    global _queue_version
+    subject_clean = normalize_queue_subject(subject) or (subject or "ОП").strip()[:50]
     priority, clean_lab = parse_lab_info(lab_number)
 
-    # Автоматична заміна на справжнє ім'я зі списку групи, якщо студент є в базі
-    try:
-        real_name_match = await find_student_real_name_db(user_id=user_id, telegram_username=username)
-        if real_name_match:
-            clean_name = format_queue_name(real_name_match)
-        else:
-            clean_name = format_queue_name(clean_name)
-    except Exception:
-        clean_name = format_queue_name(clean_name)
+    # Автоматична заміна на справжнє ім'я зі списку групи з RAM-кешу
+    real_name_match = await find_student_real_name_db(user_id=user_id, telegram_username=username)
+    if real_name_match:
+        clean_name = format_queue_name(real_name_match)
+    else:
+        clean_name = format_queue_name(user_name or "Студент")
 
     clean_uname = username.lstrip("@").strip().lower() if username else None
-    roster_id = None
-    try:
+    roster_id = await find_student_roster_id(user_id=user_id, telegram_username=username)
+
+    async with _get_queue_lock():
+        already_existed = False
+        is_new_update = False
         async with get_db() as db:
-            if user_id:
-                async with db.execute("SELECT id FROM students WHERE telegram_id = ? LIMIT 1", (user_id,)) as cur:
-                    r = await cur.fetchone()
-                    if r:
-                        roster_id = r["id"]
-            if not roster_id and clean_uname:
-                async with db.execute("SELECT id FROM students WHERE LOWER(telegram_username) = ? LIMIT 1", (clean_uname,)) as cur:
-                    r = await cur.fetchone()
-                    if r:
-                        roster_id = r["id"]
-    except Exception:
-        pass
+            # Шукаємо всі існуючі записи студента в цій черзі (без прив'язки до chat_id!)
+            query = """
+                SELECT id, chat_id, user_id, user_name, username, lab_number, lab_priority
+                FROM lab_queues
+                WHERE subject = ? AND (
+                    user_id = ?
+                    OR (? IS NOT NULL AND user_id = ?)
+                    OR (? IS NOT NULL AND username IS NOT NULL AND LOWER(username) = ?)
+                    OR (user_name IS NOT NULL AND LOWER(user_name) = ?)
+                )
+                ORDER BY lab_priority ASC, id ASC
+            """
+            params = (subject_clean, user_id, roster_id, roster_id or -999, clean_uname, clean_uname or "", clean_name.lower())
+            async with db.execute(query, params) as cursor:
+                existing_rows = await cursor.fetchall()
 
-    async with get_db() as db:
-        # Перевірка чи вже є у черзі (за user_id, roster_id або username)
-        if clean_uname and roster_id:
-            async with db.execute("""
-                SELECT id, user_id, lab_number, lab_priority FROM lab_queues
-                WHERE chat_id = ? AND subject = ? 
-                  AND (user_id = ? OR user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
-                ORDER BY id ASC LIMIT 1
-            """, (chat_id, subject_clean, user_id, roster_id, clean_uname)) as cursor:
-                existing = await cursor.fetchone()
-        elif clean_uname:
-            async with db.execute("""
-                SELECT id, user_id, lab_number, lab_priority FROM lab_queues
-                WHERE chat_id = ? AND subject = ? 
-                  AND (user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
-                ORDER BY id ASC LIMIT 1
-            """, (chat_id, subject_clean, user_id, clean_uname)) as cursor:
-                existing = await cursor.fetchone()
-        elif roster_id:
-            async with db.execute("""
-                SELECT id, user_id, lab_number, lab_priority FROM lab_queues
-                WHERE chat_id = ? AND subject = ? 
-                  AND (user_id = ? OR user_id = ?)
-                ORDER BY id ASC LIMIT 1
-            """, (chat_id, subject_clean, user_id, roster_id)) as cursor:
-                existing = await cursor.fetchone()
-        else:
-            async with db.execute("""
-                SELECT id, user_id, lab_number, lab_priority FROM lab_queues
-                WHERE chat_id = ? AND subject = ? AND user_id = ?
-                LIMIT 1
-            """, (chat_id, subject_clean, user_id)) as cursor:
-                existing = await cursor.fetchone()
+            if existing_rows:
+                already_existed = True
+                primary = dict(existing_rows[0])
+                primary_id = primary["id"]
+                current_p = primary.get("lab_priority") or 999
+                current_lab = primary.get("lab_number") or ""
 
-        if existing:
-            existing_dict = dict(existing)
-            existing_id = existing_dict["id"]
-            current_p = existing_dict.get("lab_priority") or 999
-            current_lab = existing_dict.get("lab_number") or ""
+                # Якщо є зайві дублікати під іншими chat_id — видаляємо їх одразу
+                if len(existing_rows) > 1:
+                    dup_ids = [r["id"] for r in existing_rows[1:]]
+                    placeholders = ",".join("?" for _ in dup_ids)
+                    await db.execute(f"DELETE FROM lab_queues WHERE id IN ({placeholders})", tuple(dup_ids))
+                    await db.commit()
 
-            # Якщо увімкнено режим додавання (append), об'єднуємо поточні роботи з новими
-            if append and current_lab and clean_lab:
-                cur_nums = set(map(int, re.findall(r'\d+', current_lab)))
-                new_nums = set(map(int, re.findall(r'\d+', clean_lab)))
-                combined_nums = sorted(list(cur_nums.union(new_nums)))
-                if combined_nums:
-                    priority = combined_nums[0]
-                    if len(combined_nums) == 1:
-                        clean_lab = f"Лаба {combined_nums[0]}"
+                # Якщо увімкнено режим додавання (append), об'єднуємо поточні роботи з новими
+                if append and current_lab and clean_lab:
+                    cur_nums = set(map(int, re.findall(r'\d+', current_lab)))
+                    new_nums = set(map(int, re.findall(r'\d+', clean_lab)))
+                    combined_nums = sorted(list(cur_nums.union(new_nums)))
+                    if combined_nums:
+                        priority = combined_nums[0]
+                        if len(combined_nums) == 1:
+                            clean_lab = f"Лаба {combined_nums[0]}"
+                        else:
+                            clean_lab = f"Лаби {', '.join(str(n) for n in combined_nums)}"
+
+                if clean_lab and (clean_lab != current_lab or priority != current_p):
+                    if priority > current_p:
+                        # Пріоритет погіршився -> перестворюємо в кінець черги для нового пріоритету
+                        await db.execute("DELETE FROM lab_queues WHERE id = ?", (primary_id,))
+                        await db.execute("""
+                            INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')
+                        """, (chat_id, subject_clean, user_id, clean_name, username, clean_lab, priority))
+                        await db.commit()
                     else:
-                        clean_lab = f"Лаби {', '.join(str(n) for n in combined_nums)}"
-
-            # Якщо передано новий номер лаби і він відрізняється — оновлюємо
-            if clean_lab and (clean_lab != current_lab or priority != current_p):
-                # КРИТИЧНО: Якщо пріоритет погіршився (наприклад, було {1, 5} з пріоритетом 1, а прибрали 1 і лишили 5):
-                # Студент не залишається першим! Він стає в кінець черги для нового пріоритету (5)!
-                if priority > current_p:
-                    await db.execute("DELETE FROM lab_queues WHERE id = ?", (existing_id,))
-                    cursor = await db.execute("""
-                        INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')
-                    """, (chat_id, subject_clean, user_id, clean_name, username, clean_lab, priority))
-                    await db.commit()
-                    target_id = cursor.lastrowid
-                else:
-                    # Пріоритет зберігся або покращився -> початкове місце і id зберігаються!
-                    await db.execute("""
-                        UPDATE lab_queues
-                        SET lab_number = ?, lab_priority = ?, user_id = ?, user_name = ?, username = ?
-                        WHERE id = ?
-                    """, (clean_lab, priority, user_id, clean_name, username, existing_id))
-                    await db.commit()
-                    target_id = existing_id
-                target_priority = priority
+                        # Пріоритет зберігся або покращився -> оновлюємо і зберігаємо
+                        await db.execute("""
+                            UPDATE lab_queues
+                            SET lab_number = ?, lab_priority = ?, user_id = ?, user_name = ?, username = ?, chat_id = ?
+                            WHERE id = ?
+                        """, (clean_lab, priority, user_id, clean_name, username, chat_id, primary_id))
+                        await db.commit()
+                    is_new_update = True
             else:
-                target_id = existing_id
-                target_priority = current_p
+                # Студента ще немає в черзі — додаємо єдиний запис
+                await db.execute("""
+                    INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')
+                """, (chat_id, subject_clean, user_id, clean_name, username, clean_lab, priority))
+                await db.commit()
 
-            # Визначаємо поточну позицію з урахуванням пріоритету (lab_priority ASC, id ASC)
-            async with db.execute("""
-                SELECT COUNT(*) as pos FROM lab_queues
-                WHERE chat_id = ? AND subject = ? 
-                  AND (lab_priority < ? OR (lab_priority = ? AND id <= ?))
-            """, (chat_id, subject_clean, target_priority, target_priority, target_id)) as pos_cursor:
-                row = await pos_cursor.fetchone()
-                pos = row["pos"] if row else 1
+        _queue_ram_cache.pop(subject_clean, None)
+        _queue_version += 1
 
-            if clean_lab and (clean_lab != current_lab or priority != current_p):
+        items = await get_active_queue_db(chat_id, subject_clean)
+        pos = len(items) or 1
+        for idx, item in enumerate(items, start=1):
+            if (
+                item.get("user_id") == user_id
+                or (roster_id and item.get("user_id") == roster_id)
+                or (clean_uname and (item.get("username") or "").lstrip("@").strip().lower() == clean_uname)
+                or format_queue_name(item.get("user_name") or "").lower() == clean_name.lower()
+            ):
+                pos = idx
+                break
+
+        if already_existed:
+            if is_new_update:
                 return True, f"Ви вже у черзі. Роботу оновлено: {clean_lab}. Ваша нова позиція: #{pos}", pos
-
             return False, f"Ви вже знаходитесь у черзі на позиції #{pos}.", pos
-
-        # Додаємо нового учасника (гарантовано 1 актуальний запис)
-        cursor = await db.execute("""
-            INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')
-        """, (chat_id, subject_clean, user_id, clean_name, username, clean_lab, priority))
-        await db.commit()
-        new_id = cursor.lastrowid
-
-        # Рахуємо позицію (lab_priority ASC, id ASC)
-        async with db.execute("""
-            SELECT COUNT(*) as pos FROM lab_queues
-            WHERE chat_id = ? AND subject = ? 
-              AND (lab_priority < ? OR (lab_priority = ? AND id <= ?))
-        """, (chat_id, subject_clean, priority, priority, new_id)) as pos_cursor:
-            row = await pos_cursor.fetchone()
-            pos = row["pos"] if row else 1
 
         return True, "Успішно додано до черги!", pos
 
 
 async def leave_queue_db(chat_id: int, subject: str, user_id: int, username: str = None) -> bool:
-    """Видалити студента з черги (фізичне повне видалення з бази даних)."""
-    subject_clean = (subject or "ОП").strip()
+    """Видалити студента з черги (повне видалення всіх записів з БД без прив'язки до chat_id)."""
+    global _queue_version
+    subject_clean = normalize_queue_subject(subject) or (subject or "ОП").strip()
     clean_uname = username.lstrip("@").strip().lower() if username else None
-    roster_id = None
-    try:
+    roster_id = await find_student_roster_id(user_id=user_id, telegram_username=username)
+    real_name = await find_student_real_name_db(user_id=user_id, telegram_username=username)
+    clean_name = format_queue_name(real_name).lower() if real_name else None
+
+    async with _get_queue_lock():
         async with get_db() as db:
-            if user_id:
-                async with db.execute("SELECT id FROM students WHERE telegram_id = ? LIMIT 1", (user_id,)) as cur:
-                    r = await cur.fetchone()
-                    if r:
-                        roster_id = r["id"]
-            if not roster_id and clean_uname:
-                async with db.execute("SELECT id FROM students WHERE LOWER(telegram_username) = ? LIMIT 1", (clean_uname,)) as cur:
-                    r = await cur.fetchone()
-                    if r:
-                        roster_id = r["id"]
-    except Exception:
-        pass
-
-    async with get_db() as db:
-        if clean_uname and roster_id:
-            cursor = await db.execute("""
+            query = """
                 DELETE FROM lab_queues
-                WHERE chat_id = ? AND subject = ? 
-                  AND (user_id = ? OR user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
-            """, (chat_id, subject_clean, user_id, roster_id, clean_uname))
-        elif clean_uname:
-            cursor = await db.execute("""
+                WHERE subject = ? AND (
+                    user_id = ?
+                    OR (? IS NOT NULL AND user_id = ?)
+                    OR (? IS NOT NULL AND username IS NOT NULL AND LOWER(username) = ?)
+                    OR (? IS NOT NULL AND user_name IS NOT NULL AND LOWER(user_name) = ?)
+                )
+            """
+            params = (subject_clean, user_id, roster_id, roster_id or -999, clean_uname, clean_uname or "", clean_name, clean_name or "")
+            cursor = await db.execute(query, params)
+            await db.commit()
+            deleted = cursor.rowcount > 0
+
+        _queue_ram_cache.pop(subject_clean, None)
+        _queue_version += 1
+        return deleted
+
+
+async def next_in_queue_db(chat_id: int = 0, subject: str = None) -> dict | None:
+    """
+    Перевести наступного студента на захист і видалити ВСІ його записи з черги
+    (щоб він гарантовано і назавжди зникав і не міг воскреснути з іншого chat_id).
+    """
+    global _queue_version
+    subject_clean = normalize_queue_subject(subject) or (subject or "ОП").strip()
+
+    async with _get_queue_lock():
+        async with get_db() as db:
+            async with db.execute("""
+                SELECT id, chat_id, subject, user_id, user_name, username, lab_number, lab_priority, joined_at
+                FROM lab_queues
+                WHERE subject = ?
+                ORDER BY lab_priority ASC, id ASC
+                LIMIT 1
+            """, (subject_clean,)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+                student = dict(row)
+                if student.get("user_name"):
+                    student["user_name"] = format_queue_name(student["user_name"])
+
+            sid = student["id"]
+            suid = student.get("user_id") or 0
+            sname = student.get("user_name") or ""
+            suname = (student.get("username") or "").lstrip("@").strip().lower()
+
+            # Видаляємо всі можливі записи цього студента з даного предмету
+            delete_query = """
                 DELETE FROM lab_queues
-                WHERE chat_id = ? AND subject = ? 
-                  AND (user_id = ? OR (username IS NOT NULL AND LOWER(username) = ?))
-            """, (chat_id, subject_clean, user_id, clean_uname))
-        elif roster_id:
-            cursor = await db.execute("""
-                DELETE FROM lab_queues
-                WHERE chat_id = ? AND subject = ? 
-                  AND (user_id = ? OR user_id = ?)
-            """, (chat_id, subject_clean, user_id, roster_id))
-        else:
-            cursor = await db.execute("""
-                DELETE FROM lab_queues
-                WHERE chat_id = ? AND subject = ? AND user_id = ?
-            """, (chat_id, subject_clean, user_id))
-        await db.commit()
-        return cursor.rowcount > 0
+                WHERE subject = ? AND (
+                    id = ?
+                    OR (? > 0 AND user_id = ?)
+                    OR (? != '' AND username IS NOT NULL AND LOWER(username) = ?)
+                    OR (? != '' AND user_name IS NOT NULL AND LOWER(user_name) = ?)
+                )
+            """
+            params = (subject_clean, sid, suid, suid, suname, suname, sname.lower(), sname.lower())
+            await db.execute(delete_query, params)
+            await db.commit()
 
-
-async def get_active_queue_db(chat_id: int, subject: str = None) -> list[dict]:
-    """Отримати поточний список студентів у черзі (старіші роботи першими, без по-батькові)."""
-    subject_clean = (subject or "ОП").strip()
-    async with get_db() as db:
-        async with db.execute("""
-            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status, joined_at
-            FROM lab_queues
-            WHERE chat_id = ? AND subject = ?
-            ORDER BY lab_priority ASC, id ASC
-        """, (chat_id, subject_clean)) as cursor:
-            rows = await cursor.fetchall()
-            items = []
-            for r in rows:
-                item = dict(r)
-                if item.get("user_name"):
-                    item["user_name"] = format_queue_name(item["user_name"])
-                items.append(item)
-            return items
-
-
-async def next_in_queue_db(chat_id: int, subject: str = None) -> dict | None:
-    """Перевести наступного студента на захист і видалити його запис з черги."""
-    subject_clean = (subject or "ОП").strip()
-    async with get_db() as db:
-        async with db.execute("""
-            SELECT id, chat_id, subject, user_id, user_name, username, lab_number, lab_priority, joined_at
-            FROM lab_queues
-            WHERE chat_id = ? AND subject = ?
-            ORDER BY lab_priority ASC, id ASC
-            LIMIT 1
-        """, (chat_id, subject_clean)) as cursor:
-            row = await cursor.fetchone()
-            if not row:
-                return None
-            student = dict(row)
-            if student.get("user_name"):
-                student["user_name"] = format_queue_name(student["user_name"])
-
-        await db.execute("""
-            DELETE FROM lab_queues
-            WHERE id = ?
-        """, (student["id"],))
-        await db.commit()
+        _queue_ram_cache.pop(subject_clean, None)
+        _queue_version += 1
         return student
 
 
-async def clear_queue_db(chat_id: int, subject: str = None) -> int:
-    """Повністю очистити активну чергу (фізичне видалення всіх записів предмету)."""
-    subject_clean = (subject or "ОП").strip()
-    async with get_db() as db:
-        cursor = await db.execute("""
-            DELETE FROM lab_queues
-            WHERE chat_id = ? AND subject = ?
-        """, (chat_id, subject_clean))
-        await db.commit()
-        return cursor.rowcount
+async def clear_queue_db(chat_id: int = 0, subject: str = None) -> int:
+    """Повністю очистити активну чергу (фізичне видалення всіх записів предмету без прив'язки до chat_id)."""
+    global _queue_version
+    subject_clean = normalize_queue_subject(subject) or (subject or "ОП").strip()
+
+    async with _get_queue_lock():
+        async with get_db() as db:
+            cursor = await db.execute("DELETE FROM lab_queues WHERE subject = ?", (subject_clean,))
+            await db.commit()
+            count = cursor.rowcount
+
+        _queue_ram_cache.pop(subject_clean, None)
+        _queue_version += 1
+        return count
+
+
+async def get_all_queues_cached_db() -> tuple[dict[str, list[dict]], int]:
+    """
+    Повернути знімки обох черг (ОП та АСД) та поточну версію з RAM-кешу.
+    Працює миттєво за 0 мс.
+    """
+    op_items = await get_active_queue_db(0, "ОП")
+    asd_items = await get_active_queue_db(0, "АСД")
+    return {"ОП": op_items, "АСД": asd_items}, _queue_version
 
 
 async def set_queue_message_id_db(chat_id: int, message_id: int, subject: str = "ОП") -> None:
@@ -1635,44 +1808,42 @@ async def add_or_update_student_db(
             """, (clean_real_name, clean_username, telegram_id, subgroup, notes))
 
         await db.commit()
+        invalidate_students_cache()
         return True
 
 
 async def get_all_students_db() -> list[dict]:
     """Отримати повний список студентів групи (без кураторів), відсортований за підгрупою та іменем."""
-    async with get_db() as db:
-        async with db.execute("""
-            SELECT id, real_name, telegram_username, telegram_id, subgroup, notes, created_at
-            FROM students
-            WHERE LOWER(real_name) NOT LIKE '%куратор%'
-            ORDER BY subgroup ASC, real_name ASC
-        """) as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+    roster = await get_cached_students_roster()
+    return [dict(r) for r in roster]
 
 
 async def find_student_real_name_db(user_id: int = None, telegram_username: str = None) -> str | None:
-    """Знайти справжнє ім'я студента за telegram_id або username."""
+    """Знайти справжнє ім'я студента за telegram_id або username миттєво з RAM-кешу."""
+    roster = await get_cached_students_roster()
     clean_uname = telegram_username.lstrip("@").strip().lower() if telegram_username else None
-    async with get_db() as db:
-        if user_id:
-            async with db.execute("SELECT real_name FROM students WHERE telegram_id = ? LIMIT 1", (user_id,)) as cur:
-                row = await cur.fetchone()
-                if row and row["real_name"]:
-                    return row["real_name"]
 
-        if clean_uname:
-            async with db.execute("SELECT id, real_name, telegram_id FROM students WHERE LOWER(telegram_username) = ? LIMIT 1", (clean_uname,)) as cur:
-                row = await cur.fetchone()
-                if row and row["real_name"]:
-                    # Автоматично запам'ятовуємо telegram_id для подальших входів
-                    if user_id and not row.get("telegram_id"):
+    if user_id:
+        for s in roster:
+            if s.get("telegram_id") == user_id and s.get("real_name"):
+                return s["real_name"]
+
+    if clean_uname:
+        for s in roster:
+            tu = s.get("telegram_username")
+            if tu and tu.lstrip("@").strip().lower() == clean_uname and s.get("real_name"):
+                # Автоматично запам'ятовуємо telegram_id для подальших входів
+                if user_id and not s.get("telegram_id"):
+                    s["telegram_id"] = user_id
+                    async def _bg_save_tg_id(sid, tid):
                         try:
-                            await db.execute("UPDATE students SET telegram_id = ? WHERE id = ?", (user_id, row["id"]))
-                            await db.commit()
+                            async with get_db() as db:
+                                await db.execute("UPDATE students SET telegram_id = ? WHERE id = ?", (tid, sid))
+                                await db.commit()
                         except Exception:
                             pass
-                    return row["real_name"]
+                    asyncio.create_task(_bg_save_tg_id(s["id"], user_id))
+                return s["real_name"]
 
     return None
 
@@ -1695,6 +1866,7 @@ async def bulk_import_students_db(students_list: list[dict]) -> int:
             ok = await add_or_update_student_db(rname, uname, tg_id, subg, notes)
             if ok:
                 count += 1
+    invalidate_students_cache()
     return count
 
 
@@ -1913,6 +2085,7 @@ async def remove_student_from_subject_queues_db(user_id: int, subject: str) -> l
                 WHERE user_id = ? AND subject = ?
             """, (user_id, clean_subj))
             await db.commit()
+            invalidate_queue_cache(clean_subj)
 
     return affected_chats
 

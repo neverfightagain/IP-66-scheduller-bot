@@ -1,13 +1,36 @@
 import unittest
 import asyncio
+import tempfile
+from pathlib import Path
 from aiohttp.test_utils import AioHTTPTestCase
 from aiohttp import web
 from unittest.mock import AsyncMock, MagicMock
 
-from database import init_db, get_db, join_queue_db, set_queue_message_id_db
+import database
+from database import init_db, get_db, join_queue_db, clear_queue_db, set_queue_message_id_db, invalidate_queue_cache
 from webapp_server import create_webapp_app, sync_queue_message_in_chat
 
 class TestWebAppServer(AioHTTPTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp_dir = tempfile.TemporaryDirectory()
+        cls._orig_db_path = database.DB_PATH
+        cls._orig_turso = database.TURSO_DATABASE_URL
+        cls._orig_sqlitecloud = database.SQLITE_CLOUD_URL
+        database.DB_PATH = Path(cls._tmp_dir.name) / "test_webapp.db"
+        database.TURSO_DATABASE_URL = ""
+        database.SQLITE_CLOUD_URL = ""
+
+    @classmethod
+    def tearDownClass(cls):
+        database.DB_PATH = cls._orig_db_path
+        database.TURSO_DATABASE_URL = cls._orig_turso
+        database.SQLITE_CLOUD_URL = cls._orig_sqlitecloud
+        try:
+            cls._tmp_dir.cleanup()
+        except Exception:
+            pass
+
     async def get_application(self):
         self.mock_bot = MagicMock()
         self.mock_bot.edit_message_text = AsyncMock()
@@ -18,16 +41,19 @@ class TestWebAppServer(AioHTTPTestCase):
         await init_db()
         self.chat_id = 999888
         self.subject = "ОП"
+        await clear_queue_db(self.chat_id, "ОП")
+        await clear_queue_db(self.chat_id, "АСД")
         async with get_db() as db:
-            await db.execute("DELETE FROM lab_queues WHERE chat_id = ?", (self.chat_id,))
             await db.execute("DELETE FROM queue_chat_messages WHERE chat_id = ?", (self.chat_id,))
             await db.commit()
 
     async def asyncTearDown(self):
+        await clear_queue_db(self.chat_id, "ОП")
+        await clear_queue_db(self.chat_id, "АСД")
         async with get_db() as db:
-            await db.execute("DELETE FROM lab_queues WHERE chat_id = ?", (self.chat_id,))
             await db.execute("DELETE FROM queue_chat_messages WHERE chat_id = ?", (self.chat_id,))
             await db.commit()
+        invalidate_queue_cache()
         await super().asyncTearDown()
 
     async def test_health_and_status_endpoints(self):
@@ -307,6 +333,71 @@ class TestWebAppServer(AioHTTPTestCase):
         self.assertEqual(items_boost[0]["user_id"], 101)  # Максим (Лаби 2, 6) - #1
         self.assertEqual(items_boost[1]["user_id"], 103)  # Назар (Лаба 4) - #2
         self.assertEqual(items_boost[2]["user_id"], 102)  # Дмитро (Лаба 5) - #3
+
+    async def test_websocket_realtime_queue_and_cross_chat_unification(self):
+        # Підключаємо два WebSocket клієнти (Студент з chat_id=0 та Адмін з chat_id=-1004483900746)
+        async with self.client.ws_connect("/ws") as ws_student, self.client.ws_connect("/ws") as ws_admin:
+            init_student = await ws_student.receive_json()
+            init_admin = await ws_admin.receive_json()
+            self.assertEqual(init_student["type"], "queue_update")
+            self.assertEqual(init_admin["type"], "queue_update")
+
+            # 1. Студент стає в чергу через WebSocket з chat_id=0 (як з кнопки меню)
+            await ws_student.send_json({
+                "action": "queue_join",
+                "req_id": "req_join_1",
+                "chat_id": 0,
+                "subject": "ОП",
+                "user_id": 7001,
+                "user_name": "Коваленко Олексій",
+                "username": "kovalenko",
+                "lab_number": "Лаба 2"
+            })
+
+            # Отримуємо відповідь та broadcast
+            msgs = [await ws_student.receive_json(), await ws_student.receive_json()]
+            action_res = next(m for m in msgs if m.get("type") == "action_result")
+            self.assertTrue(action_res["success"])
+            self.assertEqual(action_res["position"], 1)
+
+            admin_push = await ws_admin.receive_json()
+            self.assertEqual(admin_push["type"], "queue_update")
+            self.assertEqual(len(admin_push["queues"]["ОП"]), 1)
+            self.assertEqual(admin_push["queues"]["ОП"][0]["user_name"], "Коваленко Олексій")
+
+            # 2. Емулюємо застарілий дублікат у БД під іншим chat_id (-1004483900746)
+            async with get_db() as db:
+                await db.execute("""
+                    INSERT INTO lab_queues (chat_id, subject, user_id, user_name, username, lab_number, lab_priority, status)
+                    VALUES (-1004483900746, 'ОП', 7001, 'Коваленко Олексій', 'kovalenko', 'Лаба 2', 2, 'waiting')
+                """)
+                await db.commit()
+            invalidate_queue_cache("ОП")
+
+            # Перевіряємо що черга дедуплікує студента (не показує двічі)
+            resp_q = await self.client.request("GET", "/api/queue?subject=ОП&chat_id=-1004483900746")
+            data_q = await resp_q.json()
+            self.assertEqual(len(data_q["items"]), 1)
+
+            # 3. Адмін натискає "Наступний" через WebSocket з іншого chat_id (-1004483900746)
+            await ws_admin.send_json({
+                "action": "queue_next",
+                "req_id": "req_next_1",
+                "chat_id": -1004483900746,
+                "subject": "ОП"
+            })
+
+            admin_msgs = [await ws_admin.receive_json(), await ws_admin.receive_json()]
+            next_res = next(m for m in admin_msgs if m.get("type") == "action_result")
+            self.assertTrue(next_res["success"])
+            self.assertEqual(next_res["student"]["user_name"], "Коваленко Олексій")
+            self.assertEqual(len(next_res["queues"]["ОП"]), 0)
+
+            # Перевіряємо: при перезаході з БУДЬ-ЯКОГО chat_id (0 або -1004483900746) студент більше НЕ з'являється!
+            resp_reenter_0 = await self.client.request("GET", "/api/queue?subject=ОП&chat_id=0")
+            self.assertEqual(len((await resp_reenter_0.json())["items"]), 0)
+            resp_reenter_grp = await self.client.request("GET", "/api/queue?subject=ОП&chat_id=-1004483900746")
+            self.assertEqual(len((await resp_reenter_grp.json())["items"]), 0)
 
     async def test_ui_frontend_simulation(self):
         import subprocess

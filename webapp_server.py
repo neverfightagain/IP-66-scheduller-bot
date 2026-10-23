@@ -35,6 +35,7 @@ from database import (
     save_project_group_ai_qa_db,
     get_subscribed_chats_db,
     get_active_queue_db,
+    get_all_queues_cached_db,
     join_queue_db,
     leave_queue_db,
     next_in_queue_db,
@@ -78,6 +79,51 @@ def cors_headers() -> dict:
 
 def json_response_cors(data: dict, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, headers=cors_headers())
+
+
+_ws_clients: set[web.WebSocketResponse] = set()
+
+
+async def broadcast_queue_ws(event_meta: dict | None = None) -> None:
+    """Миттєво розіслати оновлений стан обох черг (ОП та АСД) усім підключеним WebSocket-клієнтам."""
+    if not _ws_clients:
+        return
+    try:
+        queues, version = await get_all_queues_cached_db()
+        payload = {
+            "type": "queue_update",
+            "version": version,
+            "queues": queues,
+        }
+        if event_meta:
+            payload.update(event_meta)
+        msg_str = json.dumps(payload, ensure_ascii=False)
+        stale: list[web.WebSocketResponse] = []
+
+        async def _send_one(ws: web.WebSocketResponse):
+            if ws.closed:
+                stale.append(ws)
+                return
+            try:
+                await ws.send_str(msg_str)
+            except Exception:
+                stale.append(ws)
+
+        await asyncio.gather(*(_send_one(ws) for ws in list(_ws_clients)), return_exceptions=True)
+        for ws in stale:
+            _ws_clients.discard(ws)
+    except Exception as e:
+        logger.debug(f"WebSocket broadcast error: {e}")
+
+
+def schedule_bg_chat_sync(bot: Bot | None, chat_id: int, subject: str = None) -> None:
+    """Неблокуюча фонова синхронізація повідомлення черги в чаті Telegram (0 мс очікування для клієнта)."""
+    if not bot or not chat_id:
+        return
+    try:
+        asyncio.create_task(sync_queue_message_in_chat(bot, chat_id, subject))
+    except Exception:
+        pass
 
 
 async def sync_queue_message_in_chat(bot: Bot | None, chat_id: int, subject: str = None) -> bool:
@@ -231,6 +277,169 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             return web.Response(text="Telegram Mini App is compiling...", content_type="text/html")
         return web.FileResponse(index_file)
 
+    # --- WebSocket Real-Time Queue Channel (/ws) ---
+    async def handle_websocket(request):
+        ws = web.WebSocketResponse(heartbeat=25.0)
+        await ws.prepare(request)
+        _ws_clients.add(ws)
+        try:
+            queues, version = await get_all_queues_cached_db()
+            await ws.send_str(json.dumps({
+                "type": "queue_update",
+                "version": version,
+                "queues": queues,
+            }, ensure_ascii=False))
+
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                    except Exception:
+                        continue
+
+                    action = data.get("action")
+                    req_id = data.get("req_id")
+
+                    if action == "ping":
+                        await ws.send_str(json.dumps({"type": "pong", "req_id": req_id}))
+                        continue
+
+                    if action == "get_queues":
+                        q_snap, v_snap = await get_all_queues_cached_db()
+                        await ws.send_str(json.dumps({
+                            "type": "action_result",
+                            "req_id": req_id,
+                            "action": action,
+                            "success": True,
+                            "version": v_snap,
+                            "queues": q_snap,
+                        }, ensure_ascii=False))
+                        continue
+
+                    if action == "queue_join":
+                        chat_id = int(data.get("chat_id", 0) or 0)
+                        subject = str(data.get("subject", "ОП")).strip()
+                        user_id = int(data.get("user_id", 0) or 0)
+                        user_name = str(data.get("user_name", "Студент")).strip()
+                        username = str(data.get("username", "")).strip() or None
+                        lab_number = str(data.get("lab_number", "")).strip()
+                        append = bool(data.get("append", False))
+
+                        if not user_id:
+                            await ws.send_str(json.dumps({
+                                "type": "action_result",
+                                "req_id": req_id,
+                                "action": action,
+                                "success": False,
+                                "error": "user_id is required"
+                            }, ensure_ascii=False))
+                            continue
+
+                        ok, res_msg, pos = await join_queue_db(
+                            chat_id, subject, user_id, user_name, username, lab_number, append=append
+                        )
+                        schedule_bg_chat_sync(bot, chat_id, subject)
+                        q_snap, v_snap = await get_all_queues_cached_db()
+                        await ws.send_str(json.dumps({
+                            "type": "action_result",
+                            "req_id": req_id,
+                            "action": action,
+                            "success": ok,
+                            "message": res_msg,
+                            "position": pos,
+                            "subject": subject,
+                            "lab_number": lab_number,
+                            "version": v_snap,
+                            "queues": q_snap,
+                        }, ensure_ascii=False))
+                        await broadcast_queue_ws({"trigger": "join", "subject": subject})
+
+                    elif action == "queue_leave":
+                        chat_id = int(data.get("chat_id", 0) or 0)
+                        subject = str(data.get("subject", "ОП")).strip()
+                        user_id = int(data.get("user_id", 0) or 0)
+                        username = str(data.get("username", "")).strip() or None
+
+                        if not user_id and not username:
+                            await ws.send_str(json.dumps({
+                                "type": "action_result",
+                                "req_id": req_id,
+                                "action": action,
+                                "success": False,
+                                "error": "user_id or username is required"
+                            }, ensure_ascii=False))
+                            continue
+
+                        ok = await leave_queue_db(chat_id, subject, user_id, username=username)
+                        schedule_bg_chat_sync(bot, chat_id, subject)
+                        q_snap, v_snap = await get_all_queues_cached_db()
+                        await ws.send_str(json.dumps({
+                            "type": "action_result",
+                            "req_id": req_id,
+                            "action": action,
+                            "success": ok,
+                            "message": f"Ви вийшли з черги {subject}." if ok else "Вас не було в черзі.",
+                            "version": v_snap,
+                            "queues": q_snap,
+                        }, ensure_ascii=False))
+                        await broadcast_queue_ws({"trigger": "leave", "subject": subject})
+
+                    elif action == "queue_next":
+                        chat_id = int(data.get("chat_id", 0) or 0)
+                        subject = str(data.get("subject", "ОП")).strip()
+                        student = await next_in_queue_db(chat_id, subject)
+                        schedule_bg_chat_sync(bot, chat_id, subject)
+                        q_snap, v_snap = await get_all_queues_cached_db()
+                        await ws.send_str(json.dumps({
+                            "type": "action_result",
+                            "req_id": req_id,
+                            "action": action,
+                            "success": True,
+                            "student": student,
+                            "has_next": student is not None,
+                            "version": v_snap,
+                            "queues": q_snap,
+                        }, ensure_ascii=False))
+                        await broadcast_queue_ws({"trigger": "next", "subject": subject, "called_student": student})
+
+                    elif action == "queue_clear":
+                        user_id = data.get("user_id")
+                        username = data.get("username")
+                        access = await check_admin_access_db(user_id=user_id, username=username)
+                        if not access.get("is_admin"):
+                            await ws.send_str(json.dumps({
+                                "type": "action_result",
+                                "req_id": req_id,
+                                "action": action,
+                                "success": False,
+                                "error": "Немає прав доступу"
+                            }, ensure_ascii=False))
+                            continue
+                        chat_id = int(data.get("chat_id", 0) or 0)
+                        subject = str(data.get("subject", "ОП")).strip()
+                        count = await clear_queue_db(chat_id, subject=subject)
+                        schedule_bg_chat_sync(bot, chat_id, subject)
+                        q_snap, v_snap = await get_all_queues_cached_db()
+                        await ws.send_str(json.dumps({
+                            "type": "action_result",
+                            "req_id": req_id,
+                            "action": action,
+                            "success": True,
+                            "message": f"Чергу {subject} очищено (видалено {count} студентів)",
+                            "count": count,
+                            "version": v_snap,
+                            "queues": q_snap,
+                        }, ensure_ascii=False))
+                        await broadcast_queue_ws({"trigger": "clear", "subject": subject})
+
+                elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
+                    break
+        except Exception as e:
+            logger.debug(f"WebSocket connection closed with error: {e}")
+        finally:
+            _ws_clients.discard(ws)
+        return ws
+
     # --- REST API: Queue ---
     async def handle_api_queue_get(request):
         try:
@@ -238,13 +447,18 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             chat_id_str = request.query.get("chat_id", "0").strip()
             chat_id = int(chat_id_str) if chat_id_str.lstrip("-").isdigit() else 0
 
-            items = await get_active_queue_db(chat_id, subject)
+            queues, version = await get_all_queues_cached_db()
+            items = queues.get(subject)
+            if items is None:
+                items = await get_active_queue_db(chat_id, subject)
             return json_response_cors({
                 "success": True,
                 "subject": subject,
                 "chat_id": chat_id,
                 "items": items,
-                "total": len(items)
+                "total": len(items),
+                "queues": queues,
+                "version": version,
             })
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
@@ -264,16 +478,18 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 return json_response_cors({"success": False, "error": "user_id is required"}, status=400)
 
             ok, msg, pos = await join_queue_db(chat_id, subject, user_id, user_name, username, lab_number, append=append)
-            # Синхронізуємо повідомлення в групі Telegram
-            if chat_id != 0 and bot:
-                await sync_queue_message_in_chat(bot, chat_id, subject)
+            schedule_bg_chat_sync(bot, chat_id, subject)
+            queues, version = await get_all_queues_cached_db()
+            await broadcast_queue_ws({"trigger": "join", "subject": subject})
 
             return json_response_cors({
                 "success": ok,
                 "message": msg,
                 "position": pos,
                 "subject": subject,
-                "lab_number": lab_number
+                "lab_number": lab_number,
+                "queues": queues,
+                "version": version,
             })
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
@@ -290,12 +506,15 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 return json_response_cors({"success": False, "error": "user_id or username is required"}, status=400)
 
             ok = await leave_queue_db(chat_id, subject, user_id, username=username)
-            if chat_id != 0 and bot:
-                await sync_queue_message_in_chat(bot, chat_id, subject)
+            schedule_bg_chat_sync(bot, chat_id, subject)
+            queues, version = await get_all_queues_cached_db()
+            await broadcast_queue_ws({"trigger": "leave", "subject": subject})
 
             return json_response_cors({
                 "success": ok,
-                "message": f"Ви вийшли з черги {subject}." if ok else "Вас не було в черзі."
+                "message": f"Ви вийшли з черги {subject}." if ok else "Вас не було в черзі.",
+                "queues": queues,
+                "version": version,
             })
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
@@ -307,13 +526,16 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             subject = str(data.get("subject", "ОП")).strip()
 
             student = await next_in_queue_db(chat_id, subject)
-            if chat_id != 0 and bot:
-                await sync_queue_message_in_chat(bot, chat_id, subject)
+            schedule_bg_chat_sync(bot, chat_id, subject)
+            queues, version = await get_all_queues_cached_db()
+            await broadcast_queue_ws({"trigger": "next", "subject": subject, "called_student": student})
 
             return json_response_cors({
                 "success": True,
                 "student": student,
-                "has_next": student is not None
+                "has_next": student is not None,
+                "queues": queues,
+                "version": version,
             })
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
@@ -964,13 +1186,16 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             subject = str(data.get("subject", "ОП")).strip()
 
             count = await clear_queue_db(chat_id, subject=subject)
-            if chat_id != 0 and bot:
-                await sync_queue_message_in_chat(bot, chat_id, subject)
+            schedule_bg_chat_sync(bot, chat_id, subject)
+            queues, version = await get_all_queues_cached_db()
+            await broadcast_queue_ws({"trigger": "clear", "subject": subject})
 
             return json_response_cors({
                 "success": True,
                 "message": f"Чергу {subject} очищено (видалено {count} студентів)",
-                "count": count
+                "count": count,
+                "queues": queues,
+                "version": version,
             })
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
@@ -1164,6 +1389,7 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     app.router.add_get("/health", handle_ping)
     app.router.add_get("/status", handle_status)
     app.router.add_get("/app", handle_app_index)
+    app.router.add_get("/ws", handle_websocket)
 
     # API
     app.router.add_route("OPTIONS", "/api/{tail:.*}", handle_options)

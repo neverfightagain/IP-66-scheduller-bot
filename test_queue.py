@@ -1,5 +1,8 @@
 import unittest
 import asyncio
+import tempfile
+from pathlib import Path
+import database
 from database import (
     init_db,
     join_queue_db,
@@ -7,22 +10,42 @@ from database import (
     get_active_queue_db,
     next_in_queue_db,
     clear_queue_db,
-    get_db
+    get_db,
+    invalidate_queue_cache,
 )
 
 class TestLabQueueSystem(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp_dir = tempfile.TemporaryDirectory()
+        cls._orig_db_path = database.DB_PATH
+        cls._orig_turso = database.TURSO_DATABASE_URL
+        cls._orig_sqlitecloud = database.SQLITE_CLOUD_URL
+        database.DB_PATH = Path(cls._tmp_dir.name) / "test_queue.db"
+        database.TURSO_DATABASE_URL = ""
+        database.SQLITE_CLOUD_URL = ""
+
+    @classmethod
+    def tearDownClass(cls):
+        database.DB_PATH = cls._orig_db_path
+        database.TURSO_DATABASE_URL = cls._orig_turso
+        database.SQLITE_CLOUD_URL = cls._orig_sqlitecloud
+        try:
+            cls._tmp_dir.cleanup()
+        except Exception:
+            pass
+
     async def asyncSetUp(self):
         await init_db()
         self.chat_id = 999001
         self.subject = "Тест-АСД"
-        async with get_db() as db:
-            await db.execute("DELETE FROM lab_queues WHERE chat_id = ?", (self.chat_id,))
-            await db.commit()
+        await clear_queue_db(self.chat_id, self.subject)
+        await clear_queue_db(self.chat_id, "ОП")
+        await clear_queue_db(self.chat_id, "АСД")
 
     async def asyncTearDown(self):
-        async with get_db() as db:
-            await db.execute("DELETE FROM lab_queues WHERE chat_id = ?", (self.chat_id,))
-            await db.commit()
+        await clear_queue_db(self.chat_id, self.subject)
+        invalidate_queue_cache()
 
     async def test_join_and_fifo_order(self):
         # 1. Студент 1 стає в чергу
