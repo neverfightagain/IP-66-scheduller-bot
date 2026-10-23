@@ -280,10 +280,16 @@ document.addEventListener('DOMContentLoaded', () => {
             document.documentElement.setAttribute('data-theme', resolved);
         }
 
+        if (btnThemeToggle) {
+            btnThemeToggle.classList.toggle('is-dark', isDark);
+            if (typeof btnThemeToggle.setAttribute === 'function') {
+                btnThemeToggle.setAttribute('aria-checked', isDark ? 'true' : 'false');
+            }
+        }
         if (themeToggleIcon) {
-            themeToggleIcon.textContent = isDark ? '☀️' : '🌙';
+            themeToggleIcon.textContent = isDark ? '🌙' : '☀️';
         } else if (btnThemeToggle) {
-            btnThemeToggle.textContent = isDark ? '☀️' : '🌙';
+            btnThemeToggle.textContent = isDark ? '🌙' : '☀️';
         }
 
         try {
@@ -346,6 +352,12 @@ document.addEventListener('DOMContentLoaded', () => {
         btnThemeToggle.addEventListener('click', () => {
             const isCurrentlyDark = document.body?.classList?.contains('dark-theme');
             const nextTheme = isCurrentlyDark ? 'light' : 'dark';
+            if (document.body?.classList) {
+                document.body.classList.add('theme-transitioning');
+                setTimeout(() => {
+                    document.body?.classList?.remove('theme-transitioning');
+                }, 420);
+            }
             applyTheme(nextTheme, true);
             if (tg?.HapticFeedback) {
                 try { tg.HapticFeedback.impactOccurred('light'); } catch (_) {}

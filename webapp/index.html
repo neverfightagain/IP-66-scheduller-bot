@@ -6,7 +6,7 @@
     <title>IP-66 Hub</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/webapp/app.css?v=3.7">
+    <link rel="stylesheet" href="/webapp/app.css?v=3.8">
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,9 +23,15 @@
             
             <div class="hero-actions-col">
                 <div class="hero-top-badges-row">
-                    <!-- Кнопка перемикання теми (Cozy Night / Pastel Cream) -->
-                    <button class="theme-toggle-btn" id="btn-theme-toggle" title="Перемкнути тему" aria-label="Перемкнути тему">
-                        <span id="theme-toggle-icon">🌙</span>
+                    <!-- Тумблер перемикання теми (Cozy Night / Pastel Cream) -->
+                    <button class="theme-toggle-btn" id="btn-theme-toggle" role="switch" aria-checked="false" title="Перемкнути тему" aria-label="Перемкнути тему">
+                        <span class="theme-switch-track">
+                            <span class="theme-track-icon sun">☀️</span>
+                            <span class="theme-track-icon moon">🌙</span>
+                            <span class="theme-switch-thumb">
+                                <span id="theme-toggle-icon">☀️</span>
+                            </span>
+                        </span>
                     </button>
                     <!-- Кнопка-замочок входу в адмінку (тільки для адмінів/власника) -->
                     <button class="admin-lock-btn hidden" id="nav-btn-admin" title="Панель старостату" aria-label="Адмін-панель">
@@ -455,6 +461,6 @@
     <!-- Toast сповіщення -->
     <div id="toast" class="toast-popup hidden"></div>
 
-    <script src="/webapp/app.js?v=3.7"></script>
+    <script src="/webapp/app.js?v=3.8"></script>
 </body>
 </html>

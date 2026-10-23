@@ -1007,17 +1007,21 @@ async function runTests() {
     // Click to enable Cozy Night dark theme
     btnThemeToggle.click();
     assert.ok(mockDoc.body.classList.contains('dark-theme'), 'Clicking theme toggle must enable dark-theme class on body');
+    assert.ok(btnThemeToggle.classList.contains('is-dark'), 'Switch button must have is-dark class');
+    assert.strictEqual(btnThemeToggle.getAttribute('aria-checked'), 'true', 'Switch aria-checked must be true in dark mode');
     assert.strictEqual(mockDoc.body.getAttribute('data-theme'), 'dark', 'body data-theme must be dark');
     assert.strictEqual(mockDoc.documentElement.getAttribute('data-theme'), 'dark', 'html data-theme must be dark');
     assert.strictEqual(mockLocalStorage.getItem('ip66_theme_preference'), 'dark', 'Theme preference dark must be saved to localStorage');
-    assert.strictEqual(themeToggleIcon.textContent, '☀️', 'Icon must switch to sun when in dark mode');
+    assert.strictEqual(themeToggleIcon.textContent, '🌙', 'Thumb icon must show moon when in dark mode');
 
     // Click again to switch back to light theme
     btnThemeToggle.click();
     assert.ok(!mockDoc.body.classList.contains('dark-theme'), 'Clicking theme toggle again must remove dark-theme class');
+    assert.ok(!btnThemeToggle.classList.contains('is-dark'), 'Switch button must lose is-dark class');
+    assert.strictEqual(btnThemeToggle.getAttribute('aria-checked'), 'false', 'Switch aria-checked must be false in light mode');
     assert.strictEqual(mockDoc.body.getAttribute('data-theme'), 'light', 'body data-theme must be light');
     assert.strictEqual(mockLocalStorage.getItem('ip66_theme_preference'), 'light', 'Theme preference light must be saved to localStorage');
-    assert.strictEqual(themeToggleIcon.textContent, '🌙', 'Icon must switch back to moon when in light mode');
+    assert.strictEqual(themeToggleIcon.textContent, '☀️', 'Thumb icon must show sun when in light mode');
 
     console.log('✓ TEST 14: Theme toggle button & localStorage persistence verified');
 

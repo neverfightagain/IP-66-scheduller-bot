@@ -1551,7 +1551,7 @@ body {
 }
 
 
-/* --- Hero Top Row, Theme Toggle & Admin Lock Button (v3.7) --- */
+/* --- Hero Top Row, Theme Toggle Switch & Admin Lock Button (v3.8) --- */
 .hero-top-badges-row {
     display: flex;
     align-items: center;
@@ -1559,30 +1559,77 @@ body {
 }
 
 .theme-toggle-btn {
-    width: 38px;
-    height: 38px;
-    border-radius: 50%;
-    background: #FFFFFF;
-    border: 2px solid var(--card-border);
-    display: flex;
+    width: 62px;
+    height: 34px;
+    border-radius: 999px;
+    padding: 3px;
+    background: #EDE9E0;
+    border: 1.5px solid #E2DDD3;
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    font-size: 17px;
     cursor: pointer;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.04);
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    box-shadow: inset 0 2px 4px rgba(20, 23, 38, 0.06), 0 2px 8px rgba(20, 23, 38, 0.04);
+    transition: background-color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease, transform 0.15s ease;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     flex-shrink: 0;
+    box-sizing: border-box;
 }
 
 .theme-toggle-btn:hover {
-    border-color: #E2DCD3;
-    transform: translateY(-1px);
+    border-color: #D4CEC2;
 }
 
 .theme-toggle-btn:active {
-    transform: scale(0.92);
+    transform: scale(0.95);
+}
+
+.theme-switch-track {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px;
+    box-sizing: border-box;
+}
+
+.theme-track-icon {
+    font-size: 11.5px;
+    line-height: 1;
+    transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    pointer-events: none;
+}
+
+.theme-track-icon.sun {
+    opacity: 0.2;
+    transform: scale(0.8);
+}
+
+.theme-track-icon.moon {
+    opacity: 0.55;
+    transform: scale(1);
+}
+
+.theme-switch-thumb {
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13.5px;
+    line-height: 1;
+    box-shadow: 0 2px 6px rgba(20, 23, 38, 0.16);
+    transform: translateX(0) rotate(0deg);
+    transition: transform 0.44s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.35s ease, box-shadow 0.35s ease;
+    z-index: 2;
 }
 
 .admin-lock-btn {
@@ -2456,19 +2503,71 @@ body.dark-theme .nav-more-btn,
     color: #A3988E;
 }
 
-/* --- Header Badges, Theme Toggle, Admin Lock, Avatar & Sync Button --- */
+/* --- Header Badges, Theme Toggle Switch, Admin Lock, Avatar & Sync Button --- */
 body.dark-theme .theme-toggle-btn,
-[data-theme="dark"] .theme-toggle-btn {
-    background: #1A1714;
-    border-color: #2E2720;
-    color: #FBBF24;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+[data-theme="dark"] .theme-toggle-btn,
+.theme-toggle-btn.is-dark {
+    background: #26211C;
+    border-color: rgba(251, 191, 36, 0.3);
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.45), 0 0 12px rgba(251, 191, 36, 0.08);
 }
 
 body.dark-theme .theme-toggle-btn:hover,
-[data-theme="dark"] .theme-toggle-btn:hover {
-    background: #231F1B;
-    border-color: #3D342B;
+[data-theme="dark"] .theme-toggle-btn:hover,
+.theme-toggle-btn.is-dark:hover {
+    background: #2D2620;
+    border-color: rgba(251, 191, 36, 0.45);
+}
+
+body.dark-theme .theme-switch-thumb,
+[data-theme="dark"] .theme-switch-thumb,
+.theme-toggle-btn.is-dark .theme-switch-thumb {
+    transform: translateX(26px) rotate(360deg);
+    background: linear-gradient(135deg, #3D3228, #2A231C);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 10px rgba(251, 191, 36, 0.22);
+}
+
+body.dark-theme .theme-track-icon.sun,
+[data-theme="dark"] .theme-track-icon.sun,
+.theme-toggle-btn.is-dark .theme-track-icon.sun {
+    opacity: 0.55;
+    transform: scale(1);
+}
+
+body.dark-theme .theme-track-icon.moon,
+[data-theme="dark"] .theme-track-icon.moon,
+.theme-toggle-btn.is-dark .theme-track-icon.moon {
+    opacity: 0.2;
+    transform: scale(0.8);
+}
+
+/* Smooth page-wide theme transition during toggle */
+body.theme-transitioning,
+body.theme-transitioning .mini-card,
+body.theme-transitioning .featured-card,
+body.theme-transitioning .segmented-nav,
+body.theme-transitioning .seg-pill-btn,
+body.theme-transitioning .queue-mode-box,
+body.theme-transitioning .subj-pill-tab,
+body.theme-transitioning .lab-pill-btn,
+body.theme-transitioning .queue-person-card,
+body.theme-transitioning .task-item-card,
+body.theme-transitioning .work-item-card,
+body.theme-transitioning .subject-progress-hero,
+body.theme-transitioning .admin-card,
+body.theme-transitioning .admin-lesson-card,
+body.theme-transitioning .eng-board-card,
+body.theme-transitioning .eng-group-card,
+body.theme-transitioning .primary-pill-btn,
+body.theme-transitioning .action-sync-btn,
+body.theme-transitioning .admin-lock-btn,
+body.theme-transitioning .user-avatar-badge,
+body.theme-transitioning .modal-sheet {
+    transition: background-color 0.36s cubic-bezier(0.4, 0, 0.2, 1),
+                background 0.36s cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 0.36s ease,
+                color 0.25s ease,
+                box-shadow 0.36s ease !important;
 }
 
 body.dark-theme .admin-lock-btn,
