@@ -1193,58 +1193,6 @@ async def cb_queue_actions(callback: CallbackQuery):
     chat_id = callback.message.chat.id
     user = callback.from_user
 
-    # Обробка підтвердження/відхилення захисту роботи викладачем (Smart Hybrid)
-    if action == "def_confirm":
-        from database import confirm_lab_defense_db, remove_student_from_subject_queues_db
-        from webapp_server import sync_queue_message_in_chat
-        bot_instance = callback.bot
-        def_id = int(data[2]) if len(data) > 2 and data[2].isdigit() else 0
-        target_uid = int(data[3]) if len(data) > 3 and data[3].isdigit() else 0
-        subj = normalize_queue_subject(data[4]) if len(data) > 4 else "ОП"
-
-        defense = await confirm_lab_defense_db(def_id)
-        if not defense:
-            await callback.answer("⚠️ Запис про захист не знайдено.", show_alert=True)
-            return
-
-        if target_uid:
-            affected_chats = await remove_student_from_subject_queues_db(target_uid, subj)
-            for cid in affected_chats:
-                await sync_queue_message_in_chat(bot_instance, cid, subj)
-
-        confirmer_name = callback.from_user.full_name or "Користувач"
-        await callback.answer("✅ Захист підтверджено та студента виписано з черги!", show_alert=False)
-        try:
-            await callback.message.edit_text(
-                f"✅ <b>Захист підтверджено!</b>\n\n"
-                f"👤 <b>{escape_html_text(defense['real_name'])}</b> успішно склав(ла) <b>{escape_html_text(defense['lab_number'])}</b> ({defense['subject']})!\n"
-                f"🧹 Студента виписано з живої черги.\n\n"
-                f"<i>(Підтвердив(ла): {escape_html_text(confirmer_name)})</i>",
-                parse_mode="HTML",
-                reply_markup=None
-            )
-        except Exception:
-            pass
-        return
-
-    if action == "def_reject":
-        from database import reject_lab_defense_db
-        def_id = int(data[2]) if len(data) > 2 and data[2].isdigit() else 0
-        await reject_lab_defense_db(def_id)
-        rejecter_name = callback.from_user.full_name or "Користувач"
-        await callback.answer("❌ Захист відхилено", show_alert=False)
-        try:
-            await callback.message.edit_text(
-                f"❌ <b>Захист відхилено / скасовано.</b>\n"
-                f"Студент залишається у черзі.\n\n"
-                f"<i>(Скасував(ла): {escape_html_text(rejecter_name)})</i>",
-                parse_mode="HTML",
-                reply_markup=None
-            )
-        except Exception:
-            pass
-        return
-
     # Дії на загальному хабі
     if action in ("hub", "hub_refresh"):
         op_items = await get_active_queue_db(chat_id, "ОП")
