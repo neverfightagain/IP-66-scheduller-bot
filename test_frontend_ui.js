@@ -165,6 +165,7 @@ function getOrCreateElement(id, tag = 'div') {
 // Pre-create known DOM elements from index.html (including all admin elements)
 const elementIds = [
     'user-greeting', 'hero-subtitle', 'user-avatar-badge', 'user-avatar-text', 'btn-sync',
+    'btn-theme-toggle', 'theme-toggle-icon',
     'mini-card-op', 'mini-card-asd', 'mini-op-stat', 'mini-op-sub', 'mini-asd-stat', 'mini-asd-sub',
     'subj-tab-op', 'subj-tab-asd', 'subj-tab-eng', 'queue-op-asd-view', 'labs-grid', 'priority-preview', 'preview-text',
     'my-status-box', 'my-pos-text', 'my-labs-text', 'btn-leave-queue', 'btn-next-student',
@@ -273,7 +274,8 @@ const mockDoc = {
         if (sel === '.tab-content') return [tabQueue, tabSchedule, tabDeadlines, tabSubjects, tabAdmin];
         return [];
     },
-    body: new MockElement('body', 'body')
+    body: new MockElement('body', 'body'),
+    documentElement: new MockElement('html', 'html')
 };
 
 const networkRequests = [];
@@ -991,6 +993,33 @@ async function runTests() {
     assert.ok(exportBtns.length > 0, 'Export for lecturer button must exist');
 
     console.log('✓ TEST 13: English projects board rendering, group collaboration, and AI Q&A defense passed');
+
+    // ==========================================
+    // TEST 14: Theme Toggle & Storage Persistence (Cozy Night Academy)
+    // ==========================================
+    const btnThemeToggle = getOrCreateElement('btn-theme-toggle', 'button');
+    const themeToggleIcon = getOrCreateElement('theme-toggle-icon', 'span');
+
+    // Initially light theme by default in test sandbox
+    assert.ok(!mockDoc.body.classList.contains('dark-theme'), 'Initial theme must be light');
+    assert.strictEqual(mockDoc.body.getAttribute('data-theme'), 'light', 'Initial body data-theme must be light');
+
+    // Click to enable Cozy Night dark theme
+    btnThemeToggle.click();
+    assert.ok(mockDoc.body.classList.contains('dark-theme'), 'Clicking theme toggle must enable dark-theme class on body');
+    assert.strictEqual(mockDoc.body.getAttribute('data-theme'), 'dark', 'body data-theme must be dark');
+    assert.strictEqual(mockDoc.documentElement.getAttribute('data-theme'), 'dark', 'html data-theme must be dark');
+    assert.strictEqual(mockLocalStorage.getItem('ip66_theme_preference'), 'dark', 'Theme preference dark must be saved to localStorage');
+    assert.strictEqual(themeToggleIcon.textContent, '☀️', 'Icon must switch to sun when in dark mode');
+
+    // Click again to switch back to light theme
+    btnThemeToggle.click();
+    assert.ok(!mockDoc.body.classList.contains('dark-theme'), 'Clicking theme toggle again must remove dark-theme class');
+    assert.strictEqual(mockDoc.body.getAttribute('data-theme'), 'light', 'body data-theme must be light');
+    assert.strictEqual(mockLocalStorage.getItem('ip66_theme_preference'), 'light', 'Theme preference light must be saved to localStorage');
+    assert.strictEqual(themeToggleIcon.textContent, '🌙', 'Icon must switch back to moon when in light mode');
+
+    console.log('✓ TEST 14: Theme toggle button & localStorage persistence verified');
 
     console.log('\n========================================');
     console.log('🎉 ALL UI TESTS PASSED SUCCESSFULLY! 🎉');

@@ -261,6 +261,104 @@ document.addEventListener('DOMContentLoaded', () => {
         }, duration);
     }
 
+    // --- 🌙/☀️ Theme Controller (Cozy Night Academy / Pastel Cream) ---
+    const THEME_STORAGE_KEY = 'ip66_theme_preference';
+    const btnThemeToggle = document.getElementById('btn-theme-toggle');
+    const themeToggleIcon = document.getElementById('theme-toggle-icon');
+
+    function applyTheme(theme, saveToStorage = false) {
+        const isDark = theme === 'dark';
+        const resolved = isDark ? 'dark' : 'light';
+
+        if (document.body) {
+            document.body.classList.toggle('dark-theme', isDark);
+            if (typeof document.body.setAttribute === 'function') {
+                document.body.setAttribute('data-theme', resolved);
+            }
+        }
+        if (document.documentElement && typeof document.documentElement.setAttribute === 'function') {
+            document.documentElement.setAttribute('data-theme', resolved);
+        }
+
+        if (themeToggleIcon) {
+            themeToggleIcon.textContent = isDark ? '☀️' : '🌙';
+        } else if (btnThemeToggle) {
+            btnThemeToggle.textContent = isDark ? '☀️' : '🌙';
+        }
+
+        try {
+            const bgHex = isDark ? '#12100E' : '#FAF8F5';
+            if (typeof tg?.setBackgroundColor === 'function') tg.setBackgroundColor(bgHex);
+            if (typeof tg?.setHeaderColor === 'function') tg.setHeaderColor(bgHex);
+        } catch (_) {}
+
+        if (saveToStorage) {
+            try {
+                localStorage.setItem(THEME_STORAGE_KEY, resolved);
+            } catch (_) {}
+            try {
+                if (tg?.CloudStorage && typeof tg.CloudStorage.setItem === 'function') {
+                    tg.CloudStorage.setItem(THEME_STORAGE_KEY, resolved, () => {});
+                }
+            } catch (_) {}
+        }
+    }
+
+    // Initial Theme Hydration (localStorage -> Telegram CloudStorage -> Telegram system colorScheme)
+    (function initTheme() {
+        let savedTheme = null;
+        try {
+            savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+        } catch (_) {}
+
+        if (savedTheme === 'dark' || savedTheme === 'light') {
+            applyTheme(savedTheme, false);
+        } else {
+            const sysTheme = tg?.colorScheme === 'dark' ? 'dark' : 'light';
+            applyTheme(sysTheme, false);
+
+            try {
+                if (tg?.CloudStorage && typeof tg.CloudStorage.getItem === 'function') {
+                    tg.CloudStorage.getItem(THEME_STORAGE_KEY, (err, val) => {
+                        if (!err && (val === 'dark' || val === 'light')) {
+                            try { localStorage.setItem(THEME_STORAGE_KEY, val); } catch (_) {}
+                            applyTheme(val, false);
+                        }
+                    });
+                }
+            } catch (_) {}
+        }
+
+        try {
+            if (typeof tg?.onEvent === 'function') {
+                tg.onEvent('themeChanged', () => {
+                    let manualPref = null;
+                    try { manualPref = localStorage.getItem(THEME_STORAGE_KEY); } catch (_) {}
+                    if (!manualPref) {
+                        applyTheme(tg?.colorScheme === 'dark' ? 'dark' : 'light', false);
+                    }
+                });
+            }
+        } catch (_) {}
+    })();
+
+    if (btnThemeToggle) {
+        btnThemeToggle.addEventListener('click', () => {
+            const isCurrentlyDark = document.body?.classList?.contains('dark-theme');
+            const nextTheme = isCurrentlyDark ? 'light' : 'dark';
+            applyTheme(nextTheme, true);
+            if (tg?.HapticFeedback) {
+                try { tg.HapticFeedback.impactOccurred('light'); } catch (_) {}
+            }
+            showToast(
+                nextTheme === 'dark'
+                    ? '🌙 Увімкнено темну тему (Cozy Night)'
+                    : '☀️ Увімкнено світлу тему',
+                2000
+            );
+        });
+    }
+
     // Modal Sheet Functions
     let isClosingModal = false;
 
