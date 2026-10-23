@@ -362,12 +362,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tg?.HapticFeedback) {
                 try { tg.HapticFeedback.impactOccurred('light'); } catch (_) {}
             }
-            showToast(
-                nextTheme === 'dark'
-                    ? '🌙 Увімкнено темну тему (Cozy Night)'
-                    : '☀️ Увімкнено світлу тему',
-                2000
-            );
         });
     }
 
