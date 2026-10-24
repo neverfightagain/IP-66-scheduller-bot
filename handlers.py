@@ -177,7 +177,10 @@ def make_webapp_button(text: str, url: str, chat_id: int = 0, subject: str = "")
     return InlineKeyboardButton(text=text, url=deep_link)
 
 
-async def is_admin_user(message: Message) -> bool:
+ACCESS_DENIED_MSG = "⛔ Доступ заборонено: у вас немає прав для виконання цієї команди. Тільки для старости або адміністраторів."
+
+
+async def is_admin_user(message: Message, bot: Bot | None = None) -> bool:
     """Перевіряє права адміністратора виключно за числовим user_id або статусом адміна чату."""
     user = message.from_user
     if not user or not user.id:
@@ -188,10 +191,11 @@ async def is_admin_user(message: Message) -> bool:
     access = await check_admin_access_db(user_id=user.id)
     if access.get("is_admin"):
         return True
-    if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and message.bot:
+    actual_bot = bot or getattr(message, "bot", None)
+    if message.chat and message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and actual_bot:
         try:
-            member = await message.bot.get_chat_member(message.chat.id, user.id)
-            if member.status in ("administrator", "creator"):
+            member = await actual_bot.get_chat_member(message.chat.id, user.id)
+            if getattr(member, "status", None) in ("administrator", "creator"):
                 return True
         except Exception:
             pass
@@ -379,12 +383,12 @@ async def cmd_app(message: Message):
 
 @router.message(Command("subscribe"))
 async def cmd_subscribe(message: Message):
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     chat_id = message.chat.id
     thread_id = getattr(message, "message_thread_id", None)
-    if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-        if not await is_admin_user(message):
-            await safe_answer(message, "⛔ Тільки адміністратори групи або староста можуть керувати підпискою чату.")
-            return
 
     from database import add_subscription_db
     await add_subscription_db(chat_id, thread_id)
@@ -409,12 +413,12 @@ async def cmd_subscribe(message: Message):
 
 @router.message(Command("unsubscribe"))
 async def cmd_unsubscribe(message: Message):
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     chat_id = message.chat.id
     thread_id = getattr(message, "message_thread_id", None)
-    if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-        if not await is_admin_user(message):
-            await safe_answer(message, "⛔ Тільки адміністратори групи або староста можуть керувати підпискою чату.")
-            return
 
     from database import remove_subscription_db
     await remove_subscription_db(chat_id, thread_id)
@@ -518,7 +522,11 @@ async def cmd_links(message: Message):
 
 @router.message(Command("setlink"))
 async def cmd_set_link(message: Message):
-    from links_manager import set_course_link
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
+    from links_manager import set_course_link, is_valid_pair_link
     raw_text = message.text.replace("/setlink", "", 1).strip()
     parts = [p.strip() for p in raw_text.split("|")]
     if len(parts) < 2:
@@ -535,8 +543,11 @@ async def cmd_set_link(message: Message):
     url = parts[1].strip()
     comment = parts[2][:100].strip() if len(parts) > 2 else ""
 
-    if not (url.startswith("http://") or url.startswith("https://")):
-        await safe_answer(message, "❌ Посилання має починатися з <code>https://</code> або <code>http://</code>!")
+    if not is_valid_pair_link(url):
+        await safe_answer(
+            message,
+            "⚠️ Некоректний домен або небезпечне посилання. Дозволені лише HTTPS посилання на сервіси відеозв'язку (zoom.us, meet.google.com, teams.microsoft.com)."
+        )
         return
 
     set_course_link(raw_key, url, comment)
@@ -551,6 +562,10 @@ async def cmd_set_link(message: Message):
 
 @router.message(Command("dellink"))
 async def cmd_del_link(message: Message):
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     from links_manager import delete_course_link
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
@@ -667,6 +682,10 @@ async def _run_youtube_check_bg(message: Message, bot: Bot, status_msg: Message)
 
 @router.message(Command("youtube"))
 async def cmd_youtube(message: Message, bot: Bot):
+    if not await is_admin_user(message, bot):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     status_msg = await safe_answer(message, "🎬 Перевіряю нові лекції на YouTube-каналі групи...")
     asyncio.create_task(_run_youtube_check_bg(message, bot, status_msg))
 
@@ -730,12 +749,20 @@ async def _run_sync_bg(message: Message, bot: Bot, status_msg: Message):
 
 @router.message(Command("sync"))
 async def cmd_sync(message: Message, bot: Bot):
+    if not await is_admin_user(message, bot):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     status_msg = await safe_answer(message, "🔄 Запускаю синхронізацію з Google Classroom та YouTube...")
     asyncio.create_task(_run_sync_bg(message, bot, status_msg))
 
 
 @router.message(Command("adddeadline"))
 async def cmd_add_deadline(message: Message):
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     from database import add_assignment_db
 
     raw_text = message.text.replace("/adddeadline", "", 1).strip()
@@ -778,6 +805,10 @@ async def cmd_add_deadline(message: Message):
 
 @router.message(Command("deldeadline"))
 async def cmd_del_deadline(message: Message):
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     from database import delete_assignment_db
 
     parts = message.text.split(maxsplit=1)
@@ -786,6 +817,10 @@ async def cmd_del_deadline(message: Message):
         return
 
     aid = escape_html_text(parts[1].strip()[:50])
+    if aid.startswith("gc_") and not await is_admin_user(message):
+        await safe_answer(message, "⛔ Доступ заборонено: завдання з Google Classroom не можна видаляти. Тільки для старости.")
+        return
+
     await delete_assignment_db(aid)
     await safe_answer(message, f"🗑 Дедлайн <code>{aid}</code> видалено або позначено як виконаний!")
 
@@ -816,6 +851,10 @@ async def cmd_summary(message: Message):
 @router.message(Command("status"))
 async def cmd_status(message: Message):
     """Показати діагностику підписки цього чату та статус бота."""
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     chat_id = message.chat.id
     thread_id = getattr(message, "message_thread_id", None)
 
@@ -851,6 +890,10 @@ async def cmd_status(message: Message):
 @router.message(Command("test_alert"))
 async def cmd_test_alert(message: Message):
     """Надіслати тестове нагадування в цей чат/топік прямо зараз."""
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     chat_id = message.chat.id
     thread_id = getattr(message, "message_thread_id", None)
 
@@ -1181,8 +1224,7 @@ async def cmd_students_list(message: Message):
         text_lines.append(f"<b>🔹 Підгрупа {sg}:</b>")
         for idx, s in enumerate(by_subgroup[sg], 1):
             uname_str = f" (@{s['telegram_username']})" if s.get("telegram_username") else ""
-            notes_str = f" — <i>{s['notes']}</i>" if s.get("notes") else ""
-            text_lines.append(f"  {idx}. <b>{escape_html_text(s['real_name'])}</b>{uname_str}{notes_str}")
+            text_lines.append(f"  {idx}. <b>{escape_html_text(s['real_name'])}</b>{uname_str}")
         text_lines.append("")
 
     text_lines.append("<i>💡 Справжні імена автоматично підставляються в живу чергу та Telegram Mini App.</i>")
@@ -1192,6 +1234,10 @@ async def cmd_students_list(message: Message):
 @router.message(Command("addstudent"))
 async def cmd_add_student(message: Message):
     """Додати або оновити студента: /addstudent Іванов Іван @username [підгрупа 1 або 2]"""
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     from database import add_or_update_student_db
     parts = message.text.split()[1:]
     if not parts:
@@ -1362,6 +1408,10 @@ async def cb_queue_actions(callback: CallbackQuery):
 
 @router.message(Command("cancel_pair"))
 async def cmd_cancel_pair(message: Message):
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     from database import cancel_pair_db, get_cancelled_pairs_for_date_db
     raw = message.text.replace("/cancel_pair", "", 1).strip()
     if not raw:
@@ -1410,6 +1460,10 @@ async def cmd_cancel_pair(message: Message):
 
 @router.message(Command("uncancel_pair"))
 async def cmd_uncancel_pair(message: Message):
+    if not await is_admin_user(message):
+        await safe_answer(message, ACCESS_DENIED_MSG)
+        return
+
     from database import uncancel_pair_db
     raw = message.text.replace("/uncancel_pair", "", 1).strip().split()
     if not raw or not raw[0].isdigit():

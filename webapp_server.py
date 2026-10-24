@@ -86,7 +86,7 @@ def json_response_cors(data: dict, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, headers=cors_headers())
 
 
-def verify_telegram_init_data(init_data_raw: str, max_age_sec: int = 86400) -> dict | None:
+def verify_telegram_init_data(init_data_raw: str, max_age_sec: int = 3600) -> dict | None:
     """Перевіряє криптографічний підпис Telegram WebApp initData (HMAC-SHA256)."""
     if not init_data_raw or not BOT_TOKEN:
         return None
@@ -629,6 +629,8 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     async def handle_api_queue_next(request):
         try:
             access, data = await require_admin_auth(request)
+            if not access.get("authenticated"):
+                return json_response_cors({"success": False, "error": "Необхідна авторизація через Telegram Mini App"}, status=401)
             if not access.get("is_admin"):
                 return json_response_cors({"success": False, "error": "Тільки староста або адміністратор може викликати наступного"}, status=403)
 
@@ -890,11 +892,22 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     async def handle_api_students_get(request):
         try:
             students = await get_all_students_db()
-            students = [s for s in students if "куратор" not in (s.get("real_name") or "").lower()]
+            sanitized = []
+            for s in students:
+                rname = s.get("real_name") or ""
+                if "куратор" in rname.lower():
+                    continue
+                sanitized.append({
+                    "id": s.get("id"),
+                    "real_name": rname,
+                    "telegram_username": s.get("telegram_username"),
+                    "telegram_id": s.get("telegram_id"),
+                    "subgroup": s.get("subgroup", 1),
+                })
             return json_response_cors({
                 "success": True,
-                "students": students,
-                "total": len(students)
+                "students": sanitized,
+                "total": len(sanitized)
             })
         except Exception as e:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
@@ -1021,9 +1034,10 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 data = {}
         verified_user = get_verified_webapp_user(request, data)
         if not verified_user or not verified_user.get("id"):
-            return {"is_admin": False, "is_owner": False, "role": None}, data
+            return {"authenticated": False, "is_admin": False, "is_owner": False, "role": None}, data
         user_id = int(verified_user["id"])
         access = await check_admin_access_db(user_id=user_id)
+        access["authenticated"] = True
         return access, data
 
     # --- REST API: Admin Panel ---

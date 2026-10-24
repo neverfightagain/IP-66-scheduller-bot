@@ -111,7 +111,7 @@ class TestTelegramBotCommandsSecuritySpec(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         # Ізоляція перевірки адмін-прав у пам'яті: тільки OWNER_UID вважається адміном
         async def mock_check_admin(user_id=None, username=None):
-            is_adm = (user_id == self.OWNER_UID) or (username in config.OWNER_USERNAMES)
+            is_adm = (user_id == self.OWNER_UID)
             return {
                 "is_admin": is_adm,
                 "is_owner": is_adm,

@@ -2,9 +2,36 @@ import json
 import logging
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 from config import LINKS_FILE
 
 logger = logging.getLogger(__name__)
+
+ALLOWED_LINK_DOMAINS = {
+    "zoom.us",
+    "meet.google.com",
+    "teams.microsoft.com",
+}
+
+
+def is_valid_pair_link(url: str) -> bool:
+    """Перевіряє, що посилання має протокол HTTPS та належить до списку дозволених доменів (Zoom, Google Meet, MS Teams)."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url.strip())
+        if parsed.scheme.lower() != "https":
+            return False
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        if host in ALLOWED_LINK_DOMAINS:
+            return True
+        if host.endswith(".zoom.us") or host.endswith(".teams.microsoft.com"):
+            return True
+        return False
+    except Exception:
+        return False
 
 
 def load_links() -> dict:
@@ -51,6 +78,10 @@ def save_links(links_data: dict) -> bool:
 
 def set_course_link(key: str, url: str, comment: str = "", lecturer: str = "") -> bool:
     """Додати або оновити посилання для предмету."""
+    if not is_valid_pair_link(url):
+        logger.warning(f"Відхилено збереження посилання на заборонений/не-whitelist домен: {url}")
+        return False
+
     links = load_links()
 
     subject = key.split("(")[0].strip()

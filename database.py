@@ -720,7 +720,6 @@ async def init_db():
 
         # Автоматичне вилучення кураторів та очищення персональних даних (Д/Н, телефонів, пошт) із реєстру студентів
         await db.execute("DELETE FROM students WHERE LOWER(real_name) LIKE '%куратор%' OR real_name LIKE '%Куратор%'")
-        await db.execute("UPDATE students SET notes = NULL WHERE notes LIKE '%Д/Н:%' OR notes LIKE '%Тел:%' OR notes LIKE '%Пошта:%'")
         await db.commit()
 
         # Автоматичний первинний імпорт списку групи з STUDENTS_ROSTER_JSON або students_roster.json
