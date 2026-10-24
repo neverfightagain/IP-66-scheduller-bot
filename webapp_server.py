@@ -240,9 +240,31 @@ def extract_text_from_uploaded_file(filename: str, file_bytes: bytes) -> str:
         return file_bytes.decode("utf-8", errors="ignore").strip()
 
 
+def is_security_lockdown() -> bool:
+    return os.getenv("SECURITY_LOCKDOWN", "1").strip().lower() not in ("0", "false", "no")
+
+
+@web.middleware
+async def security_lockdown_middleware(request: web.Request, handler):
+    if request.method != "OPTIONS" and is_security_lockdown():
+        p = request.path
+        if (
+            p == "/status"
+            or p == "/api/students"
+            or p.startswith("/api/students/")
+            or p.startswith("/api/admin/")
+            or p.startswith("/api/projects/")
+        ):
+            return json_response_cors(
+                {"success": False, "error": "Ендпоінт тимчасово заблоковано на період безпекового аудиту"},
+                status=503,
+            )
+    return await handler(request)
+
+
 def create_webapp_app(bot: Bot | None = None) -> web.Application:
     """Створює веб-додаток aiohttp для Telegram Mini App, REST API та health-check."""
-    app = web.Application()
+    app = web.Application(middlewares=[security_lockdown_middleware])
 
     # OPTIONS preflight handler for CORS
     async def handle_options(request):
