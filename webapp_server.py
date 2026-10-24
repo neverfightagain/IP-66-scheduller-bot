@@ -280,7 +280,7 @@ def extract_text_from_uploaded_file(filename: str, file_bytes: bytes) -> str:
 
 
 def is_security_lockdown() -> bool:
-    return os.getenv("SECURITY_LOCKDOWN", "1").strip().lower() not in ("0", "false", "no")
+    return os.getenv("SECURITY_LOCKDOWN", "0").strip().lower() in ("1", "true", "yes")
 
 
 @web.middleware
@@ -321,7 +321,6 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 "status": "online",
                 "time_kyiv": datetime.now(KYIV_TZ).strftime("%Y-%m-%d %H:%M:%S"),
                 "database_target": "turso" if TURSO_DATABASE_URL else ("sqlitecloud" if SQLITE_CLOUD_URL else "local_sqlite"),
-                "subscribed_chats": targets,
                 "subscribed_count": len(targets),
                 "cached_lessons_count": len(_today_cached_lessons),
                 "week": _today_cached_week,

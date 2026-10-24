@@ -2005,6 +2005,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // ⚙️ АДМІН-ПАНЕЛЬ (ВЛАСНИК, СТАРОСТА, ЗАМСТАРОСТИ)
     // ==========================================
 
+    function adminFetch(url, options = {}) {
+        const headers = {
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+        };
+        if (tg?.initData) {
+            headers['X-Telegram-Init-Data'] = tg.initData;
+        }
+        if (options.body && typeof options.body === 'string') {
+            try {
+                const parsed = JSON.parse(options.body);
+                if (!parsed.initData && tg?.initData) {
+                    parsed.initData = tg.initData;
+                    options.body = JSON.stringify(parsed);
+                }
+            } catch (_) {}
+        }
+        return fetch(url, { ...options, headers });
+    }
+
     function getKyivDateString(offsetDays = 0) {
         const d = new Date();
         d.setDate(d.getDate() + offsetDays);
@@ -2018,7 +2038,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const reason = prompt(`Вкажіть причину скасування пари №${pairNum} на ${date}:`, "Скасовано викладачем/старостою");
         if (reason === null) return;
         try {
-            const res = await fetch('/api/admin/schedule/cancel', {
+            const res = await adminFetch('/api/admin/schedule/cancel', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2050,7 +2070,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function handleAdminUncancelPair(date, pairNum) {
         try {
-            const res = await fetch('/api/admin/schedule/uncancel', {
+            const res = await adminFetch('/api/admin/schedule/uncancel', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2080,7 +2100,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function handleAdminDeletePair(customId) {
         if (!confirm("Видалити цю додаткову пару з розкладу?")) return;
         try {
-            const res = await fetch('/api/admin/schedule/delete_pair', {
+            const res = await adminFetch('/api/admin/schedule/delete_pair', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2271,7 +2291,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const roleId = btn.getAttribute('data-role-id');
                 if (!confirm("Зняти права адміністратора з цього користувача?")) return;
                 try {
-                    const res = await fetch('/api/admin/roles/revoke', {
+                    const res = await adminFetch('/api/admin/roles/revoke', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -2298,7 +2318,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const uid = currentUser.id || '';
             const uname = encodeURIComponent(currentUser.username || '');
-            const res = await fetch(`/api/admin/me?user_id=${uid}&username=${uname}`);
+            const initDataParam = tg?.initData ? `&initData=${encodeURIComponent(tg.initData)}` : '';
+            const res = await adminFetch(`/api/admin/me?user_id=${uid}&username=${uname}${initDataParam}`);
             const data = await res.json();
             if (data.success && data.is_admin) {
                 currentUser.isAdmin = true;
@@ -2330,7 +2351,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         testModeToggle.onchange = async () => {
                             try {
                                 const newMode = testModeToggle.checked;
-                                const r = await fetch('/api/admin/test_mode', {
+                                const r = await adminFetch('/api/admin/test_mode', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({
@@ -3384,7 +3405,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 try {
-                    const res = await fetch('/api/admin/schedule/add_pair', {
+                    const res = await adminFetch('/api/admin/schedule/add_pair', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -3454,7 +3475,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const role = roleSel?.value || 'deputy';
 
                 try {
-                    const res = await fetch('/api/admin/roles/grant', {
+                    const res = await adminFetch('/api/admin/roles/grant', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
