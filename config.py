@@ -29,7 +29,10 @@ TIMEZONE_NAME = os.getenv("TIMEZONE", "Europe/Kyiv")
 KYIV_TZ = ZoneInfo(TIMEZONE_NAME)
 
 OWNER_ID = int(os.getenv("OWNER_ID", "8735281894"))
-OWNER_USERNAMES = {"neverfightaga1n", "sinch"}
+_raw_admin_ids = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS: set[int] = {
+    int(x.strip()) for x in _raw_admin_ids.split(",") if x.strip().lstrip("-").isdigit()
+} | {OWNER_ID}
 
 MORNING_DIGEST_TIME = os.getenv("MORNING_DIGEST_TIME", "08:00")
 NOTIFY_MINUTES_BEFORE = int(os.getenv("NOTIFY_MINUTES_BEFORE", "5"))

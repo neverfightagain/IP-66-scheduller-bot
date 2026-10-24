@@ -16,6 +16,8 @@ from config import (
     KPI_GROUP_ID,
     WEBAPP_URL,
     BOT_USERNAME,
+    OWNER_ID,
+    ADMIN_IDS,
     add_subscribed_chat,
     remove_subscribed_chat,
     get_subscribed_chats,
@@ -175,15 +177,32 @@ def make_webapp_button(text: str, url: str, chat_id: int = 0, subject: str = "")
     return InlineKeyboardButton(text=text, url=deep_link)
 
 
+async def is_admin_user(message: Message) -> bool:
+    """Перевіряє права адміністратора виключно за числовим user_id або статусом адміна чату."""
+    user = message.from_user
+    if not user or not user.id:
+        return False
+    if user.id == OWNER_ID or user.id in ADMIN_IDS:
+        return True
+    from database import check_admin_access_db
+    access = await check_admin_access_db(user_id=user.id)
+    if access.get("is_admin"):
+        return True
+    if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and message.bot:
+        try:
+            member = await message.bot.get_chat_member(message.chat.id, user.id)
+            if member.status in ("administrator", "creator"):
+                return True
+        except Exception:
+            pass
+    return False
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     chat_id = message.chat.id
     chat_type = message.chat.type
     thread_id = getattr(message, "message_thread_id", None)
-
-    from database import add_subscription_db
-    is_new = await add_subscription_db(chat_id, thread_id)
-    add_subscribed_chat(chat_id, thread_id)
 
     # Обробка переходу з груп для запуску Telegram Mini App у приватних повідомленнях
     start_arg = extract_command_args(message.text or "").strip().lower()
@@ -260,10 +279,17 @@ async def cmd_start(message: Message):
     if thread_id:
         id_info += f"\n📌 <b>ID топіку:</b> <code>{thread_id}</code>"
 
+    from database import get_subscribed_chats_db
+    targets = await get_subscribed_chats_db()
+    is_already_sub = any(
+        t["chat_id"] == chat_id and (thread_id is None or t.get("thread_id") == thread_id)
+        for t in targets
+    )
+
     sub_status = (
-        f"✅ Сповіщення активовано для {chat_desc}!{id_info}"
-        if is_new
-        else f"ℹ️ {chat_desc.capitalize()} вже підписано на сповіщення.{id_info}"
+        f"ℹ️ {chat_desc.capitalize()} підписано на сповіщення.{id_info}"
+        if is_already_sub
+        else f"ℹ️ Щоб увімкнути автоматичні сповіщення для {chat_desc}, використайте команду /subscribe.{id_info}"
     )
 
     text = (
@@ -355,6 +381,10 @@ async def cmd_app(message: Message):
 async def cmd_subscribe(message: Message):
     chat_id = message.chat.id
     thread_id = getattr(message, "message_thread_id", None)
+    if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+        if not await is_admin_user(message):
+            await safe_answer(message, "⛔ Тільки адміністратори групи або староста можуть керувати підпискою чату.")
+            return
 
     from database import add_subscription_db
     await add_subscription_db(chat_id, thread_id)
@@ -381,6 +411,10 @@ async def cmd_subscribe(message: Message):
 async def cmd_unsubscribe(message: Message):
     chat_id = message.chat.id
     thread_id = getattr(message, "message_thread_id", None)
+    if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+        if not await is_admin_user(message):
+            await safe_answer(message, "⛔ Тільки адміністратори групи або староста можуть керувати підпискою чату.")
+            return
 
     from database import remove_subscription_db
     await remove_subscription_db(chat_id, thread_id)

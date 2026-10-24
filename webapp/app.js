@@ -1093,6 +1093,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 clearTimeout(wsReconnectTimer);
                 wsReconnectTimer = null;
             }
+            try {
+                queueWs.send(JSON.stringify({
+                    action: 'auth',
+                    initData: tg?.initData || ''
+                }));
+            } catch (_) {}
         };
 
         queueWs.onmessage = (event) => {
@@ -1155,8 +1161,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const res = await fetch(httpUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Telegram-Init-Data': tg?.initData || ''
+            },
+            body: JSON.stringify({ ...payload, initData: tg?.initData || '' })
         });
         const data = await res.json();
         if (data.queues) {

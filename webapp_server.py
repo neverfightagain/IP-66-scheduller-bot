@@ -1,5 +1,9 @@
 import os
 import json
+import hmac
+import hashlib
+import time
+import urllib.parse
 import asyncio
 import logging
 from datetime import datetime, date, timedelta
@@ -10,6 +14,7 @@ from aiogram.types import InlineKeyboardMarkup
 
 from config import (
     BASE_DIR,
+    BOT_TOKEN,
     KYIV_TZ,
     KPI_GROUP_ID,
     TURSO_DATABASE_URL,
@@ -73,12 +78,46 @@ def cors_headers() -> dict:
     return {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Telegram-Init-Data",
+        "Access-Control-Allow-Headers": "X-Telegram-Init-Data, Content-Type, Authorization",
     }
 
 
 def json_response_cors(data: dict, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, headers=cors_headers())
+
+
+def verify_telegram_init_data(init_data_raw: str, max_age_sec: int = 86400) -> dict | None:
+    """Перевіряє криптографічний підпис Telegram WebApp initData (HMAC-SHA256)."""
+    if not init_data_raw or not BOT_TOKEN:
+        return None
+    try:
+        parsed = dict(urllib.parse.parse_qsl(init_data_raw, keep_blank_values=True))
+        received_hash = parsed.pop("hash", None)
+        if not received_hash:
+            return None
+        auth_date = int(parsed.get("auth_date", "0") or "0")
+        if max_age_sec > 0 and abs(time.time() - auth_date) > max_age_sec:
+            return None
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calculated_hash, received_hash):
+            return None
+        user_raw = parsed.get("user")
+        return json.loads(user_raw) if user_raw else None
+    except Exception:
+        return None
+
+
+def get_verified_webapp_user(request: web.Request, body_data: dict | None = None) -> dict | None:
+    """Витягує та верифікує користувача з заголовка X-Telegram-Init-Data або поля initData."""
+    raw_init_data = (
+        request.headers.get("X-Telegram-Init-Data")
+        or (body_data.get("initData") if isinstance(body_data, dict) else None)
+        or request.query.get("initData")
+        or ""
+    ).strip()
+    return verify_telegram_init_data(raw_init_data)
 
 
 _ws_clients: set[web.WebSocketResponse] = set()
@@ -303,15 +342,22 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     async def handle_websocket(request):
         ws = web.WebSocketResponse(heartbeat=25.0)
         await ws.prepare(request)
-        _ws_clients.add(ws)
-        try:
-            queues, version = await get_all_queues_cached_db()
-            await ws.send_str(json.dumps({
-                "type": "queue_update",
-                "version": version,
-                "queues": queues,
-            }, ensure_ascii=False))
+        ws_user: dict | None = None
 
+        async def _enforce_auth_timeout():
+            await asyncio.sleep(5.0)
+            if ws_user is None and not ws.closed:
+                try:
+                    await ws.send_str(json.dumps({
+                        "type": "auth_error",
+                        "error": "Authentication timeout (5s)"
+                    }, ensure_ascii=False))
+                except Exception:
+                    pass
+                await ws.close()
+
+        auth_timeout_task = asyncio.create_task(_enforce_auth_timeout())
+        try:
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
                     try:
@@ -324,6 +370,43 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
 
                     if action == "ping":
                         await ws.send_str(json.dumps({"type": "pong", "req_id": req_id}))
+                        continue
+
+                    if action == "auth":
+                        raw_init = str(data.get("initData", "")).strip()
+                        verified = verify_telegram_init_data(raw_init)
+                        if not verified or not verified.get("id"):
+                            await ws.send_str(json.dumps({
+                                "type": "auth_error",
+                                "req_id": req_id,
+                                "success": False,
+                                "error": "Недійсний підпис Telegram initData"
+                            }, ensure_ascii=False))
+                            await ws.close()
+                            break
+
+                        ws_user = verified
+                        auth_timeout_task.cancel()
+                        _ws_clients.add(ws)
+                        queues, version = await get_all_queues_cached_db()
+                        await ws.send_str(json.dumps({
+                            "type": "queue_update",
+                            "req_id": req_id,
+                            "authenticated": True,
+                            "version": version,
+                            "queues": queues,
+                        }, ensure_ascii=False))
+                        continue
+
+                    # До отримання валідного фрейму auth жодні дії не виконуються
+                    if ws_user is None:
+                        await ws.send_str(json.dumps({
+                            "type": "action_result",
+                            "req_id": req_id,
+                            "action": action,
+                            "success": False,
+                            "error": "Unauthorized: send {'action': 'auth', 'initData': '...'} first"
+                        }, ensure_ascii=False))
                         continue
 
                     if action == "get_queues":
@@ -341,21 +424,15 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                     if action == "queue_join":
                         chat_id = int(data.get("chat_id", 0) or 0)
                         subject = str(data.get("subject", "ОП")).strip()
-                        user_id = int(data.get("user_id", 0) or 0)
-                        user_name = str(data.get("user_name", "Студент")).strip()
-                        username = str(data.get("username", "")).strip() or None
+                        user_id = int(ws_user["id"])
+                        username = str(ws_user.get("username") or "").strip() or None
+                        tg_full_name = " ".join(
+                            p for p in (ws_user.get("first_name"), ws_user.get("last_name")) if p
+                        ).strip()
+                        real_name = await find_student_real_name_db(user_id=user_id, telegram_username=username)
+                        user_name = real_name or tg_full_name or str(data.get("user_name", "Студент")).strip() or "Студент"
                         lab_number = str(data.get("lab_number", "")).strip()
                         append = bool(data.get("append", False))
-
-                        if not user_id:
-                            await ws.send_str(json.dumps({
-                                "type": "action_result",
-                                "req_id": req_id,
-                                "action": action,
-                                "success": False,
-                                "error": "user_id is required"
-                            }, ensure_ascii=False))
-                            continue
 
                         ok, res_msg, pos = await join_queue_db(
                             chat_id, subject, user_id, user_name, username, lab_number, append=append
@@ -379,18 +456,8 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                     elif action == "queue_leave":
                         chat_id = int(data.get("chat_id", 0) or 0)
                         subject = str(data.get("subject", "ОП")).strip()
-                        user_id = int(data.get("user_id", 0) or 0)
-                        username = str(data.get("username", "")).strip() or None
-
-                        if not user_id and not username:
-                            await ws.send_str(json.dumps({
-                                "type": "action_result",
-                                "req_id": req_id,
-                                "action": action,
-                                "success": False,
-                                "error": "user_id or username is required"
-                            }, ensure_ascii=False))
-                            continue
+                        user_id = int(ws_user["id"])
+                        username = str(ws_user.get("username") or "").strip() or None
 
                         ok = await leave_queue_db(chat_id, subject, user_id, username=username)
                         schedule_bg_chat_sync(bot, chat_id, subject)
@@ -407,6 +474,17 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                         await broadcast_queue_ws({"trigger": "leave", "subject": subject})
 
                     elif action == "queue_next":
+                        user_id = int(ws_user["id"])
+                        access = await check_admin_access_db(user_id=user_id)
+                        if not access.get("is_admin"):
+                            await ws.send_str(json.dumps({
+                                "type": "action_result",
+                                "req_id": req_id,
+                                "action": action,
+                                "success": False,
+                                "error": "Тільки староста або адміністратор може викликати наступного"
+                            }, ensure_ascii=False))
+                            continue
                         chat_id = int(data.get("chat_id", 0) or 0)
                         subject = str(data.get("subject", "ОП")).strip()
                         student = await next_in_queue_db(chat_id, subject)
@@ -425,9 +503,8 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                         await broadcast_queue_ws({"trigger": "next", "subject": subject, "called_student": student})
 
                     elif action == "queue_clear":
-                        user_id = data.get("user_id")
-                        username = data.get("username")
-                        access = await check_admin_access_db(user_id=user_id, username=username)
+                        user_id = int(ws_user["id"])
+                        access = await check_admin_access_db(user_id=user_id)
                         if not access.get("is_admin"):
                             await ws.send_str(json.dumps({
                                 "type": "action_result",
@@ -459,6 +536,7 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
         except Exception as e:
             logger.debug(f"WebSocket connection closed with error: {e}")
         finally:
+            auth_timeout_task.cancel()
             _ws_clients.discard(ws)
         return ws
 
@@ -488,16 +566,22 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     async def handle_api_queue_join(request):
         try:
             data = await request.json()
+            verified_user = get_verified_webapp_user(request, data)
+            if not verified_user or not verified_user.get("id"):
+                return json_response_cors({"success": False, "error": "Необхідна авторизація через Telegram Mini App"}, status=401)
+
+            user_id = int(verified_user["id"])
+            username = str(verified_user.get("username") or "").strip() or None
+            tg_full_name = " ".join(
+                p for p in (verified_user.get("first_name"), verified_user.get("last_name")) if p
+            ).strip()
+            real_name = await find_student_real_name_db(user_id=user_id, telegram_username=username)
+            user_name = real_name or tg_full_name or str(data.get("user_name", "Студент")).strip() or "Студент"
+
             chat_id = int(data.get("chat_id", 0))
             subject = str(data.get("subject", "ОП")).strip()
-            user_id = int(data.get("user_id", 0))
-            user_name = str(data.get("user_name", "Студент")).strip()
-            username = str(data.get("username", "")).strip() or None
             lab_number = str(data.get("lab_number", "")).strip()
             append = bool(data.get("append", False))
-
-            if not user_id:
-                return json_response_cors({"success": False, "error": "user_id is required"}, status=400)
 
             ok, msg, pos = await join_queue_db(chat_id, subject, user_id, user_name, username, lab_number, append=append)
             schedule_bg_chat_sync(bot, chat_id, subject)
@@ -519,13 +603,14 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
     async def handle_api_queue_leave(request):
         try:
             data = await request.json()
+            verified_user = get_verified_webapp_user(request, data)
+            if not verified_user or not verified_user.get("id"):
+                return json_response_cors({"success": False, "error": "Необхідна авторизація через Telegram Mini App"}, status=401)
+
+            user_id = int(verified_user["id"])
+            username = str(verified_user.get("username") or "").strip() or None
             chat_id = int(data.get("chat_id", 0))
             subject = str(data.get("subject", "ОП")).strip()
-            user_id = int(data.get("user_id", 0))
-            username = str(data.get("username", "")).strip() or None
-
-            if not user_id and not username:
-                return json_response_cors({"success": False, "error": "user_id or username is required"}, status=400)
 
             ok = await leave_queue_db(chat_id, subject, user_id, username=username)
             schedule_bg_chat_sync(bot, chat_id, subject)
@@ -543,7 +628,10 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
 
     async def handle_api_queue_next(request):
         try:
-            data = await request.json()
+            access, data = await require_admin_auth(request)
+            if not access.get("is_admin"):
+                return json_response_cors({"success": False, "error": "Тільки староста або адміністратор може викликати наступного"}, status=403)
+
             chat_id = int(data.get("chat_id", 0))
             subject = str(data.get("subject", "ОП")).strip()
 
@@ -919,10 +1007,10 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
             return json_response_cors({"success": False, "error": str(e)}, status=400)
 
     # --- Helper: перевірка прав адміністратора ---
-    async def require_admin_auth(request) -> tuple[dict, dict]:
+    async def require_admin_auth(request: web.Request) -> tuple[dict, dict]:
         """
-        Читає user_id та username з JSON тіла або query,
-        перевіряє права через check_admin_access_db.
+        Перевіряє криптографічний підпис Telegram WebApp initData
+        та права адміністратора виключно за числовим user_id.
         Повертає (access_dict, data_dict).
         """
         data = {}
@@ -931,17 +1019,17 @@ def create_webapp_app(bot: Bot | None = None) -> web.Application:
                 data = await request.json()
             except Exception:
                 data = {}
-        user_id = data.get("user_id") if data.get("user_id") is not None else request.query.get("user_id")
-        username = data.get("username") or request.query.get("username")
-        access = await check_admin_access_db(user_id=user_id, username=username)
+        verified_user = get_verified_webapp_user(request, data)
+        if not verified_user or not verified_user.get("id"):
+            return {"is_admin": False, "is_owner": False, "role": None}, data
+        user_id = int(verified_user["id"])
+        access = await check_admin_access_db(user_id=user_id)
         return access, data
 
     # --- REST API: Admin Panel ---
     async def handle_api_admin_me(request):
         try:
-            user_id = request.query.get("user_id")
-            username = request.query.get("username")
-            access = await check_admin_access_db(user_id=user_id, username=username)
+            access, _ = await require_admin_auth(request)
             if access.get("is_admin"):
                 access["roles"] = await get_admin_roles_db()
                 try:

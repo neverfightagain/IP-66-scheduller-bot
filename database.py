@@ -16,7 +16,7 @@ from config import (
     TURSO_AUTH_TOKEN,
     SQLITE_CLOUD_URL,
     OWNER_ID,
-    OWNER_USERNAMES,
+    ADMIN_IDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -718,8 +718,9 @@ async def init_db():
         await db.execute("DELETE FROM assignments WHERE id IN ('op_lab1', 'asd_lab1', 'kdm_calc1')")
         await db.commit()
 
-        # Автоматичне вилучення кураторів із реєстру студентів (вони не навчаються в групі)
-        await db.execute("DELETE FROM students WHERE LOWER(real_name) LIKE '%куратор%'")
+        # Автоматичне вилучення кураторів та очищення персональних даних (Д/Н, телефонів, пошт) із реєстру студентів
+        await db.execute("DELETE FROM students WHERE LOWER(real_name) LIKE '%куратор%' OR real_name LIKE '%Куратор%'")
+        await db.execute("UPDATE students SET notes = NULL WHERE notes LIKE '%Д/Н:%' OR notes LIKE '%Тел:%' OR notes LIKE '%Пошта:%'")
         await db.commit()
 
         # Автоматичний первинний імпорт списку групи з STUDENTS_ROSTER_JSON або students_roster.json
@@ -742,20 +743,17 @@ async def init_db():
 
         if roster_data:
             try:
-                async with db.execute("SELECT COUNT(*) as cnt FROM students WHERE LOWER(real_name) NOT LIKE '%куратор%'") as cur:
+                async with db.execute("SELECT COUNT(*) as cnt FROM students WHERE LOWER(real_name) NOT LIKE '%куратор%' AND real_name NOT LIKE '%Куратор%'") as cur:
                     row = await cur.fetchone()
                     if row and row["cnt"] == 0:
                         for item in roster_data:
                             rname = item.get("real_name", "")
                             if "куратор" in rname.lower():
                                 continue
-                            notes = item.get("notes", "")
-                            if not notes and item.get("birthdate"):
-                                notes = f"Д/Н: {item['birthdate']}"
                             await db.execute("""
                                 INSERT INTO students (real_name, telegram_username, subgroup, notes)
-                                VALUES (?, ?, ?, ?)
-                            """, (rname, item.get("telegram_username"), item.get("subgroup", 1), notes))
+                                VALUES (?, ?, ?, NULL)
+                            """, (rname, item.get("telegram_username"), item.get("subgroup", 1)))
                         await db.commit()
                         logger.info(f"Успішно імпортовано студентів з реєстру.")
             except Exception as e_rost:
@@ -2209,10 +2207,10 @@ async def set_admin_test_mode_db(enabled: bool) -> bool:
 
 async def check_admin_access_db(user_id: int | str = None, username: str = None) -> dict:
     """
-    Перевірка прав доступу до адмін-панелі:
-    - Власник (user_id == OWNER_ID або username в OWNER_USERNAMES) завжди має повний доступ (role: 'owner').
+    Перевірка прав доступу до адмін-панелі виключно за числовим user_id:
+    - Власник (user_id == OWNER_ID) завжди має повний доступ (role: 'owner').
     - Якщо увімкнено test_mode (за замовчуванням True) — доступ дозволено виключно Власнику.
-    - Якщо test_mode вимкнено — доступ надається також Старості та Замстарости з таблиці admin_roles.
+    - Якщо test_mode вимкнено — доступ надається також user_id з ADMIN_IDS або таблиці admin_roles.
     """
     clean_uid = None
     if user_id is not None:
@@ -2221,18 +2219,17 @@ async def check_admin_access_db(user_id: int | str = None, username: str = None)
         except (ValueError, TypeError):
             clean_uid = None
 
-    clean_uname = str(username or "").strip().lstrip("@").lower()
-    clean_owner_unames = {str(u).strip().lstrip("@").lower() for u in (OWNER_USERNAMES or set())}
-
-    is_owner = False
-    if clean_uid is not None and clean_uid == OWNER_ID:
-        is_owner = True
-    elif clean_uname and clean_uname in clean_owner_unames:
-        is_owner = True
-
     test_mode = await get_admin_test_mode_db()
 
-    if is_owner:
+    if not clean_uid:
+        return {
+            "is_admin": False,
+            "is_owner": False,
+            "role": None,
+            "test_mode": test_mode
+        }
+
+    if clean_uid == OWNER_ID:
         return {
             "is_admin": True,
             "is_owner": True,
@@ -2249,33 +2246,23 @@ async def check_admin_access_db(user_id: int | str = None, username: str = None)
             "test_mode": True
         }
 
-    # Якщо тест-режим вимкнено, шукаємо в базі admin_roles
+    if clean_uid in ADMIN_IDS:
+        return {
+            "is_admin": True,
+            "is_owner": False,
+            "role": "headman",
+            "test_mode": False
+        }
+
+    # Якщо тест-режим вимкнено, шукаємо в базі admin_roles виключно за числовим user_id
     async with get_db() as db:
-        row = None
-        if clean_uid is not None and clean_uname:
-            async with db.execute("""
-                SELECT id, user_id, username, real_name, role
-                FROM admin_roles
-                WHERE user_id = ? OR LOWER(username) = ?
-                LIMIT 1
-            """, (clean_uid, clean_uname)) as cur:
-                row = await cur.fetchone()
-        elif clean_uid is not None:
-            async with db.execute("""
-                SELECT id, user_id, username, real_name, role
-                FROM admin_roles
-                WHERE user_id = ?
-                LIMIT 1
-            """, (clean_uid,)) as cur:
-                row = await cur.fetchone()
-        elif clean_uname:
-            async with db.execute("""
-                SELECT id, user_id, username, real_name, role
-                FROM admin_roles
-                WHERE LOWER(username) = ?
-                LIMIT 1
-            """, (clean_uname,)) as cur:
-                row = await cur.fetchone()
+        async with db.execute("""
+            SELECT id, user_id, username, real_name, role
+            FROM admin_roles
+            WHERE user_id = ?
+            LIMIT 1
+        """, (clean_uid,)) as cur:
+            row = await cur.fetchone()
 
         if row:
             return {
